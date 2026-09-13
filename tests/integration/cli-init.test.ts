@@ -7,6 +7,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { golemInit, golemUninit, InitError, type InitProbe } from "../../src/cli/init.js";
+import { skillDirName } from "../../src/cli/init-skills.js";
 import { isUnmodifiedManaged, rememberManaged } from "../../src/cli/managed-files.js";
 import { defaultProjectPort } from "../../src/cli/proxy-daemon.js";
 import { P0_SKILLS } from "../../src/cli/skills.js";
@@ -94,7 +95,7 @@ describe("golem init", () => {
 
     for (const name of Object.keys(P0_SKILLS)) {
       const skill = await readFile(
-        path.join(projectDir, ".claude", "skills", `golem-${name}`, "SKILL.md"),
+        path.join(projectDir, ".claude", "skills", skillDirName(name), "SKILL.md"),
         "utf8",
       );
       expect(skill).toBe(P0_SKILLS[name]);
@@ -695,7 +696,10 @@ describe("golem init — retired skills are pruned (R11.1 leftover)", () => {
     // The skills Golem still ships are untouched.
     for (const name of Object.keys(P0_SKILLS)) {
       await expect(
-        readFile(path.join(projectDir, ".claude", "skills", `golem-${name}`, "SKILL.md"), "utf8"),
+        readFile(
+          path.join(projectDir, ".claude", "skills", skillDirName(name), "SKILL.md"),
+          "utf8",
+        ),
       ).resolves.toContain("");
     }
   });

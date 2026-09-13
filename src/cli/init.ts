@@ -70,6 +70,7 @@ import {
   migrateNestedSkills,
   pruneRetiredSkills,
   removeSkills,
+  skillDirName,
 } from "./init-skills.js";
 import { teamInitStep } from "./init-team.js";
 import {
@@ -313,7 +314,7 @@ export async function golemInitStatus(
   let skillsInstalled = true;
   for (const name of Object.keys(P0_SKILLS)) {
     try {
-      await access(path.join(projectDir, ".claude", "skills", `golem-${name}`, "SKILL.md"));
+      await access(path.join(projectDir, ".claude", "skills", skillDirName(name), "SKILL.md"));
     } catch {
       skillsInstalled = false;
       break;
