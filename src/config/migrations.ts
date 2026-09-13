@@ -85,6 +85,12 @@ export const RETIRED_SETTINGS: readonly RetiredSetting[] = [
       'inference.personas.coder.model (e.g. { "personas": { "coder": { "model": "…" } } })',
     since: "R14.1",
   },
+  {
+    path: "inference.worker_targets",
+    replacement:
+      'inference.personas[worker].model (e.g. { "personas": { "coder": { "model": "target-id" } } })',
+    since: "R14.3",
+  },
 ];
 
 /** The retirement record for a dotted path, or undefined if it is not retired. */
@@ -133,6 +139,13 @@ export function assertLeafRename(m: SettingMigration): string | undefined {
     // those two hops into one direct migration stays a one-line table change
     // rather than a guard change — but it is dead against today's table.
     if (m.from === "proxy.active_account" && m.to === "inference.default_target") {
+      return undefined;
+    }
+    // R14.3: worker_targets → personas is a structural change (map → record with
+    // different value shape). The old key is kept as a deprecated leaf with a
+    // warning; no automatic migration is performed. User manually migrates each
+    // entry: worker_targets."coder" = "target" → personas.coder.model = "target".
+    if (m.from === "inference.worker_targets" && m.to === "inference.personas") {
       return undefined;
     }
     return (

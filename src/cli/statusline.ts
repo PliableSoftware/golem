@@ -27,7 +27,7 @@ import { loadConfig } from "../config/index.js";
 // `../hooks/session-state.js`, not the `../hooks/index.js` barrel (~446ms — it
 // pulls every hook handler) for one function.
 import { type BlockKind, readSessionState, resolveBlock } from "../hooks/session-state.js";
-import { declaredWorkers, isKnownWorker } from "../inference/workers.js";
+import { declaredWorkers } from "../inference/workers.js";
 import {
   type CompressionLevel,
   coerceCompressionLevel,
@@ -533,23 +533,19 @@ export async function collectGolemState(
     // surface. A target that does not resolve yields no model, so the worker is
     // omitted from the line rather than advertised.
     roster = declaredWorkers(settings.inference.personas);
-    const configured = settings.inference.worker_targets;
-    workerTargetModels = Object.keys(configured)
-      .filter((worker) => isKnownWorker(worker, settings.inference.personas))
-      .map((worker) => {
-        const hit = listTargets(settings.proxy).find((t) => t.id === configured[worker]);
-        return {
-          worker,
-          ...(hit?.model !== undefined ? { model: hit.model } : {}),
-          // R11.6: the same label the chat segment gets, from the same function
-          // — this used to pass the raw `accountId`, so a target with no account
-          // rendered gateway-less while the chat side happily said "ollama" for
-          // the identical provider.
-          ...(hit !== undefined
-            ? { gateway: providerUpstreamLabel(hit.provider, hit.baseUrl, hit.accountId) }
-            : {}),
-        };
-      });
+    // Derive worker targets from personas[worker].model (worker_targets retired)
+    workerTargetModels = roster.map((worker) => {
+      const modelFromPersona = settings.inference.personas?.[worker]?.model;
+      if (modelFromPersona === undefined || modelFromPersona === "") return { worker };
+      const hit = listTargets(settings.proxy).find((t) => t.id === modelFromPersona);
+      return {
+        worker,
+        ...(hit?.model !== undefined ? { model: hit.model } : {}),
+        ...(hit !== undefined
+          ? { gateway: providerUpstreamLabel(hit.provider, hit.baseUrl, hit.accountId) }
+          : {}),
+      };
+    });
     // R6.2: reflect the ACTIVE account/provider the proxy actually fronts, not
     // just the top-level base URL (env-less resolution — the label needs no key).
     // R9.23: default_target moved from proxy to inference — spread it onto

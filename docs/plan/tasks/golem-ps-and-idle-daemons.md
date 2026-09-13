@@ -1,15 +1,16 @@
 ---
 task: golem-ps-and-idle-daemons
 title: "`golem ps` — Golem accounts for its own processes, and stops leaving idle ones behind"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
 design: "The daemon side already exists: `golem proxy start/stop/restart` with pidfiles, and `src/dashboard/lan.ts` / `src/cli/proxy-daemon.ts` know what was spawned. This adds the read model over them plus an idle policy. `golem status` is the precedent for the reporting shape."
 gate: "(1) `golem ps` lists every Golem-owned process on this machine with pid, kind, project, age and RSS, and its output is correct across a proxy that is running, one that was killed without stopping (stale pidfile), and one started for a project directory that no longer exists. (2) `golem ps --prune` removes ONLY processes Golem can prove are its own and are not serving a live session — asserted by a test where a foreign `node.exe` and a live proxy are both present and both survive. (3) A project proxy idle beyond `proxy.idle_timeout` exits on its own, and the timeout being unset means never (today's behaviour), so nobody's long-running setup changes under them."
+depends_on: []
 touches: [src/cli/commands/proxy.ts, src/cli/proxy-daemon.ts, src/cli/commands/status-update.ts, src/config/schema.ts, tests/unit/cli/]
 created: 2026-09-13
-updated: 2026-09-13
+updated: 2026-09-13T10:57:16.838Z
 ---
 
 ## Why
@@ -87,3 +88,7 @@ so in the wiki page so the next person measuring does not chase them.
 
 The standing one: `npx tsc --noEmit`, `npm run lint`, `npm run format:check`,
 `npx vitest run`, plus `golem wiki check` if a wiki page changed.
+
+## Outcome
+
+shipped

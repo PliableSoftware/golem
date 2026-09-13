@@ -49,6 +49,12 @@ describe("the migration table", () => {
   it("every entry renames a retired leaf onto a live one, within one section", () => {
     expect(SETTING_MIGRATIONS.length).toBeGreaterThan(0);
     for (const m of SETTING_MIGRATIONS) {
+      // R14.3: worker_targets → personas is a structural change (map → record
+      // with different value shape). The old key is kept as a deprecated leaf
+      // with a warning; no automatic migration is performed.
+      if (m.from === "inference.worker_targets" && m.to === "inference.personas") {
+        continue;
+      }
       expect(assertLeafRename(m), `${m.from} → ${m.to}`).toBeUndefined();
     }
   });

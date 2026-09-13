@@ -105,6 +105,7 @@ import {
 } from "../providers/index.js";
 import type { PersonaConfig } from "./personas.js";
 import { workerTarget } from "./workers.js";
+import { workerTargetFromPersona } from "./personas.js";
 
 /** Hosts for which `trust: "local"` is believable — context never leaves the machine. */
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
@@ -191,8 +192,10 @@ export interface DispatchRequest {
 export type DispatchRoute =
   /** An explicit `targetId` on the call. */
   | "explicit"
-  /** This worker's `inference.worker_targets` entry. */
+  /** This worker's `inference.worker_targets` entry (DEPRECATED). */
   | "worker"
+  /** `inference.personas[worker].model` resolved as a target. */
+  | "persona_worker"
   /** `inference.default_target`. */
   | "default_target"
   /** Nothing named a target — the synthetic default over `proxy.upstream_*`. */
@@ -205,6 +208,8 @@ export function describeRoute(route: DispatchRoute, worker?: string | undefined)
       return "target named by the caller";
     case "worker":
       return `inference.worker_targets.${worker ?? "?"}`;
+    case "persona_worker":
+      return `inference.personas.${worker ?? "?"}.model`;
     case "default_target":
       return "inference.default_target";
     case "harness":
@@ -681,11 +686,18 @@ export function selectTarget(
   if (request.targetId !== undefined && request.targetId !== "") {
     return { id: request.targetId, route: "explicit" };
   }
+  // First check deprecated worker_targets, then personas[worker].model
   const fromWorker =
     request.worker !== undefined
       ? workerTarget(options.workerTargets, request.worker, options.personas)
       : undefined;
   if (fromWorker !== undefined) return { id: fromWorker, route: "worker" };
+
+  const fromPersonaWorker =
+    request.worker !== undefined
+      ? workerTargetFromPersona(options.personas ?? {}, request.worker)
+      : undefined;
+  if (fromPersonaWorker !== undefined) return { id: fromPersonaWorker, route: "persona_worker" };
 
   const configured = options.settings.default_target;
   return {

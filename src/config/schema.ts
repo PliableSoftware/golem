@@ -229,6 +229,13 @@ export const SETTINGS_LEAVES = {
     /** Upstream TCP/TLS connect timeout. */
     connect_timeout_ms: timeoutMsSchema,
     /**
+     * R13.x — idle timeout for project proxies (milliseconds). A proxy that has
+     * served no requests for this duration exits on its own. Unset (default) means
+     * never — today's behaviour is preserved by default so nobody's long-running
+     * setup changes under them.
+     */
+    idle_timeout_ms: timeoutMsSchema.optional(),
+    /**
      * R9.23: DEPRECATED — moved to `inference.default_target`. Kept as a
      * valid leaf so the migration table can forward old settings files.
      */
@@ -248,32 +255,15 @@ export const SETTINGS_LEAVES = {
     request_timeout_ms: timeoutMsSchema,
 
     /**
-     * R9.4 — which `proxy.targets` id each **tool worker** defaults to, keyed by
-     * worker name (`{ coder = "openrouter-qwen3" }`). A worker with no entry
-     * uses the local tiered model, exactly as before, so this changes nothing
-     * until it is set.
+     * R9.4 / R14.3 — DEPRECATED: use `inference.personas[worker].model` instead.
      *
-     * The point of the setting is that "the default coder model" becomes a real,
-     * settable thing rather than permanently-local: after R9.3 a draft can run
-     * on any declared target, and a status line that always says "local" would
-     * be describing a constraint that no longer exists.
+     * The worker lane now reads `inference.personas[worker].model` directly.
+     * A persona's `model` field serves both lanes:
+     *   - worker lane: Golem dispatches to the target (redacted)
+     *   - harness lane: subagent runs on the model (your key)
      *
-     * **A map, not one leaf per worker.** More workers are expected (a `writer`
-     * for documents, and so on); a scalar each would grow a schema leaf, a
-     * UI-model entry, a status field and two status-surface branches per worker,
-     * while a map grows by one line of config. The cost is that a key naming no
-     * worker would be silently ignored, so keys are validated against
-     * `KNOWN_WORKERS` and reported — see `inference/workers.ts`.
-     *
-     * Fail-closed like every other target reference: an unknown TARGET id is an
-     * error naming what is configured, never a silent fall back to the local
-     * model — that would send the work somewhere the user did not choose while
-     * reporting success. A non-local target is redacted at its trust floor on
-     * every dispatch (R9.3), so setting this never weakens redaction.
-     *
-     * R10.8: a worker with NO entry here no longer means "the local model". It
-     * falls through to `inference.default_target` and then to the harness's own
-     * upstream, so leaving this empty is a routing decision like any other.
+     * Kept as a valid leaf so the migration table can forward old settings files.
+     * New configs should not use this key.
      */
     worker_targets: z.record(z.string().min(1), z.string().min(1)).default({}),
 

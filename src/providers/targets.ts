@@ -160,6 +160,7 @@ export function defaultTrustFor(provider: UpstreamProvider, baseUrl: string): Ta
     return host !== undefined && LOOPBACK_HOSTS.has(host) ? "local" : "lan";
   }
   if (provider === "anthropic") return "vendor";
+  // NVIDIA NIM is a multi-vendor gateway (third-party aggregator)
   return "third-party";
 }
 
