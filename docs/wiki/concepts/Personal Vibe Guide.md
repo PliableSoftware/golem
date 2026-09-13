@@ -69,6 +69,26 @@ measuring the lines that are easy to count rather than the ones carrying signal:
 - **Only lines where a terminator was a real choice count.** A bare `}` can never
   take a semicolon; counting it drags every file toward 50%.
 
+## What a measurement does, and does not, prove
+
+**A habit a linter enforces measures the toolchain, not the person.** On the
+first real seed (2026-09-13, a 20,313-line JS repo) three of the five habits in
+the brief — single quotes, semicolons, 2-space indent — were pinned by that
+repo's `eslint.config.js` and `.editorconfig`. The evidence was overwhelming
+(8,238 single quotes against 572) and entirely real, and it still said nothing
+the config file did not already say out loud.
+
+The informative measurements were the ones nothing enforced: comment density
+(33% of lines), comment shape (only 37% capitalised, 25% punctuated), header
+comments on 75% of files, and the line-width spread that config had deliberately
+left unpinned. **An unenforced habit outranks an enforced one with ten times the
+evidence.**
+
+Marking enforced habits as such is tracked in `vibe-authored-history`. Until it
+lands, read the guideline next to the repo's formatter config. And do not
+overcorrect: the human usually wrote that config, so it is still their choice —
+expressed once, deliberately, rather than thousands of times.
+
 ## Generated versus human
 
 `VIBE.md` has a generated block bounded by `<!-- golem:vibe-measured:begin -->` /
