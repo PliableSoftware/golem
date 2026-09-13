@@ -1,15 +1,16 @@
 ---
 task: guidance-new-default-never-seeds
 title: "A guidance rule added after a project's first `golem init` is never seeded there — the sentinel cannot tell 'disabled' from 'did not exist yet'"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "`src/hooks/guidance.ts` — `seedDefaultGuidance` and the `.golem/state/guidance.json` sentinel. The mechanism and its intent are documented in the comment above the `seeded && !exists` branch; this is a gap in that reasoning, not a disagreement with it."
 gate: "A project initialised BEFORE a new `seededByDefault` feature exists receives that feature's rule on the next `golem init`, while a feature the user actually ran `golem guidance disable` on stays absent across any number of re-inits. Both as named tests, because one mechanism has to serve both and today it collapses them into one another."
+depends_on: []
 touches: [src/hooks/guidance.ts, tests/unit/hooks/]
 created: 2026-09-13
-updated: 2026-09-13
+updated: 2026-09-13T03:32:06.498Z
 ---
 
 ## What happens
@@ -76,3 +77,7 @@ Only the seed-once decision changes.
 
 The standing one: `npx tsc --noEmit`, `npm run lint`, `npm run format:check`,
 `npx vitest run`.
+
+## Outcome
+
+shipped — PR #197, merged ac40827
