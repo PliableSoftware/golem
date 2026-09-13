@@ -275,6 +275,33 @@ const PARALLEL_AGENT_ISOLATION = [
   "See also the subagent-headroom rule — a child cannot park at a usage limit, so",
   "it must commit early on its own branch or its work dies with it.",
 ].join("\n");
+const VIBE = [
+  "## Golem: the user's personal vibe (coding style + writing voice)",
+  "",
+  "This human has a PERSONAL style guide under `~/.golem/vibe/` — separate from",
+  "this project's conventions and from any team standard. It is readable only",
+  "from a Golem-initialised project, and it applies to work you author: code, the",
+  "comments in it, commit messages, docs, and review prose.",
+  "",
+  "1. **Consult it on coding, writing and review turns** — `golem vibe show`",
+  "   prints the brief, which is capped so it stays cheap. That brief is the",
+  "   whole always-on cost; treat it as the default reading.",
+  "2. **Open the detail only when it decides something.** `guidelines/<topic>.md`",
+  "   and `snippets/<lang>/<id>.md` sit under `~/.golem/vibe/` and are read on",
+  '   demand, one at a time. Reading them "for background" is exactly the bloat',
+  "   the split exists to prevent.",
+  "3. **The project outranks the person.** Where this repo's committed",
+  "   conventions (CLAUDE.md, linter config, the surrounding file) disagree with",
+  "   the personal guide, follow the project and SAY so. Never reformat existing",
+  "   code to match a personal preference, and never edit project config to.",
+  "4. **Noticed something durable?** A style choice the user made explicitly —",
+  "   especially a correction to something you wrote — is worth capturing. Ask",
+  "   once, at a natural pause, and only for a pattern you have seen more than",
+  "   once. `/vibe quiz` is the place that writes it down.",
+  "",
+  "Seed it from code that already reads right: `golem vibe seed <path>`.",
+].join("\n");
+
 export const GUIDANCE_FEATURES: readonly GuidanceFeature[] = [
   {
     name: "ccr-refs",
@@ -330,6 +357,13 @@ export const GUIDANCE_FEATURES: readonly GuidanceFeature[] = [
       "Explain why the park cannot reach a subagent: gate the spawn, commit early, capture deaths",
     seededByDefault: true,
     snippet: SUBAGENT_HEADROOM,
+  },
+  {
+    name: "vibe",
+    summary:
+      "Consult the user's personal style guide (~/.golem/vibe/) when writing code, prose or review",
+    seededByDefault: true,
+    snippet: VIBE,
   },
   {
     name: "parallel-agent-isolation",
