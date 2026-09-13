@@ -1,7 +1,7 @@
 ---
 task: vibe-personal-style
 title: "`vibe` — a personal style reference guide Golem learns, gated to Golem projects, consulted by coder/scribe/reviewer"
-state: running
+state: done
 owner: agent
 size: L
 discipline: code
@@ -12,25 +12,33 @@ created: 2026-09-13
 updated: 2026-09-13
 ---
 
-## Status — slice 1 LANDED 2026-09-13
+## Status — BOTH SLICES LANDED 2026-09-13
 
-Store, seeding and the read path are on `feat/vibe-personal-style`. What remains
-is CAPTURE, which is what makes it *learn* rather than be told:
+All four gate tests are satisfied. Slice 1 was the store, seeding and the read
+path; slice 2 is capture, and the loop now closes end to end through the real
+hooks:
 
-- [ ] PostToolUse records what the agent wrote; the file watcher sees the user's
-      own edit that follows. The delta is a CORRECTION — the strongest signal in
-      the design, and invisible to a hook alone, since the user's edits are not
-      tool calls.
-- [ ] `candidates.jsonl`, with de-duplication and tombstones for rejected ones
-- [ ] `/vibe quiz` — one question, only for a pattern seen more than once,
-      always skippable, writing prose into the brief's voice section
-- [ ] One line each in `.claude/agents/golem-coder.md`, `golem-scribe.md`,
-      `golem-reviewer.md`
-- [ ] `git log --author` and prompt-text voice signals (seed sources 3 and 4)
+- [x] PostToolUse records a hash + style reading of what the agent wrote
+- [x] UserPromptSubmit re-reads them; a moved hash is a HUMAN correction
+- [x] `candidates.jsonl` with de-duplication, counts, and tombstones
+- [x] `golem vibe candidates | confirm | reject | sweep`, and the `/vibe quiz`
+      flow that drives them
+- [x] Confirmed preferences written to `guidelines/preferences.md` and to a
+      SEPARATE brief block, above the measured one so the cap cannot eat them
+- [x] The generated persona bodies (`src/cli/agents.ts`) tell every coder,
+      scribe and reviewer to run `golem vibe show` and that the project outranks
+      the guide
 
-Slice 1 also fixed four bugs that only running it surfaced — see the debrief,
-`docs/wiki/debriefs/2026-09-13-vibe-personal-style.md`, and
-`docs/wiki/concepts/Personal Vibe Guide.md` for the durable design.
+**No file watcher was needed.** UserPromptSubmit is a better boundary than a
+watcher: the human has stopped typing, so they have probably stopped editing, and
+it is naturally rate-limited to once per message instead of once per keystroke.
+
+Deferred to `vibe-authored-history` — the two remaining seed signals
+(`git log --author`, and prompt text as a prose-voice source). Neither is in this
+task's gate.
+
+Debrief: `docs/wiki/debriefs/2026-09-13-vibe-personal-style.md`.
+Design: `docs/wiki/concepts/Personal Vibe Guide.md`.
 
 ## What this is
 

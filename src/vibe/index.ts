@@ -16,18 +16,61 @@ export {
   type StyleObservation,
 } from "./analyze.js";
 export {
+  type Candidate,
+  type CandidateState,
+  confirmCandidate,
+  loadCandidates,
+  QUIZ_THRESHOLD,
+  quizzable,
+  recordSignal,
+  rejectCandidate,
+} from "./candidates.js";
+export {
+  contentHash,
+  isWriteTool,
+  MAX_PENDING,
+  type PendingWrite,
+  pendingLedgerPath,
+  recordAgentWrite,
+  type SweepResult,
+  sweepCorrections,
+  writeTargetPath,
+} from "./capture.js";
+export { captureAfterWrite, captureOnPrompt } from "./hook.js";
+export {
   BRIEF_MAX_BYTES,
   isGolemProject,
   type VibePaths,
   vibePaths,
 } from "./paths.js";
 export {
+  applyConfirmed,
+  BRIEF_PREFERENCE_LIMIT,
+  CONFIRMED_BEGIN,
+  CONFIRMED_END,
+  type PromoteResult,
+  preferenceLine,
+  rankConfirmed,
+  renderPreferences,
+  spliceBlock,
+} from "./promote.js";
+export {
   collectSourceFiles,
   composeBrief,
   languageOf,
+  localDate,
+  MEASURED_BEGIN,
+  MEASURED_END,
   type SeedResult,
   seedFromPath,
 } from "./seed.js";
+export {
+  describeSignal,
+  diffObservations,
+  type SignalKind,
+  type StyleSignal,
+  signalKey,
+} from "./signals.js";
 export {
   capBrief,
   type OpenVibeOptions,

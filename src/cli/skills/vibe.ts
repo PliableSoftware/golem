@@ -46,13 +46,36 @@ an actual question, and say which one you opened.
   provenance, and refreshes the measured block of the brief. Report the counts it
   prints — a measurement over twelve lines is not evidence, and the user should
   see which one they got.
-- **\`quiz\`** — ask about what has been noticed but not confirmed. One question
-  at a time, only for a pattern seen more than once, and always skippable.
-  Confirmed answers are written as prose into the brief's voice section or as a
-  new guideline page. A rejected one is recorded as rejected, so it is never
-  asked again.
+- **\`quiz\`** — ask about what has been noticed but not confirmed.
+
+  1. Run \`golem vibe candidates\`. It lists ONLY what is worth asking about:
+     open, and seen more than once. An empty list means do not ask — say so and
+     stop.
+  2. Ask about ONE candidate, using \`AskUserQuestion\`, quoting its evidence
+     ("seen 3x across 2 files"). Never work down the list in one turn; a queue of
+     questions is how a useful feature becomes a nag.
+  3. On yes: \`golem vibe confirm <key> --note "<their words>"\`. That marks it
+     confirmed AND rewrites \`guidelines/preferences.md\` plus the brief's
+     confirmed block. On no: \`golem vibe reject <key>\` — tombstoned, never
+     raised again. If they do not want to answer, leave it open and move on.
+
+  A confirmed preference is an INSTRUCTION; a measured habit is an observation.
+  The guide keeps them in separate blocks and so should you.
 - **\`sources\`** — run \`golem vibe sources\` and list what the guide was seeded
   from, with dates.
+- **\`sweep\`** — \`golem vibe sweep\` looks right now for edits the user made to
+  files you wrote. The hooks already do this after every write and on every
+  prompt, so reach for it only when you want to check capture is working.
+
+## How it learns
+
+Golem records the style of every file you write, and re-reads those files later.
+A file whose content moved was changed by the HUMAN, and the difference between
+the two readings is a correction — the strongest signal there is, because there
+is no ambiguity about whether they meant it. Corrections accumulate as
+candidates; a candidate seen more than once is what the quiz may ask about.
+
+This runs by itself. Your part is to ask well, at a natural pause, and not often.
 
 ## Rules that matter
 

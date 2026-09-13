@@ -24,6 +24,7 @@
  * fail-safe, so a state-tracking hook can never disrupt a session.
  */
 
+import { captureOnPrompt } from "../vibe/hook.js";
 import { type HookIo, readAll } from "./hook-io.js";
 import {
   type BlockDetails,
@@ -173,6 +174,12 @@ export async function runUserPromptSubmitHook(io: HookIo, nowIso: string): Promi
     const p = parsePayload(await readAll(io.stdin));
     const dir = p.cwd ?? process.cwd();
     await markUnblocked(dir, nowIso, p.session_id);
+    // The human has stopped typing, so they have probably stopped editing —
+    // which is when their out-of-band corrections to agent-written files become
+    // visible. This is why capture needs no file watcher, and it is naturally
+    // rate-limited to once per human message. Swallows its own failures and
+    // no-ops outside a Golem project.
+    await captureOnPrompt(dir, nowIso);
   } catch {
     // fail-safe
   }

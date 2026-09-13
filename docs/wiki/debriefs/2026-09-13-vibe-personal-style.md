@@ -105,11 +105,60 @@ staged file-by-file; a `git add -A` would have swept a stranger's diff into this
 PR. See `CLAUDE.md` § Multi-agent — this is the shared-HEAD case, observed a
 third time.
 
-## Not in this slice
+## Slice 2 — capture, and the watcher that turned out to be unnecessary
 
-Capture. The hook-backed half — PostToolUse recording what the agent wrote, the
-file watcher seeing the user's own correction, candidates, and the `/vibe quiz`
-that promotes them — is slice 2, along with wiring the brief into the
-coder/scribe/reviewer agent definitions. Corrections are the highest-value signal
-in the design and a hook alone cannot see them: the user's own edits are not tool
-calls.
+The brief said a hook plus the file watcher. Only half of that was needed, and
+the half that was dropped is the interesting part.
+
+**A hook cannot see the signal.** The agent's writes are tool calls; the human's
+edits are not. So the hook records a hash plus a style *reading* of what the
+agent wrote, and something later has to re-read those files and notice the hash
+moved. `src/knowledge/file-watcher.ts` was the obvious candidate.
+
+**UserPromptSubmit is a better boundary than a watcher.** The human has stopped
+typing, which means they have probably stopped editing — so the edits are all
+there, settled, at exactly the moment the hook fires. It is rate-limited to once
+per message for free, it needs no debounce, no daemon and no settle heuristic
+(the repo already carries two open tasks about watcher settle timing), and it
+cannot fire mid-save. The watcher stayed out of it entirely.
+
+### Most of the capture layer is refusals
+
+`signals.ts` reads eight metrics, and the interesting code in each is the
+minimum evidence it demands on BOTH sides: four quote characters, four semicolon
+candidates, ten lines for a width claim, three comments for a voice claim.
+Without those, a file that flips its majority on ONE edited line produces a
+candidate, and the human learns to ignore the queue. Comment density is bucketed
+rather than compared as a percentage for the same reason — a two-point move is
+not a change of mind.
+
+The same instinct drove two other decisions:
+
+- **The sweep re-baselines.** After it runs, the human's version is what
+  "unchanged" means. Without that, sweeping one edit twice counts it twice, and
+  a single correction crosses the quiz threshold on its own — at which point the
+  threshold stops meaning "this recurred", silently.
+- **A rejection is a tombstone, kept forever.** A declined preference is never
+  resurrected however often it recurs. Re-asking a question the human already
+  answered is the failure mode that gets a feature turned off.
+
+### Measured and confirmed must not share a block
+
+`VIBE.md` now carries two generated regions. The measured block is an
+OBSERVATION; the confirmed block is an INSTRUCTION. An agent that cannot tell
+them apart will treat a coincidence as a rule.
+
+The confirmed block is inserted ABOVE the measured one, and that ordering is
+load-bearing rather than cosmetic: the brief is capped and truncates from the
+bottom, so appending confirmed preferences would make the most valuable part of
+the guide the first thing dropped — silently, and only noticeable later as
+worse advice.
+
+### Deferred
+
+Two of the four seed signals: `git log --author` (code the user provably wrote,
+as opposed to code merely present in their checkout) and prompt text as a
+prose-voice source. Tracked as `vibe-authored-history`. The second is only safe
+if it derives properties rather than quoting: storing what the user typed would
+put a transcript in their home directory, and redaction does not make that
+acceptable.

@@ -106,10 +106,54 @@ no window in which unredacted text exists on disk.
 glob instead would hand Golem authority over directories the user or a team
 created — `.claude/skills/` is shared.
 
+## How it learns
+
+The design rests on one fact: **the user's own edits are not tool calls.** A
+PostToolUse hook sees everything the agent writes and nothing the human does, so
+a hook alone can never see the most valuable signal — the agent wrote X, the
+human changed it to Y.
+
+So capture is two halves meeting in a small ledger:
+
+1. **PostToolUse** records a hash of what the agent wrote plus a style reading of
+   it, in `.golem/state/vibe-pending.json`. READINGS, never source — which is
+   what keeps a second copy of the user's code off the disk and means the
+   redaction question never arises there.
+2. **UserPromptSubmit** re-reads those files. The human has stopped typing, so
+   they have probably stopped editing; a file whose hash moved was changed by
+   someone who is not the agent. This is why no file watcher is needed, and it is
+   naturally rate-limited to once per human message.
+
+A correction is diffed metric by metric, and **most of `signals.ts` is refusals**.
+Each metric states how much evidence it needs on BOTH sides — four quote
+characters, four semicolon candidates, ten lines for a width claim, three
+comments for a voice claim — because a small file flips its majority on one
+edited line, and a candidate raised from that is noise the human then has to
+decline. Comment density is bucketed rather than compared as a percentage, so a
+two-point move is not reported as a change of mind.
+
+Surviving signals land in `candidates.jsonl` with a count and the distinct files
+they came from. `/vibe quiz` may ask only about one `open` candidate seen at
+least twice. A `yes` confirms it; a `no` **tombstones** it, and a tombstoned
+signal is never resurrected however many times it recurs — which is what makes
+the quiz bearable rather than a recurring nag.
+
+The sweep is idempotent: after it runs, the human's version becomes the new
+baseline, so sweeping the same edit twice records it once. Without that, one
+correction would cross the quiz threshold on its own and the threshold would stop
+meaning "this recurred".
+
+## Measured, confirmed, and the difference
+
+`VIBE.md` carries two generated blocks and the human's own prose between them.
+The measured block is regenerated on every seed and is an OBSERVATION. The
+confirmed block holds preferences the human agreed to, and is an INSTRUCTION. An
+agent has to be able to tell them apart, so they never share a block — and the
+confirmed block is inserted ABOVE the measured one, because the brief truncates
+from the bottom and the stated preferences are what must survive the cap.
+
 ## Not yet built
 
-Capture. A PostToolUse hook records what the agent wrote and the file watcher
-sees the user's own edit that follows; the delta between those two is a
-*correction*, the strongest style signal there is, and a hook alone cannot see it
-because the user's edits are not tool calls. Candidates accumulate in
-`candidates.jsonl` and `/vibe quiz` promotes the ones seen more than once.
+Two of the four seed signals: `git log --author` over a seeded repo (code the
+user provably wrote, rather than code merely present in their checkout), and
+prompt text as a source for the prose voice the scribe needs.
