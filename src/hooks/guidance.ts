@@ -16,7 +16,12 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { InitAction } from "../cli/init.js";
-import { classifyManaged, ownedDetail, rememberManaged } from "../cli/managed-files.js";
+import {
+  classifyManaged,
+  forgetManaged,
+  ownedDetail,
+  rememberManaged,
+} from "../cli/managed-files.js";
 
 /** Committed project scope vs gitignored personal scope for a rule file. */
 export type GuidanceScope = "project" | "user";
@@ -497,7 +502,16 @@ export async function removeGuidanceRule(
     const file = guidanceRulePath(projectDir, name, s);
     try {
       await readFile(file, "utf8");
-      if (!dryRun) await rm(file, { force: true });
+      if (!dryRun) {
+        await rm(file, { force: true });
+        // Forget the provenance record too, or `.golem/managed-files.json`
+        // accumulates hashes for files that no longer exist — one per rule
+        // anybody ever disabled. Harmless to `classifyManaged`, which treats a
+        // record with no file as absent, but it is a lie in a file whose whole
+        // job is saying what Golem wrote. Matches `pruneRetiredSkills`, which
+        // has always forgotten alongside its `rm`.
+        await forgetManaged(projectDir, file);
+      }
       removed.push(rel(projectDir, file));
     } catch {
       // not present in this scope
@@ -513,42 +527,103 @@ export async function removeGuidanceRule(
   return { kind: "remove", path: removed.join(", "), detail: `removed guidance: ${name}` };
 }
 
-// --- seed-once sentinel (so disabling a default sticks across re-inits) ---
+// --- seed-once record (so disabling a default sticks across re-inits) ---
 
 function guidanceStatePath(projectDir: string): string {
   return path.join(projectDir, ".golem", "state", "guidance.json");
 }
 
-async function alreadySeeded(projectDir: string): Promise<boolean> {
+/**
+ * What the seed record holds.
+ *
+ * `features` is the whole point, and the reason this is no longer a bare
+ * boolean: it names the defaults this project has already been OFFERED. "The
+ * user disabled this" and "this did not exist when the project was initialised"
+ * are different facts, and a lone `seeded: true` collapses them — both read as
+ * "sentinel set, rule file absent". That collapse meant every guidance rule
+ * shipped after a project's first init silently never reached it, while the
+ * author's fresh test project got it and looked fine
+ * (`guidance-new-default-never-seeds`, found 2026-09-13 by the `vibe` rule).
+ *
+ * `features: null` marks the OLD format, which needs the migration below.
+ */
+interface GuidanceState {
+  readonly seeded: boolean;
+  readonly features: readonly string[] | null;
+}
+
+async function readGuidanceState(projectDir: string): Promise<GuidanceState> {
   try {
     const j = JSON.parse(await readFile(guidanceStatePath(projectDir), "utf8")) as {
       seeded?: unknown;
+      features?: unknown;
     };
-    return j.seeded === true;
+    const features =
+      Array.isArray(j.features) && j.features.every((f) => typeof f === "string")
+        ? (j.features as string[])
+        : null;
+    return { seeded: j.seeded === true, features };
   } catch {
-    return false;
+    return { seeded: false, features: null };
   }
 }
 
 /**
- * Seed the default guidance rule files, ONCE. On first init this writes the
- * `seededByDefault` features and records a sentinel; on later inits it is a
- * no-op, so a user's `golem guidance disable` of a default is never undone.
+ * Which defaults this project has already been offered.
+ *
+ * Three cases, and the third is the migration:
+ *
+ * - never seeded → none, so everything is offered now
+ * - new-format record → exactly what it says
+ * - OLD-format record (`features` absent) → the names are not recoverable, so
+ *   infer them from the rules currently on disk. That re-offers a rule somebody
+ *   had genuinely disabled, ONCE. It is the wrong answer for that user and the
+ *   right one for everybody who has simply never been given the newer rules, and
+ *   the second group is far larger — a missing rule is silent, whereas a
+ *   re-offered one is visible in the init output and one `golem guidance
+ *   disable` away.
+ */
+async function offeredFeatures(
+  projectDir: string,
+  state: GuidanceState,
+  defaults: readonly GuidanceFeature[],
+): Promise<{ offered: Set<string>; migrated: boolean }> {
+  if (!state.seeded) return { offered: new Set(), migrated: false };
+  if (state.features !== null) return { offered: new Set(state.features), migrated: false };
+
+  const offered = new Set<string>();
+  for (const f of defaults) {
+    if (await guidanceRuleExists(projectDir, f.name, "project")) offered.add(f.name);
+  }
+  return { offered, migrated: true };
+}
+
+/**
+ * Seed the default guidance rule files — each of them once, ever.
+ *
+ * "Once" is per FEATURE, not per project. A default the project has already been
+ * offered and no longer has on disk was turned off deliberately, and is left
+ * alone. A default it has never been offered — because it did not exist last
+ * time — is seeded now, which is the whole fix: otherwise a rule reaches new
+ * projects and silently never reaches established ones.
+ *
+ * A rule that is still PRESENT is refreshed when unmodified (R9.5), so shipping
+ * better wording still works.
  */
 export async function seedDefaultGuidance(
   projectDir: string,
   dryRun = false,
 ): Promise<InitAction[]> {
-  const seeded = await alreadySeeded(projectDir);
+  const state = await readGuidanceState(projectDir);
+  const defaults = GUIDANCE_FEATURES.filter((g) => g.seededByDefault);
+  const { offered, migrated } = await offeredFeatures(projectDir, state, defaults);
+
   const actions: InitAction[] = [];
-  for (const f of GUIDANCE_FEATURES.filter((g) => g.seededByDefault)) {
-    // R9.5: the sentinel keeps its real job — a rule the user turned off with
-    // `golem guidance disable` (i.e. deleted) is NOT re-created on a later init.
-    // But "don't undo the user's choice" and "never refresh the text" used to be
-    // the same mechanism, and only the first was ever intended. So once seeded,
-    // a rule that is still PRESENT is refreshed (when unmodified) and one that is
-    // ABSENT is left absent.
-    if (seeded && !(await guidanceRuleExists(projectDir, f.name, "project"))) {
+  let newlyOffered = 0;
+  for (const f of defaults) {
+    // Offered before and absent now = the user ran `golem guidance disable`.
+    // Never offered and absent = they have simply never seen it.
+    if (offered.has(f.name) && !(await guidanceRuleExists(projectDir, f.name, "project"))) {
       actions.push({
         kind: "skip",
         path: rel(projectDir, guidanceRulePath(projectDir, f.name, "project")),
@@ -556,12 +631,32 @@ export async function seedDefaultGuidance(
       });
       continue;
     }
+    if (!offered.has(f.name)) newlyOffered += 1;
     actions.push(await writeGuidanceRule(projectDir, f, "project", dryRun));
   }
+
+  if (migrated) {
+    actions.push({
+      kind: "modify",
+      path: rel(projectDir, guidanceStatePath(projectDir)),
+      detail:
+        `guidance record upgraded — it now tracks WHICH defaults were offered, ` +
+        `so a newly shipped rule reaches this project` +
+        (newlyOffered > 0 ? ` (${newlyOffered} seeded now)` : ""),
+    });
+  }
+
   if (!dryRun) {
+    // Everything offered before, plus every default just walked — including the
+    // ones left disabled, because they HAVE been offered and must not be
+    // re-offered on the next init.
+    const record: GuidanceState = {
+      seeded: true,
+      features: [...new Set([...offered, ...defaults.map((f) => f.name)])].sort(),
+    };
     const state = guidanceStatePath(projectDir);
     await mkdir(path.dirname(state), { recursive: true });
-    await writeFile(state, `${JSON.stringify({ seeded: true }, null, 2)}\n`, "utf8");
+    await writeFile(state, `${JSON.stringify(record, null, 2)}\n`, "utf8");
   }
   return actions;
 }
