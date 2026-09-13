@@ -1,7 +1,7 @@
 ---
 task: vibe-personal-style
 title: "`vibe` — a personal style reference guide Golem learns, gated to Golem projects, consulted by coder/scribe/reviewer"
-state: queued
+state: running
 owner: agent
 size: L
 discipline: code
@@ -11,6 +11,26 @@ touches: [src/cli/skills/, src/cli/init-skills.ts, src/cli/managed-files.ts, src
 created: 2026-09-13
 updated: 2026-09-13
 ---
+
+## Status — slice 1 LANDED 2026-09-13
+
+Store, seeding and the read path are on `feat/vibe-personal-style`. What remains
+is CAPTURE, which is what makes it *learn* rather than be told:
+
+- [ ] PostToolUse records what the agent wrote; the file watcher sees the user's
+      own edit that follows. The delta is a CORRECTION — the strongest signal in
+      the design, and invisible to a hook alone, since the user's edits are not
+      tool calls.
+- [ ] `candidates.jsonl`, with de-duplication and tombstones for rejected ones
+- [ ] `/vibe quiz` — one question, only for a pattern seen more than once,
+      always skippable, writing prose into the brief's voice section
+- [ ] One line each in `.claude/agents/golem-coder.md`, `golem-scribe.md`,
+      `golem-reviewer.md`
+- [ ] `git log --author` and prompt-text voice signals (seed sources 3 and 4)
+
+Slice 1 also fixed four bugs that only running it surfaced — see the debrief,
+`docs/wiki/debriefs/2026-09-13-vibe-personal-style.md`, and
+`docs/wiki/concepts/Personal Vibe Guide.md` for the durable design.
 
 ## What this is
 
