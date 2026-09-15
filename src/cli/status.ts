@@ -236,9 +236,10 @@ export interface StatusReport {
     readonly worker: string;
     readonly target: string;
     /**
-     * Which step chose `target`: an explicit `worker_targets` entry (`worker`),
-     * `inference.default_target`, or the harness default upstream (`harness`).
-     */
+   * Which step chose `target`: an explicit `worker_targets` entry (`worker`),
+   * `inference.personas[worker].model` (`persona_worker`), `inference.default_target`,
+   * or the harness default upstream (`harness`).
+   */
     readonly route?: string;
     /** The target's model. Absent when the target does not resolve. */
     readonly model?: string;

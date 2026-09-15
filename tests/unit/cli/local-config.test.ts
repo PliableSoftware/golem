@@ -189,13 +189,16 @@ describe("setLocalCoderEnabled", () => {
   it("writes the setting and it is readable back through the loader", async () => {
     await setLocalCoderEnabled(false, "project", { projectDir: dir });
     const settings = (await loadConfig({ projectDir: dir, userDir: dir }))
-      .settings as unknown as Record<string, unknown>;
+      .settings;
     // R9.23: coder_enabled removed — the old leaf is gone entirely.
-    expect(settings.inference__coder_enabled).toBeUndefined();
+    // R14.3: writes to deprecated worker_targets
+    expect(settings.inference.coder_enabled).toBeUndefined();
+    expect(settings.inference.worker_targets?.coder).toBe("__disabled__");
     await setLocalCoderEnabled(true, "project", { projectDir: dir });
     const settings2 = (await loadConfig({ projectDir: dir, userDir: dir }))
-      .settings as unknown as Record<string, unknown>;
-    expect(settings2.inference__coder_enabled).toBeUndefined();
+      .settings;
+    expect(settings2.inference.coder_enabled).toBeUndefined();
+    expect(settings2.inference.worker_targets).toEqual({});
   });
 
   it("honours the requested scope", async () => {
@@ -203,6 +206,7 @@ describe("setLocalCoderEnabled", () => {
     const raw = JSON.parse(
       await readFile(path.join(dir, ".golem", "settings.local.json"), "utf8"),
     ) as { inference?: { coder_enabled?: boolean; worker_targets?: Record<string, unknown> } };
+    // R9.23/R14.3: still writes to deprecated worker_targets for backward compat
     expect(raw.inference?.worker_targets?.coder).toBe("__disabled__");
   });
 });

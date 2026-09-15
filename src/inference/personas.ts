@@ -162,6 +162,23 @@ export function personaModel(
   return persona.dispatchable ? persona.model : undefined;
 }
 
+/**
+ * Read a persona's model for the WORKER lane (no owner check — worker lane
+ * ignores the permission axis). Used by `workerTarget` to derive the target
+ * id from `inference.personas[worker].model` when `worker_targets` is not set.
+ *
+ * Returns the raw model/target string if the persona exists and has a model set.
+ * The caller is responsible for resolving it via the target registry.
+ */
+export function workerTargetFromPersona(
+  personas: Readonly<Record<string, PersonaConfig>>,
+  worker: string,
+): string | undefined {
+  const config = personas[worker];
+  if (config === undefined) return undefined;
+  return config.model !== undefined && config.model !== "" ? config.model : undefined;
+}
+
 /** Where a persona's prompt came from — reported by `golem personas`. */
 export type PromptSource = "inline" | "prompt_file" | "convention" | "built-in" | "generic";
 

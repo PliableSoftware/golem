@@ -74,7 +74,7 @@ export const personaLayerSchema = z
     /** What a dispatcher reads to pick this persona. */
     description: z.string().min(1).optional(),
     /** A plain model id, or a `proxy.targets` id. Unset = unstaffed, and unstaffed declines. */
-    model: z.string().min(1).optional(),
+    model: z.string().optional(),
     /** Inline system prompt; overrides `prompt_file` and the built-in. */
     prompt: z.string().min(1).optional(),
     /** Path to the prompt; overrides the built-in. Defaults to `.golem/personas/<id>.md`. */
@@ -182,10 +182,14 @@ export const SETTINGS_LEAVES = {
           base_url: z.string().url(),
           models: z.array(z.string().min(1)).optional(),
           auth_scheme: z.enum(UPSTREAM_AUTH_SCHEMES).optional(),
+          /** Additional headers to include when forwarding to this gateway (e.g. Accept for NVIDIA NIM streaming). */
+          extra_headers: z
+            .array(z.tuple([z.string().min(1), z.string()]))
+            .optional(),
         }),
       )
       .optional(),
-    // R9.1 renamed `active_account` → `default_target`; R9.6 retired the leaf and
+    // R9.1 renamed `active_account` → `model`; R9.6 retired the leaf and
     // moved the fallback into src/config/migrations.ts, so an existing file
     // naming the old key still works and says so exactly once.
     /**
@@ -229,10 +233,17 @@ export const SETTINGS_LEAVES = {
     /** Upstream TCP/TLS connect timeout. */
     connect_timeout_ms: timeoutMsSchema,
     /**
-     * R9.23: DEPRECATED — moved to `inference.default_target`. Kept as a
+     * R13.x — idle timeout for project proxies (milliseconds). A proxy that has
+     * served no requests for this duration exits on its own. Unset (default) means
+     * never — today's behaviour is preserved by default so nobody's long-running
+     * setup changes under them.
+     */
+    idle_timeout_ms: timeoutMsSchema.optional(),
+    /**
+     * R9.23: DEPRECATED — moved to `inference.model`. Kept as a
      * valid leaf so the migration table can forward old settings files.
      */
-    default_target: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
   },
   inference: {
     /** OpenAI-compatible local inference endpoint (Ollama default). */
@@ -248,32 +259,15 @@ export const SETTINGS_LEAVES = {
     request_timeout_ms: timeoutMsSchema,
 
     /**
-     * R9.4 — which `proxy.targets` id each **tool worker** defaults to, keyed by
-     * worker name (`{ coder = "openrouter-qwen3" }`). A worker with no entry
-     * uses the local tiered model, exactly as before, so this changes nothing
-     * until it is set.
+     * R9.4 / R14.3 — DEPRECATED: use `inference.personas[worker].model` instead.
      *
-     * The point of the setting is that "the default coder model" becomes a real,
-     * settable thing rather than permanently-local: after R9.3 a draft can run
-     * on any declared target, and a status line that always says "local" would
-     * be describing a constraint that no longer exists.
+     * The worker lane now reads `inference.personas[worker].model` directly.
+     * A persona's `model` field serves both lanes:
+     *   - worker lane: Golem dispatches to the target (redacted)
+     *   - harness lane: subagent runs on the model (your key)
      *
-     * **A map, not one leaf per worker.** More workers are expected (a `writer`
-     * for documents, and so on); a scalar each would grow a schema leaf, a
-     * UI-model entry, a status field and two status-surface branches per worker,
-     * while a map grows by one line of config. The cost is that a key naming no
-     * worker would be silently ignored, so keys are validated against
-     * `KNOWN_WORKERS` and reported — see `inference/workers.ts`.
-     *
-     * Fail-closed like every other target reference: an unknown TARGET id is an
-     * error naming what is configured, never a silent fall back to the local
-     * model — that would send the work somewhere the user did not choose while
-     * reporting success. A non-local target is redacted at its trust floor on
-     * every dispatch (R9.3), so setting this never weakens redaction.
-     *
-     * R10.8: a worker with NO entry here no longer means "the local model". It
-     * falls through to `inference.default_target` and then to the harness's own
-     * upstream, so leaving this empty is a routing decision like any other.
+     * Kept as a valid leaf so the migration table can forward old settings files.
+     * New configs should not use this key.
      */
     worker_targets: z.record(z.string().min(1), z.string().min(1)).default({}),
 
@@ -313,7 +307,7 @@ export const SETTINGS_LEAVES = {
      */
     personas: z.record(personaIdSchema, personaLayerSchema).default({}),
     /**
-     * R9.23: moved from `proxy.default_target` to `inference.default_target`.
+     * R9.23: moved from `proxy.model` to `inference.model`.
      *
      * R10.8: this is now step 3 of the dispatch chain, and until R10.8 it was
      * skipped entirely — an unrouted `coder` draft went to the local model, so
@@ -328,7 +322,7 @@ export const SETTINGS_LEAVES = {
      * pointing a target at it and naming that target here; it is a destination,
      * not a default.
      */
-    default_target: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
     /**
      * R13.12 — the instruction prompt that frames EVERY coder task, whichever
      * mechanism runs it: the `system` field of a `coder` dispatch, and the body of
@@ -966,12 +960,22 @@ type OptionalizeUndefined<T> = {
  * and arrays. Optional properties keep their `?` (the mapping is homomorphic)
  * and shed the `| undefined` that would otherwise not be assignable to an
  * `exactOptionalPropertyTypes` optional.
+ *
+ * This version properly handles tuple types to preserve their fixed-length nature.
  */
-type DeepReadonly<T> = T extends readonly (infer U)[]
-  ? readonly DeepReadonly<U>[]
-  : T extends object
-    ? { readonly [K in keyof T]: DeepReadonly<Exclude<T[K], undefined>> }
-    : T;
+type DeepReadonly<T> =
+  // Handle readonly tuples with specific lengths (up to 4 elements for practical cases)
+  T extends readonly [infer A, infer B]
+    ? readonly [DeepReadonly<A>, DeepReadonly<B>]
+    : T extends readonly [infer A, infer B, infer C]
+      ? readonly [DeepReadonly<A>, DeepReadonly<B>, DeepReadonly<C>]
+      : T extends readonly [infer A, infer B, infer C, infer D]
+        ? readonly [DeepReadonly<A>, DeepReadonly<B>, DeepReadonly<C>, DeepReadonly<D>]
+        : T extends readonly (infer U)[]
+          ? readonly DeepReadonly<U>[]
+          : T extends object
+            ? { readonly [K in keyof T]: DeepReadonly<Exclude<T[K], undefined>> }
+            : T;
 
 /**
  * `z.infer` on a leaf read out of the table. The conditional is what lets the
@@ -1038,6 +1042,8 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     map_reasoning_to_thinking: true,
     request_timeout_ms: 600_000,
     connect_timeout_ms: 10_000,
+    // R14.x: explicit proxy.targets retired — targets now derived from proxy.gateways
+    gateways: [],
   },
   inference: {
     ollama_base_url: "http://localhost:11434",

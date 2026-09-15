@@ -278,6 +278,16 @@ export const SETTING_META = {
     advanced: true,
     restart: "proxy",
   },
+  "proxy.idle_timeout_ms": {
+    label: "Idle timeout",
+    summary: "Exit the proxy after this many ms with no requests (0 = never, default)",
+    detail:
+      "Unset means never — today's behaviour is preserved by default so nobody's " +
+      "long-running setup changes under them. When set, a project proxy that has " +
+      "served no requests for this duration exits on its own.",
+    advanced: true,
+    restart: "proxy",
+  },
 
   // --- inference ------------------------------------------------------------
   "inference.ollama_base_url": {
@@ -295,14 +305,14 @@ export const SETTING_META = {
     advanced: true,
   },
   "inference.worker_targets": {
-    label: "Worker targets",
-    summary: "Which target each tool worker (coder, …) drafts on by default",
+    label: "Worker targets (DEPRECATED)",
+    summary: "DEPRECATED — use inference.personas[worker].model instead. Kept for migration",
     detail:
-      "Keyed by worker name. R10.8: a worker with no entry falls through to " +
-      "`inference.default_target` and then to the harness's own upstream — no longer to the " +
-      "local model. A non-local target is redacted at its trust floor on every dispatch, and " +
-      "an unknown target id fails closed. See `golem target list`.",
+      "R14.3: worker lane now reads personas[worker].model directly. Each worker_targets entry " +
+      "becomes a persona with the same model/target id. This key is ignored when personas has " +
+      "the same worker. Migration warning shown on load.",
     kind: "opaque",
+    advanced: true,
     restart: "mcp",
   },
   "inference.personas": {
