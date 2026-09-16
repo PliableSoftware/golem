@@ -96,7 +96,7 @@ function looksLikeModelId(value: string): boolean {
  */
 export function resolveCoderRoute(input: CoderRouteInput): CoderRoute {
   // First check deprecated worker_targets (has precedence) - direct map lookup
-  const fromWorkerTargets = input.workerTargets?.["coder"];
+  const fromWorkerTargets = input.workerTargets?.coder;
   if (fromWorkerTargets !== undefined && fromWorkerTargets !== "") {
     return { kind: "target", targetId: fromWorkerTargets, via: "worker" };
   }

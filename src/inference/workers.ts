@@ -32,8 +32,7 @@
  * `resolveCoderRoute` uses for `personas.coder.model`.
  */
 
-import { effectivePersonas, type PersonaConfig } from "./personas.js";
-import { workerTargetFromPersona } from "./personas.js";
+import { effectivePersonas, type PersonaConfig, workerTargetFromPersona } from "./personas.js";
 
 /**
  * A worker name is a persona id. No longer a closed union: the roster is config,

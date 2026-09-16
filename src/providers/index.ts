@@ -259,9 +259,10 @@ export function defaultAuthScheme(provider: UpstreamProvider): UpstreamAuthSchem
       // authenticates as itself, which is the entire point of the route — Golem
       // never holds, reads or forwards that credential.
       return "inherit";
-    default:
+    default: {
       const _exhaustive: never = provider;
       return _exhaustive;
+    }
   }
 }
 

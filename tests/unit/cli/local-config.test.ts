@@ -191,10 +191,10 @@ describe("setLocalCoderEnabled", () => {
     const settings = (await loadConfig({ projectDir: dir, userDir: dir })).settings;
     // R9.23: coder_enabled removed — the old leaf is gone entirely.
     // R14.3: writes to personas.coder.model
-    expect(settings.inference.personas.coder!.model).toBe("__disabled__");
+    expect(settings.inference.personas.coder?.model).toBe("__disabled__");
     await setLocalCoderEnabled(true, "project", { projectDir: dir });
     const settings2 = (await loadConfig({ projectDir: dir, userDir: dir })).settings;
-    expect(settings2.inference.personas.coder!.model).toBe("");
+    expect(settings2.inference.personas.coder?.model).toBe("");
   });
 
   it("honours the requested scope", async () => {
