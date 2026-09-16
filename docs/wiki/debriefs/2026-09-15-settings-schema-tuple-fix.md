@@ -1,3 +1,12 @@
+---
+title: Fix tuple/array type mismatch in extra_headers property
+type: debrief
+tags: [config, schema, typescript, gateways, extra-headers]
+sources: ["src/config/schema.ts", "src/cli/commands/mcp-serve.ts", "src/cli/proxy-build/upstream-resolution.ts"]
+created: 2026-09-15
+updated: 2026-09-15
+---
+
 # Fix tuple/array type mismatch in extra_headers property
 
 ## Outcome
@@ -24,3 +33,8 @@ The issue occurred in the type derivation process where:
 
 ## Related Files
 - `src/config/schema.ts` - Enhanced DeepReadonly type utility
+
+Related: this commit also renamed the `default_target` leaf to `model` in
+`schema.ts` as a bundled, undocumented side effect — see
+[[The inference.default_target -> inference.model rename that was half-shipped, and the routing bug it was hiding]]
+for the fallout that caused and the fix that finished it correctly.

@@ -183,9 +183,7 @@ export const SETTINGS_LEAVES = {
           models: z.array(z.string().min(1)).optional(),
           auth_scheme: z.enum(UPSTREAM_AUTH_SCHEMES).optional(),
           /** Additional headers to include when forwarding to this gateway (e.g. Accept for NVIDIA NIM streaming). */
-          extra_headers: z
-            .array(z.tuple([z.string().min(1), z.string()]))
-            .optional(),
+          extra_headers: z.array(z.tuple([z.string().min(1), z.string()])).optional(),
         }),
       )
       .optional(),

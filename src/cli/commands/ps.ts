@@ -16,15 +16,13 @@
  * owning claude.exe/cmd.exe and check it is alive. Never infer death from age.
  */
 
-import { mkdir, readFile, rm } from "node:fs/promises";
-import type { Command } from "commander";
-import path from "node:path";
 import { spawn } from "node:child_process";
+import path from "node:path";
+import type { Command } from "commander";
 import { findProjectDir, loadConfig } from "../../config/index.js";
-import { isProcessAlive, proxyPidPath, readProxyPid, removeProxyPid } from "../proxy-daemon.js";
-import { listHostSessions, reapDeadSessions, hostRegistryPath, forgetHostSession } from "../../session/host-registry.js";
-import { VERSION } from "../../version.js";
+import { forgetHostSession, listHostSessions } from "../../session/host-registry.js";
 import { InitError } from "../init.js";
+import { isProcessAlive, readProxyPid, removeProxyPid } from "../proxy-daemon.js";
 
 const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 
@@ -51,13 +49,15 @@ async function getProcessRss(pid: number): Promise<number> {
       const proc = spawn("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]);
       const stdout = await new Promise<string>((resolve) => {
         let out = "";
-        proc.stdout.on("data", (d) => { out += d; });
+        proc.stdout.on("data", (d) => {
+          out += d;
+        });
         proc.on("close", () => resolve(out));
       });
       // CSV: "Image Name","PID","Session Name","Session#","Mem Usage","Status","User Name","CPU Time","Window Title"
       const lines = stdout.trim().split("\n");
       for (const line of lines) {
-        const cols = line.split(",").map(c => c.replace(/"/g, "").trim());
+        const cols = line.split(",").map((c) => c.replace(/"/g, "").trim());
         if (cols.length >= 5 && cols[4]) {
           const mem = cols[4].replace(/[^0-9]/g, "");
           if (mem) return Math.round(parseInt(mem, 10) / 1024); // tasklist shows KB
@@ -71,7 +71,7 @@ async function getProcessRss(pid: number): Promise<number> {
       const parts = stat.split(" ");
       // rss is field 24 (0-indexed 23), in pages
       if (parts.length > 23 && parts[23]) {
-        const rssPages = parseInt(parts[23]!, 10);
+        const rssPages = parseInt(parts[23], 10);
         if (!Number.isNaN(rssPages)) {
           const pageSize = 4096; // assume 4KB pages
           return Math.round((rssPages * pageSize) / 1_048_576);
@@ -87,18 +87,24 @@ async function getProcessStartTime(pid: number): Promise<string | undefined> {
   if (process.platform === "win32") {
     try {
       // Use PowerShell Get-CimInstance which is more reliable than wmic
-      const proc = spawn("powershell", ["-NoProfile", "-Command", `(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${pid}").CreationDate`]);
+      const proc = spawn("powershell", [
+        "-NoProfile",
+        "-Command",
+        `(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${pid}").CreationDate`,
+      ]);
       const stdout = await new Promise<string>((resolve, reject) => {
         let out = "";
-        proc.stdout.on("data", (d) => { out += d; });
+        proc.stdout.on("data", (d) => {
+          out += d;
+        });
         proc.on("close", () => resolve(out));
         proc.on("error", (err) => reject(err));
       });
       // CIM datetime format: 20260913123456.789000+000
       const match = stdout.trim().match(/^(\d{14})/);
-      if (match && match[1]) {
+      if (match?.[1]) {
         const s = match[1];
-        return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}T${s.slice(8,10)}:${s.slice(10,12)}:${s.slice(12,14)}Z`;
+        return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T${s.slice(8, 10)}:${s.slice(10, 12)}:${s.slice(12, 14)}Z`;
       }
     } catch {
       // PowerShell not available
@@ -143,27 +149,42 @@ async function findOwningClaude(pid: number): Promise<boolean> {
     if (process.platform === "win32") {
       let wmicFailed = false;
       try {
-        const proc = spawn("wmic", ["process", "where", `ProcessId=${current}`, "get", "ParentProcessId,Name,CommandLine", "/format:value"]);
+        const proc = spawn("wmic", [
+          "process",
+          "where",
+          `ProcessId=${current}`,
+          "get",
+          "ParentProcessId,Name,CommandLine",
+          "/format:value",
+        ]);
         const stdout = await new Promise<string>((resolve, reject) => {
           let out = "";
-          proc.stdout.on("data", (d) => { out += d; });
+          proc.stdout.on("data", (d) => {
+            out += d;
+          });
           proc.on("close", () => resolve(out));
           proc.on("error", (err) => reject(err));
         });
         const ppidMatch = stdout.match(/ParentProcessId=(\d+)/);
         const nameMatch = stdout.match(/Name=([^\r\n]+)/);
-        ppid = ppidMatch && ppidMatch[1] ? parseInt(ppidMatch[1]!, 10) : null;
-        name = nameMatch && nameMatch[1] ? nameMatch[1].toLowerCase() : "";
+        ppid = ppidMatch?.[1] ? parseInt(ppidMatch[1], 10) : null;
+        name = nameMatch?.[1] ? nameMatch[1].toLowerCase() : "";
       } catch {
         wmicFailed = true;
       }
       if (wmicFailed) {
         // wmic may not be available; try PowerShell Get-CimInstance
         try {
-          const proc = spawn("powershell", ["-NoProfile", "-Command", `(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${current}").ParentProcessId, (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${current}").Name`]);
+          const proc = spawn("powershell", [
+            "-NoProfile",
+            "-Command",
+            `(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${current}").ParentProcessId, (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${current}").Name`,
+          ]);
           const stdout = await new Promise<string>((resolve, reject) => {
             let out = "";
-            proc.stdout.on("data", (d) => { out += d; });
+            proc.stdout.on("data", (d) => {
+              out += d;
+            });
             proc.on("close", () => resolve(out));
             proc.on("error", (err) => reject(err));
           });
@@ -178,13 +199,15 @@ async function findOwningClaude(pid: number): Promise<boolean> {
             const proc = spawn("tasklist", ["/FI", `PID eq ${current}`, "/FO", "CSV", "/NH"]);
             const stdout = await new Promise<string>((resolve, reject) => {
               let out = "";
-              proc.stdout.on("data", (d) => { out += d; });
+              proc.stdout.on("data", (d) => {
+                out += d;
+              });
               proc.on("close", () => resolve(out));
               proc.on("error", (err) => reject(err));
             });
             const lines = stdout.trim().split("\n");
             for (const line of lines) {
-              const cols = line.split(",").map(c => c.replace(/"/g, "").trim());
+              const cols = line.split(",").map((c) => c.replace(/"/g, "").trim());
               if (cols.length >= 1 && cols[0]) {
                 name = cols[0].toLowerCase();
               }
@@ -201,16 +224,23 @@ async function findOwningClaude(pid: number): Promise<boolean> {
         const stat = await fs.readFile(`/proc/${current}/stat`, "utf8");
         const parts = stat.split(" ");
         if (parts.length > 3 && parts[3]) {
-          ppid = parseInt(parts[3]!, 10); // ppid is field 4
+          ppid = parseInt(parts[3], 10); // ppid is field 4
         }
         // comm is field 2, in parentheses
         const commMatch = stat.match(/\(([^)]+)\)/);
-        name = commMatch && commMatch[1] ? commMatch[1].toLowerCase() : "";
+        name = commMatch?.[1] ? commMatch[1].toLowerCase() : "";
       } catch {
         break;
       }
     }
-    if (name.includes("claude") || name.includes("cmd.exe") || name.includes("powershell") || name.includes("bash") || name.includes("zsh") || name.includes("fish")) {
+    if (
+      name.includes("claude") ||
+      name.includes("cmd.exe") ||
+      name.includes("powershell") ||
+      name.includes("bash") ||
+      name.includes("zsh") ||
+      name.includes("fish")
+    ) {
       return isProcessAlive(ppid ?? 0);
     }
     if (!ppid) break;
@@ -318,19 +348,28 @@ async function collectStatuslines(): Promise<GolemProcess[]> {
       if (process.platform === "win32") {
         let wmicFailed = false;
         try {
-          const proc = spawn("wmic", ["process", "where", `ProcessId=${current}`, "get", "ParentProcessId,Name,CommandLine", "/format:value"]);
+          const proc = spawn("wmic", [
+            "process",
+            "where",
+            `ProcessId=${current}`,
+            "get",
+            "ParentProcessId,Name,CommandLine",
+            "/format:value",
+          ]);
           const stdout = await new Promise<string>((resolve, reject) => {
             let o = "";
-            proc.stdout.on("data", (d) => { o += d; });
+            proc.stdout.on("data", (d) => {
+              o += d;
+            });
             proc.on("close", () => resolve(o));
             proc.on("error", (err) => reject(err));
           });
           const ppidMatch = stdout.match(/ParentProcessId=(\d+)/);
           const nameMatch = stdout.match(/Name=([^\r\n]+)/);
           const cmdMatch = stdout.match(/CommandLine=([^\r\n]*)/);
-          ppid = ppidMatch && ppidMatch[1] ? parseInt(ppidMatch[1]!, 10) : null;
-          name = nameMatch && nameMatch[1] ? nameMatch[1].toLowerCase() : "";
-          cmd = cmdMatch && cmdMatch[1] ? cmdMatch[1] : "";
+          ppid = ppidMatch?.[1] ? parseInt(ppidMatch[1], 10) : null;
+          name = nameMatch?.[1] ? nameMatch[1].toLowerCase() : "";
+          cmd = cmdMatch?.[1] ? cmdMatch[1] : "";
         } catch {
           wmicFailed = true;
         }
@@ -340,13 +379,15 @@ async function collectStatuslines(): Promise<GolemProcess[]> {
             const proc = spawn("tasklist", ["/FI", `PID eq ${current}`, "/FO", "CSV", "/NH"]);
             const stdout = await new Promise<string>((resolve, reject) => {
               let o = "";
-              proc.stdout.on("data", (d) => { o += d; });
+              proc.stdout.on("data", (d) => {
+                o += d;
+              });
               proc.on("close", () => resolve(o));
               proc.on("error", (err) => reject(err));
             });
             const lines = stdout.trim().split("\n");
             for (const line of lines) {
-              const cols = line.split(",").map(c => c.replace(/"/g, "").trim());
+              const cols = line.split(",").map((c) => c.replace(/"/g, "").trim());
               if (cols.length >= 1 && cols[0]) {
                 name = cols[0].toLowerCase();
               }
@@ -365,7 +406,7 @@ async function collectStatuslines(): Promise<GolemProcess[]> {
             ppid = parseInt(parts[3], 10);
           }
           const commMatch = stat.match(/\(([^)]+)\)/);
-          name = commMatch && commMatch[1] ? commMatch[1].toLowerCase() : "";
+          name = commMatch?.[1] ? commMatch[1].toLowerCase() : "";
           // cmdline
           try {
             const cmdline = await fs.readFile(`/proc/${current}/cmdline`, "utf8");
@@ -390,7 +431,13 @@ async function collectStatuslines(): Promise<GolemProcess[]> {
       }
       if (!ppid) break;
       current = ppid;
-      if (name.includes("claude") || name.includes("bash") || name.includes("zsh") || name.includes("fish")) break;
+      if (
+        name.includes("claude") ||
+        name.includes("bash") ||
+        name.includes("zsh") ||
+        name.includes("fish")
+      )
+        break;
     }
   } catch {}
   return out;
@@ -423,7 +470,7 @@ function renderTable(procs: GolemProcess[]): string {
     const pf = p.pidfileMatches ? "✓" : "✗";
     const parent = p.parentAlive !== undefined ? (p.parentAlive ? "✓" : "✗") : "—";
     lines.push(
-      `${String(p.pid).padEnd(8)} ${p.kind.padEnd(10)} ${projectName} ${age} ${rss}      ${pf}        ${parent}`
+      `${String(p.pid).padEnd(8)} ${p.kind.padEnd(10)} ${projectName} ${age} ${rss}      ${pf}        ${parent}`,
     );
   }
   lines.push("");
@@ -451,7 +498,10 @@ function renderJson(procs: GolemProcess[]): string {
 }
 
 /** Prune dead/idle processes. */
-async function pruneProcesses(procs: GolemProcess[], opts: { dryRun: boolean; idleTimeoutMs?: number; projectDir: string }): Promise<number> {
+async function pruneProcesses(
+  procs: GolemProcess[],
+  opts: { dryRun: boolean; idleTimeoutMs?: number; projectDir: string },
+): Promise<number> {
   let removed = 0;
   const now = Date.now();
 
@@ -460,11 +510,15 @@ async function pruneProcesses(procs: GolemProcess[], opts: { dryRun: boolean; id
       // Pidfile is stale — remove it
       if (p.kind === "proxy") {
         if (!opts.dryRun) await removeProxyPid(p.projectDir);
-        process.stdout.write(`Removed stale proxy pidfile for ${path.basename(p.projectDir)} (pid ${p.pid})\n`);
+        process.stdout.write(
+          `Removed stale proxy pidfile for ${path.basename(p.projectDir)} (pid ${p.pid})\n`,
+        );
         removed++;
       } else if (p.kind === "mcp") {
         if (!opts.dryRun) await forgetHostSession(p.projectDir, ""); // need session id
-        process.stdout.write(`Removed stale mcp session pid ${p.pid} for ${path.basename(p.projectDir)}\n`);
+        process.stdout.write(
+          `Removed stale mcp session pid ${p.pid} for ${path.basename(p.projectDir)}\n`,
+        );
         removed++;
       }
       continue;
@@ -475,10 +529,14 @@ async function pruneProcesses(procs: GolemProcess[], opts: { dryRun: boolean; id
       const idleMs = now - new Date(p.startedAt).getTime();
       if (idleMs > opts.idleTimeoutMs && !p.parentAlive) {
         if (!opts.dryRun) {
-          try { process.kill(p.pid); } catch {}
+          try {
+            process.kill(p.pid);
+          } catch {}
           await removeProxyPid(p.projectDir);
         }
-        process.stdout.write(`Stopped idle proxy for ${path.basename(p.projectDir)} (pid ${p.pid}, idle ${Math.floor(idleMs/60000)}m)\n`);
+        process.stdout.write(
+          `Stopped idle proxy for ${path.basename(p.projectDir)} (pid ${p.pid}, idle ${Math.floor(idleMs / 60000)}m)\n`,
+        );
         removed++;
       }
     }
@@ -486,13 +544,17 @@ async function pruneProcesses(procs: GolemProcess[], opts: { dryRun: boolean; id
     // Prune dead MCP sessions
     if (p.kind === "mcp" && !p.parentAlive) {
       if (!opts.dryRun) {
-        try { process.kill(p.pid); } catch {}
+        try {
+          process.kill(p.pid);
+        } catch {}
         // Find the session ID for this pid
         const sessions = await listHostSessions(p.projectDir);
-        const session = sessions.find(s => s.pid === p.pid);
+        const session = sessions.find((s) => s.pid === p.pid);
         if (session) await forgetHostSession(p.projectDir, session.id);
       }
-      process.stdout.write(`Stopped dead mcp session pid ${p.pid} for ${path.basename(p.projectDir)}\n`);
+      process.stdout.write(
+        `Stopped dead mcp session pid ${p.pid} for ${path.basename(p.projectDir)}\n`,
+      );
       removed++;
     }
   }
@@ -503,52 +565,71 @@ async function pruneProcesses(procs: GolemProcess[], opts: { dryRun: boolean; id
 export default function register(program: Command): void {
   program
     .command("ps")
-    .description("List Golem-owned processes on this machine (proxy, mcp serve, statusline, dashboard)")
+    .description(
+      "List Golem-owned processes on this machine (proxy, mcp serve, statusline, dashboard)",
+    )
     .option("--dir <path>", "project directory (limits to this project)", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .option("--prune", "remove stale/idle processes Golem owns and can prove are not live", false)
     .option("--dry-run", "with --prune, report what would be removed without removing", false)
-    .option("--idle-timeout-ms <ms>", "idle threshold for pruning proxies (ms); 0 = use config", "0")
-    .action(async (opts: { dir: string; json: boolean; prune: boolean; dryRun: boolean; idleTimeoutMs: string }) => {
-      try {
-        const projectDir = opts.dir;
-        const { settings } = await loadConfig({ projectDir });
-        const idleTimeoutMs = parseInt(opts.idleTimeoutMs, 10) > 0 ? parseInt(opts.idleTimeoutMs, 10) : (settings.proxy.idle_timeout_ms ?? 0);
+    .option(
+      "--idle-timeout-ms <ms>",
+      "idle threshold for pruning proxies (ms); 0 = use config",
+      "0",
+    )
+    .action(
+      async (opts: {
+        dir: string;
+        json: boolean;
+        prune: boolean;
+        dryRun: boolean;
+        idleTimeoutMs: string;
+      }) => {
+        try {
+          const projectDir = opts.dir;
+          const { settings } = await loadConfig({ projectDir });
+          const idleTimeoutMs =
+            parseInt(opts.idleTimeoutMs, 10) > 0
+              ? parseInt(opts.idleTimeoutMs, 10)
+              : (settings.proxy.idle_timeout_ms ?? 0);
 
-        const [proxies, mcpServes, statuslines] = await Promise.all([
-          collectProxies(),
-          collectMcpServes(),
-          collectStatuslines(),
-        ]);
+          const [proxies, mcpServes, statuslines] = await Promise.all([
+            collectProxies(),
+            collectMcpServes(),
+            collectStatuslines(),
+          ]);
 
-        let allProcs = [...proxies, ...mcpServes, ...statuslines];
+          let allProcs = [...proxies, ...mcpServes, ...statuslines];
 
-        // Filter by project if specified
-        if (opts.dir !== _DEFAULT_DIR) {
-          allProcs = allProcs.filter((p) => p.projectDir === projectDir);
-        }
-
-        if (opts.json) {
-          process.stdout.write(`${renderJson(allProcs)}\n`);
-          return;
-        }
-
-        if (opts.prune) {
-          const removed = await pruneProcesses(allProcs, {
-            dryRun: opts.dryRun,
-            idleTimeoutMs,
-            projectDir,
-          });
-          if (opts.dryRun) {
-            process.stdout.write(`Would remove ${removed} process(es). Run without --dry-run to execute.\n`);
-          } else {
-            process.stdout.write(`Removed ${removed} process(es).\n`);
+          // Filter by project if specified
+          if (opts.dir !== _DEFAULT_DIR) {
+            allProcs = allProcs.filter((p) => p.projectDir === projectDir);
           }
-        } else {
-          process.stdout.write(renderTable(allProcs));
+
+          if (opts.json) {
+            process.stdout.write(`${renderJson(allProcs)}\n`);
+            return;
+          }
+
+          if (opts.prune) {
+            const removed = await pruneProcesses(allProcs, {
+              dryRun: opts.dryRun,
+              idleTimeoutMs,
+              projectDir,
+            });
+            if (opts.dryRun) {
+              process.stdout.write(
+                `Would remove ${removed} process(es). Run without --dry-run to execute.\n`,
+              );
+            } else {
+              process.stdout.write(`Removed ${removed} process(es).\n`);
+            }
+          } else {
+            process.stdout.write(renderTable(allProcs));
+          }
+        } catch (err) {
+          _fail(err);
         }
-      } catch (err) {
-        _fail(err);
-      }
-    });
+      },
+    );
 }
