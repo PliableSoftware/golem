@@ -70,7 +70,7 @@ describe("resolveCoderRoute", () => {
   });
 
   it("resolves a bare GATEWAY id the way the rest of the registry does (R9.23)", () => {
-    // Resolves to that gateway's FIRST target, exactly as `default_target` does.
+    // Resolves to that gateway's FIRST target, exactly as `model` does.
     expect(resolveCoderRoute({ settings: SETTINGS, defaultCoder: "openrouter" })).toEqual({
       kind: "target",
       targetId: "openrouter:qwen/qwen3.7-flash",

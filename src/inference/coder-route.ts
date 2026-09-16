@@ -34,8 +34,8 @@
 
 import { listTargets, resolveTarget, type TargetRegistrySettings } from "../providers/index.js";
 import type { PersonaConfig } from "./personas.js";
-import { workerTarget } from "./workers.js";
 import { workerTargetFromPersona } from "./personas.js";
+import { workerTarget } from "./workers.js";
 
 /**
  * The one subagent Golem generates, and the `.claude/agents/<name>.md` basename.
@@ -50,7 +50,11 @@ export const CODER_AGENT_NAME = "golem-coder";
 /** What `default_coder` (and `worker_targets`) resolved to. */
 export type CoderRoute =
   /** Golem dispatches to this registry target itself. */
-  | { readonly kind: "target"; readonly targetId: string; readonly via: "worker" | "default_coder" | "persona_worker" }
+  | {
+      readonly kind: "target";
+      readonly targetId: string;
+      readonly via: "worker" | "default_coder" | "persona_worker";
+    }
   /** The harness should run a subagent on this model; Golem cannot spawn one. */
   | { readonly kind: "harness"; readonly model: string }
   /** Nothing is configured — the work stays in the calling session (R13.11). */
@@ -92,7 +96,7 @@ function looksLikeModelId(value: string): boolean {
  */
 export function resolveCoderRoute(input: CoderRouteInput): CoderRoute {
   // First check deprecated worker_targets (has precedence) - direct map lookup
-  const fromWorkerTargets = input.workerTargets?.[ "coder" ];
+  const fromWorkerTargets = input.workerTargets?.["coder"];
   if (fromWorkerTargets !== undefined && fromWorkerTargets !== "") {
     return { kind: "target", targetId: fromWorkerTargets, via: "worker" };
   }
@@ -116,10 +120,10 @@ export function resolveCoderRoute(input: CoderRouteInput): CoderRoute {
   }
 
   // A bare GATEWAY id resolves to that gateway's first target, matching what
-  // `resolveDefaultTargetId` does for `default_target` (R9.23). `resolveTarget`
+  // `resolveDefaultTargetId` does for `model` (R9.23). `resolveTarget`
   // itself does not do this — the rule lives in the default-target path — so it
   // is applied here rather than assumed, because `default_coder = "openrouter"`
-  // meaning something different from `default_target = "openrouter"` would be a
+  // meaning something different from `model = "openrouter"` would be a
   // gratuitous inconsistency between two adjacent settings.
   const viaGateway = listTargets(input.settings).find((t) => t.accountId === configured);
   if (viaGateway !== undefined) {

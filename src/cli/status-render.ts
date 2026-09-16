@@ -349,8 +349,8 @@ export function renderStatus(report: StatusReport): string {
         ? " — nothing routes `coder`, so it falls through to the harness default " +
           "upstream: it drafts there only if a key is stored for that upstream " +
           "(`golem target list`), and otherwise declines and leaves the work to the session"
-        : configured.route === "default_target"
-          ? " — via inference.default_target"
+        : configured.route === "model"
+          ? " — via inference.model"
           : "";
     lines.push(`  ${worker}: ${model} (target ${configured.target})${same}${via}`);
   }

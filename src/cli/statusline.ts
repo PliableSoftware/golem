@@ -548,8 +548,8 @@ export async function collectGolemState(
     });
     // R6.2: reflect the ACTIVE account/provider the proxy actually fronts, not
     // just the top-level base URL (env-less resolution — the label needs no key).
-    // R9.23: default_target moved from proxy to inference — spread it onto
-    // the proxy settings so resolveUpstreamDisplay can find it.
+    // R9.23: model moved from proxy to inference — `withDefaultTarget` folds it
+    // onto the proxy settings so resolveUpstreamDisplay can find it.
     const upstream = resolveUpstreamDisplay(withDefaultTarget(settings));
     label = providerUpstreamLabel(upstream.provider, upstream.baseUrl, upstream.accountId);
     provider = upstream.provider;

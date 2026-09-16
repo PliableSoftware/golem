@@ -544,6 +544,11 @@ function applyObjectLayer(
       // R9.6: the key the value lands on, and the key the FILE named — the same
       // thing except for a renamed setting, where provenance must report the
       // name actually present in the file rather than implying the new one.
+      // `targetSection` differs from `sectionName` for a CROSS-SECTION
+      // migration (R9.23: `proxy.active_account` → `inference.model`) — every
+      // lookup and write below this point must follow the migration's `to`
+      // section, not the section the file actually named the key under.
+      let targetSection = sectionName;
       let targetKey = key;
       let fromKey: string | undefined;
 
@@ -565,21 +570,31 @@ function applyObjectLayer(
         }
         // The replacement set in the SAME layer wins; the old key is reported
         // and dropped. Across layers, normal precedence applies untouched.
-        const [, liveKey] = splitDotted(migration.to);
-        if (liveKey !== undefined && Object.hasOwn(sectionValue, liveKey)) {
+        // The shadow check reads the TARGET section's raw object — for a
+        // same-section rename that is `sectionValue` itself, but a
+        // cross-section rename must look at `raw[toSection]`, not the section
+        // the retired key was declared under.
+        const [toSection, liveKey] = splitDotted(migration.to);
+        const toSectionValue = toSection === sectionName ? sectionValue : raw[toSection];
+        if (
+          liveKey !== undefined &&
+          isPlainObject(toSectionValue) &&
+          Object.hasOwn(toSectionValue, liveKey)
+        ) {
           warnings.push(migrationShadowedWarning(migration, label));
           continue;
         }
         // Exactly one warning per migrated key — never also "unknown setting".
         warnings.push(migrationWarning(migration, label));
+        targetSection = toSection;
         targetKey = liveKey ?? key;
         fromKey = dotted;
-        leaf = leafSchema(sectionName, targetKey);
+        leaf = leafSchema(targetSection, targetKey);
         if (leaf === undefined) continue; // guarded by assertLeafRename's test
         // Checked again on the RESOLVED key: a rename must not be a way for a
         // remote to reach a denied leaf under its old, undenied spelling.
-        if (remote && REMOTE_DENIED_SETTINGS.has(`${sectionName}.${targetKey}`)) {
-          warnings.push(remoteRefusalWarning(label, `${sectionName}.${targetKey}`));
+        if (remote && REMOTE_DENIED_SETTINGS.has(`${targetSection}.${targetKey}`)) {
+          warnings.push(remoteRefusalWarning(label, `${targetSection}.${targetKey}`));
           continue;
         }
       }
@@ -595,7 +610,7 @@ function applyObjectLayer(
           ...(sourceFile !== undefined && { source: sourceFile }),
         });
       }
-      const section = tree[sectionName];
+      const section = tree[targetSection];
       if (section !== undefined) {
         section[targetKey] = MERGE_PER_KEY_LEAVES.has(dotted)
           ? mergePerKey(
@@ -608,7 +623,7 @@ function applyObjectLayer(
               band,
             )
           : parsed.data;
-        provenance[`${sectionName}.${targetKey}`] = {
+        provenance[`${targetSection}.${targetKey}`] = {
           layer,
           ...(sourceFile !== undefined && { source: sourceFile }),
           ...(fromKey !== undefined && { key: fromKey }),

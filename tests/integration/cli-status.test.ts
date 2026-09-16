@@ -194,7 +194,7 @@ describe("collectStatus", () => {
     expect(report.local_model.reachable).toBe(true);
   });
 
-  it("reports the default upstream when inference.default_target is not set", async () => {
+  it("reports the default upstream when inference.model is not set", async () => {
     await writeSetting(
       "local",
       "proxy.gateways",

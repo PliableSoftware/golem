@@ -163,9 +163,10 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
   // Resolved before the reads below because the last-served-model lookup is
   // scoped to this account (a snapshot from the previous upstream must not be
   // reported as the current model).
-  // R9.23: default_target moved from proxy to inference — merge it so the
-  // display reflects the actual default target (e.g. openrouter:deepseek/...).
-  const upstream = resolveUpstreamDisplay(withDefaultTarget(settings));
+  // R9.23: model moved from proxy to inference — `withDefaultTarget` merges it
+  // so the display reflects the actual default target (e.g. openrouter:deepseek/...).
+  const proxyWithDefault = withDefaultTarget(settings);
+  const upstream = resolveUpstreamDisplay(proxyWithDefault);
 
   const localProbe = options.localProbe ?? probeAndCacheLocalModelInfo;
   const [init, reachable, daemon, brevityDial, compressionDial, localInfo, servedModel] =
@@ -190,9 +191,8 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
 
   // R9.2: per-target rows, each carrying what that target last served. Read from
   // the same snapshot the proxy writes, so status never has to reach the daemon.
-  // R9.23: default_target moved to inference — merge it so
+  // R9.23: model moved to inference — merge it so
   // resolveDefaultTargetId and listTargets see the live value.
-  const proxyWithDefault = withDefaultTarget(settings);
   const allServed = await readServedModel(projectDir).catch(() => null);
   const defaultTargetId = resolveDefaultTargetId(proxyWithDefault);
   const targetRows = listTargets(proxyWithDefault).map((t) => {
@@ -220,7 +220,7 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
   // `worker_targets` entry, and each carries the `route` that produced it. The
   // old shape could only answer "which workers did you configure"; the question
   // a user actually has is "where does the next `coder` draft go", and the
-  // unconfigured worker — which now lands on `inference.default_target` or the
+  // unconfigured worker — which now lands on `inference.model` or the
   // harness upstream rather than silently on the local model — is precisely the
   // one that used to have no row at all. Asked through the dispatcher's own
   // `selectTarget`, so status cannot predict one destination while dispatch

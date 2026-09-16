@@ -451,7 +451,7 @@ describe("collectGolemState", () => {
       ],
       { projectDir: dir },
     );
-    await writeSetting("project", "inference.default_target", "kimi", { projectDir: dir });
+    await writeSetting("project", "inference.model", "kimi", { projectDir: dir });
     const state = await collectGolemState(dir, {
       localReachable: async () => ({ reachable: false }),
     });
@@ -475,7 +475,7 @@ describe("collectGolemState", () => {
       ],
       { projectDir: dir },
     );
-    await writeSetting("project", "inference.default_target", "kimi", { projectDir: dir });
+    await writeSetting("project", "inference.model", "kimi", { projectDir: dir });
     await writeServedModel(dir, {
       model: "kimi-k3-0724",
       servedAtIso: "2026-07-24T00:00:00.000Z",
@@ -512,7 +512,7 @@ describe("collectGolemState", () => {
       ],
       { projectDir: dir },
     );
-    await writeSetting("project", "inference.default_target", "work", { projectDir: dir });
+    await writeSetting("project", "inference.model", "work", { projectDir: dir });
     await writeServedModel(dir, {
       model: "kimi-k3-0724",
       servedAtIso: "2026-07-24T00:00:00.000Z",

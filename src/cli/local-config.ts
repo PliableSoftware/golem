@@ -196,7 +196,7 @@ export async function setLocalCoderEnabled(
   opts: { readonly projectDir: string },
 ): Promise<ConfigWriteResult> {
   // R14.3: worker_targets retired — use personas.coder.model instead.
-  // Enable means clear the model (falls through to default_target); disable means
+  // Enable means clear the model (falls through to model); disable means
   // set a model that will never resolve.
   const { settings } = await loadConfig({ projectDir: opts.projectDir });
   const personas = { ...settings.inference.personas };
@@ -207,7 +207,20 @@ export async function setLocalCoderEnabled(
     coderPersona.model = "__disabled__";
   }
   personas.coder = coderPersona;
-  return writeSetting(scope, "inference.personas", personas, { projectDir: opts.projectDir });
+  const filePath = await writeSetting(scope, "inference.personas", personas, {
+    projectDir: opts.projectDir,
+  });
+  return {
+    key: "inference.personas",
+    value: personas,
+    scope: scope,
+    file: filePath,
+    effective: {
+      key: "inference.personas",
+      value: personas,
+      layer: scope as string,
+    },
+  };
 }
 
 export interface LocalUrlResult {

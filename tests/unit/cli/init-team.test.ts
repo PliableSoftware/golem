@@ -136,12 +136,12 @@ describe("org_id present with a token", () => {
       dryRun: false,
       team: linked(),
       tokenPresent: async () => true,
-      syncTeamLayer: async () => ["security.redact_secrets", "proxy.default_target"],
+      syncTeamLayer: async () => ["security.redact_secrets", "proxy.model"],
     });
     expect(result.outcome).toEqual({
       kind: "applied",
       orgId: ORG,
-      applied: ["security.redact_secrets", "proxy.default_target"],
+      applied: ["security.redact_secrets", "proxy.model"],
     });
     expect(result.notices[0]).toContain("applied 2 team settings");
   });
