@@ -37,6 +37,7 @@ import { planQueryEmbedder, resolvePersistedEmbedder } from "../auto-index.js";
 import { ollamaHasModel } from "../build-knowledge.js";
 import { credentialEnvForProxy } from "../gateways.js";
 import { InitError } from "../init.js";
+import { personaSettingsPaths, startPersonaWatcher } from "../persona-watcher.js";
 import { renderPipelineSwitch, setPipelineState } from "../pipeline-switch.js";
 import {
   buildFingerprint,
@@ -59,6 +60,7 @@ import {
   wiringGap,
 } from "../proxy-wiring.js";
 import type { VisionLookup } from "../route-resolver.js";
+import { renderClaudeAction, syncClaudeWiring } from "../version-sync.js";
 
 const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 
@@ -81,6 +83,36 @@ async function resolvePort(
     upstream: resolveUpstreamDisplay(settings.proxy).baseUrl,
     compression: settings.compression.level,
   };
+}
+
+/**
+ * Stop then start the detached daemon, always ending up RUNNING (full pipeline)
+ * regardless of prior state — the body of `golem proxy restart`, factored out so
+ * `golem config set` can reuse it after a setting that needs a fresh process to
+ * take effect (the daemon reads config at start-up, not per-request).
+ */
+export async function restartProxyDetached(
+  dir: string,
+): Promise<{ pid: number; port: number; upstream: string }> {
+  const { port, upstream } = await resolvePort(dir);
+  await stopProxy(dir);
+  if (!(await waitForPortFree(port))) {
+    throw new InitError(
+      `port ${port} is still in use after stopping — something else is holding it.`,
+    );
+  }
+  const pid = await startDetached(
+    dir,
+    port,
+    process.argv[1] ?? "",
+    await credentialEnvForProxy(dir),
+  );
+  if (pid === null) throw new InitError(`proxy did not come up on port ${port}`);
+  // R10.12: a restart establishes the RUNNING intent. Without recording it,
+  // a project stopped into bypass and then restarted would be brought back
+  // as the shim by the next SessionStart.
+  await writeProxyDesired(dir, "running", new Date().toISOString());
+  return { pid, port, upstream };
 }
 
 /**
@@ -145,7 +177,8 @@ async function startShimDetached(
 
 async function runProxyForeground(dir: string, portOpt?: string, shim = false): Promise<void> {
   // R9.13: first start under a new version — rewrite retired setting names.
-  for (const line of (await migrateOnVersionChange({ projectDir: dir, version: VERSION })).lines) {
+  const versionSweep = await migrateOnVersionChange({ projectDir: dir, version: VERSION });
+  for (const line of versionSweep.lines) {
     process.stderr.write(`golem config: ${line}\n`);
   }
   // `team-layer-fetch`: the proxy runs under its project's TEAM policy, not just
@@ -163,6 +196,16 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
     proxyLog(`golem team: ${team.notice}`);
   }
   const { port } = await resolvePort(dir, portOpt);
+
+  // Same version bump that just triggered the config-key sweep above also
+  // resyncs Claude Code's own wiring (hooks, statusLine, permissions) — see
+  // version-sync.ts. Gated on that EARLIER sweep's result rather than
+  // re-checking, so the version stamp is read/written exactly once per start.
+  if (versionSweep.ran) {
+    for (const action of await syncClaudeWiring(dir, port)) {
+      process.stderr.write(`golem config: ${renderClaudeAction(action)}\n`);
+    }
+  }
 
   // R9.20: skip this entirely when the parent already resolved and injected them
   // (`startDetached` sets the marker alongside the credentials). The injection
@@ -321,12 +364,36 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
     );
   }
 
+  // R14.x: live persona-artifact sync. `.golem/settings.json` /
+  // `.golem/settings.local.json` have nothing to do with the compression
+  // pipeline state built above — started unconditionally on BOTH the normal
+  // and the BYPASS-SHIM listener (one code path, no `shim` branch here), so a
+  // persona-roster edit reaches `.claude/agents/golem-<id>.md` even while the
+  // pipeline itself is off. Started after `proxy.listen` resolves, same as the
+  // loopback serve above. Its own first sync (before this call returns) is the
+  // daemon's self-heal for whatever changed while it was down; `version-sync.ts`
+  // makes the SAME call on every Claude Code session start, so the two overlap
+  // by design rather than by accident — both are idempotent, so whichever runs
+  // first does the work and the other no-ops.
+  const personaWatcher = await startPersonaWatcher(dir, {
+    onSync: (actions) => {
+      // No non-`skip` action means nothing actually changed on disk — stay
+      // quiet rather than logging a sync that did nothing.
+      const real = actions.filter((a) => a.kind !== "skip");
+      for (const action of real) proxyLog(renderClaudeAction(action));
+    },
+  });
+  proxyLog(`persona watcher: watching ${personaSettingsPaths(dir).join(", ")}`);
+
   const shutdown = (): void => {
     // Every sidecar, not just the semantic one: this handler used to stop
     // `semantic` alone, so the MEMORY sidecar leaked even on a clean POSIX
     // shutdown (R10.3). One teardown that the adapter keeps complete is the only
     // version of this that stays correct when a third sidecar appears.
     stopAllHeadroomWorkers();
+    // Synchronous, same as the sidecar teardown above and for the same reason:
+    // stop the poll loop before anything async starts unwinding, not racing it.
+    personaWatcher.close();
     void Promise.allSettled([
       proxy.close(),
       telemetry.close(),
@@ -504,32 +571,22 @@ export default function register(program: Command): void {
     .option("--foreground", "restart in the foreground instead of detached", false)
     .action(async (opts: { dir: string; foreground: boolean }) => {
       try {
-        const { port, upstream } = await resolvePort(opts.dir);
-        await stopProxy(opts.dir);
-        if (!(await waitForPortFree(port))) {
-          _fail(
-            new InitError(
-              `port ${port} is still in use after stopping — something else is holding it.`,
-            ),
-          );
-        }
         if (opts.foreground) {
+          const { port } = await resolvePort(opts.dir);
+          await stopProxy(opts.dir);
+          if (!(await waitForPortFree(port))) {
+            _fail(
+              new InitError(
+                `port ${port} is still in use after stopping — something else is holding it.`,
+              ),
+            );
+          }
           await runProxyForeground(opts.dir);
           return;
         }
-        const pid = await startDetached(
-          opts.dir,
-          port,
-          process.argv[1] ?? "",
-          await credentialEnvForProxy(opts.dir),
-        );
-        if (pid === null) _fail(new InitError(`proxy did not come up on port ${port}`));
-        // R10.12: a restart establishes the RUNNING intent. Without recording it,
-        // a project stopped into bypass and then restarted would be brought back
-        // as the shim by the next SessionStart.
-        await writeProxyDesired(opts.dir, "running", new Date().toISOString());
+        const result = await restartProxyDetached(opts.dir);
         process.stdout.write(
-          `golem proxy restarted (pid ${pid}) on http://localhost:${port} -> ${upstream}\n`,
+          `golem proxy restarted (pid ${result.pid}) on http://localhost:${result.port} -> ${result.upstream}\n`,
         );
       } catch (err) {
         _fail(err);

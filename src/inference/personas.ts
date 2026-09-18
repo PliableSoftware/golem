@@ -85,6 +85,12 @@ export const DEFAULT_PERSONA_PROMPTS: Readonly<Record<string, string>> = {
     "actually happened, including what failed and what was decided against; " +
     "prefer a number to an adjective, and say when something was not measured " +
     "rather than estimating it. Link sources instead of restating them.",
+  planner:
+    "You break a non-trivial or ambiguous task down into a concrete " +
+    "implementation plan before any code changes begin. Name the critical files " +
+    "to touch, the order to touch them in, and the trade-offs worth flagging. " +
+    "You do not write code. If the task is already concrete enough to just do, " +
+    "say so and stop.",
 };
 
 /** A generic fallback for a persona with no built-in and no prompt file. */

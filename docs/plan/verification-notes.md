@@ -9674,3 +9674,298 @@ guard both endpoints.
   it inside this repo bound Golem's own source to a test org; reverted with
   `golem team unlink` plus `git checkout`. Correct behaviour, but worth knowing
   before demonstrating the flow from inside a repo you publish.
+
+## §165 — A model the account cannot use and a model id that does not exist are the SAME 404 on the direct API; the discriminators are elsewhere (2026-09-17)
+
+Research for a proposed proxy-side model-access fallback (retry the same request
+on a configured model when the upstream refuses the requested one). The question
+that decides whether the feature is safe is: **what does the upstream return, and
+can that shape be told apart from a typo, a billing stop, or a rate limit?**
+
+### 1. The documented error taxonomy — [OBSERVED] (docs.claude.com/en/api/errors, read 2026-09-17)
+
+Each cause has its OWN status **and** its own `error.type`, which is what makes a
+narrow trigger possible at all:
+
+| status | `error.type` | documented meaning (quoted) |
+|---|---|---|
+| 400 | `invalid_request_error` | "There was an issue with the format or content of your request." Also returned "when usage reaches an organization or workspace spend limit" |
+| 401 | `authentication_error` | "There's an issue with your API key" |
+| 402 | `billing_error` | "There's an issue with your billing or payment information." |
+| 403 | `permission_error` | "Your API key does not have permission to use the specified resource." |
+| 404 | `not_found_error` | "The requested resource was not found." |
+| 429 | `rate_limit_error` | "Your organization has hit a rate limit…" |
+| 500 | `api_error` | internal |
+| 529 | `overloaded_error` | temporarily overloaded |
+
+Envelope, quoted from the page:
+
+```json
+{
+  "type": "error",
+  "error": { "type": "not_found_error", "message": "The requested resource could not be found." },
+  "request_id": "req_011CSHoEeqs5C35K2UUqR7Fy"
+}
+```
+
+**Billing and rate limits are therefore NOT ambiguous with model access** — 402
+and 429 carry distinct types. That is the safety argument for a trigger keyed on
+(status, `error.type`).
+
+### 2. Model access has no documented status of its own — [UNESTABLISHED]
+
+Neither the errors page, the Models endpoints page (`/v1/models`,
+`/v1/models/{model_id}` — read 2026-09-17, it documents `ModelInfo` and no error
+text at all), nor the Messages page states what a request naming a model the
+caller's account cannot use returns. **The docs do not distinguish "you may not
+use this model" from "no such model".**
+
+Field reports (anthropics/claude-code issues, so [OBSERVED] but second-hand) show
+the direct API answering **404 `not_found_error` with the model id as the whole
+message**:
+
+```json
+{"type":"error","error":{"type":"not_found_error","message":"model: claude-opus-4-5-20251101"}}
+```
+
+and the identical shape for a plainly mistyped id (`"message":"model: opus-4"`).
+Bedrock differs: 403 `permission_error`, "anthropic.claude-opus-4-7 is not
+available for this account."
+
+**Consequence for any fallback design: a typo and a missing entitlement are
+indistinguishable at the proxy.** A fallback keyed on this shape WILL also fire
+on a typo. That cannot be fixed by a better predicate; it can only be handled by
+making the feature opt-in and announcing every fire loudly, naming the refused
+model and quoting the upstream message.
+
+### 3. A pre-stream error is an HTTP status, not an SSE frame — [OBSERVED]
+
+Quoted from the errors page: *"When receiving a streaming response over
+server-sent events (SSE), an error can occur **after** the API returns a 200
+response. In that case, error handling doesn't follow these standard mechanisms."*
+
+So a refusal of the `model` field arrives as a normal HTTP 4xx with a small JSON
+body **before** any SSE byte. A proxy can therefore inspect it and re-dial
+without having written anything to the client — retry is mechanically possible.
+The converse also holds: a mid-stream error is unrecoverable, and no design
+should pretend otherwise.
+
+### 4. Claude Code already has a fallback chain — and its exclusion list matches §1 — [OBSERVED, quotes via docs sub-agent]
+
+`code.claude.com/docs/en/model-config`, "Fallback model chains": the
+`fallbackModel` setting and `--fallback-model` flag (comma-separated chain, flag
+wins). Trigger, quoted: *"When the primary model is overloaded, unavailable, or
+returns another non-retryable server error, Claude Code can switch to a fallback
+model instead of failing the request."* Exclusions, quoted: *"Authentication,
+billing, rate-limit, request-size, and transport errors, and a denial by your
+organization's policy check, never trigger a switch."*
+
+**Not established:** whether "unavailable" covers a 404 `not_found_error` on the
+`model` field, and whether the chain applies to a SUBAGENT dispatch (the
+sub-agents page's "API errors in subagents" section could not be read in full;
+what was retrievable says only that an API error ending a subagent early "is
+never delivered as its result"). Until someone observes it, do not assume the
+harness already solves the persona case — but do treat `fallbackModel` as the
+cheaper first lever, because Golem already writes `.claude/settings.json`.
+
+Also from that page: subagent `model:` frontmatter takes an alias (`sonnet`,
+`opus`, `haiku`, `fable`), `inherit`, or a full id; **aliases are resolved to a
+full model id before the request is sent**, so a proxy inspecting the body's
+`model` field sees `claude-opus-5`, never `opus`. Precedence: per-invocation
+parameter → frontmatter → `CLAUDE_CODE_SUBAGENT_MODEL` → main conversation.
+Consistent with §114 (Claude Code passes any model string through behind a custom
+`ANTHROPIC_BASE_URL`).
+
+### 5. Why this matters here, concretely
+
+This repo's committed `.golem/settings.json` pins `planner`/`reviewer` to
+`claude-opus-5`, and `golem init` generates `.claude/agents/golem-reviewer.md`
+with `model: claude-opus-5` in its frontmatter. Every contributor who clones the
+repo inherits that. On an account without Opus, dispatching `golem-reviewer`
+fails outright.
+
+## §166 — Regenerating `.claude/agents/golem-<id>.md` does NOT hot-reload a persona an in-flight session has already dispatched, and no doc says when that directory is rescanned (2026-09-18)
+
+Research for the proposed "settings change should reach the personas without a
+manual `golem init`" work: an unconditional SessionStart resync plus a live
+watcher in the proxy daemon. The question that decides how strongly that feature
+may be advertised is: **once the file on disk is correct, does a RUNNING Claude
+Code session see it?**
+
+### 1. A redispatched persona keeps its old definition — [OBSERVED, twice, this session]
+
+Edited a staffed persona's settings, regenerated `.claude/agents/golem-<id>.md`
+(confirmed correct on disk), then redispatched that SAME persona inside the
+already-running session. The dispatch used the OLD definition. Repeated once,
+same result. Promptness of the regeneration was not the variable — the file was
+already current before the dispatch was issued.
+
+So the claim this feature may make is bounded:
+
+- **Supported:** the file on disk is current, so the NEXT session is correct
+  without anyone running `golem init`.
+- **Unsupported:** instant hot-swap for a session that has already dispatched
+  that persona. Do not word a task doc, changelog or rule as though a live
+  session picks the change up.
+- **Unknown:** a session that has NOT yet dispatched a given persona. Plausible
+  that a first dispatch reads the file fresh, but see §2 — nothing establishes it,
+  and it was not tested.
+
+### 2. Claude Code does not document when `.claude/agents/*.md` is (re)scanned — [UNESTABLISHED] (code.claude.com/docs/en/sub-agents, read 2026-09-18)
+
+The sub-agents page documents the file format, the frontmatter fields, the
+precedence of project over user scope, and that definitions are picked up from
+`.claude/agents/`. It does **not** state the caching model. Nothing on the page
+distinguishes a session-start snapshot from a first-dispatch-per-type cache from
+a per-dispatch read, and there is no documented way to force a rescan short of a
+new session.
+
+§1's observation is consistent with a session-start snapshot AND with a
+first-dispatch-per-type cache; it does not separate them. Whichever it is, it is
+undocumented and therefore not a contract — Golem should keep the files correct
+and let a new session be the guarantee, rather than depending on a rescan it
+cannot see.
+
+### 3. The watcher must POLL — §68 already settles this, and it applies here too
+
+The settings watcher cannot reach for `node:fs.watch`: §68 records libuv aborting
+the PROCESS (uncatchable, no `error` event) on Windows/macOS path shapes, which is
+why `src/knowledge/file-watcher.ts` is polling-only on every OS. A watcher living
+inside the proxy daemon is exactly the place that crash would be worst. Reuse the
+polling + debounce shape, not `fs.watch`.
+
+`watchPath` itself is **not** reusable verbatim for `.golem/settings*.json`: its
+flush drops anything failing `isChunkableExtension` (`.json` is not chunkable —
+`src/knowledge/chunker.ts:188`) and `isIgnoredPath` skips dot-segments, which
+`.golem` is. The pattern carries over; the function does not.
+
+## §167 — The statusline's cost is TELEMETRY, not the Node spawn; and `statusLine.command` runs under a shell Claude Code picks for you (2026-09-18)
+
+Investigated for the proposal *"stop spawning Node every ~2s — let the
+statusline `curl` the proxy daemon instead"*. The proposal does not survive
+measurement, and the live docs add a second, independent reason. Both halves
+recorded here so the idea is not re-derived.
+
+### 1. Live doc — `code.claude.com/docs/en/statusline.md` (fetched 2026-09-18)
+
+- **It IS a shell command**, quoted: *"The `command` field runs in a shell, so
+  you can also use inline commands instead of a script file."* The page's own
+  inline example is `jq -r '"[\(.model.display_name)] \(.context_window.used_percentage // 0)% context"'`.
+- **Which shell on Windows is CONDITIONAL**, quoted: *"On Windows, Claude Code
+  runs status line commands through Git Bash when Git Bash is installed, or
+  through PowerShell when Git Bash is absent."* So one `command` string must be
+  valid under Git Bash **and** PowerShell **and** POSIX `sh` — three shells,
+  and which one you get depends on what the user happens to have installed.
+- The doc's own answer to that is **not** a portable one-liner: it tells Windows
+  users to write `"powershell -NoProfile -File C:/Users/username/.claude/statusline.ps1"`,
+  noting that *"This works whether Claude Code routes the command through Git
+  Bash or PowerShell"*. That command string is Windows-only — it is a
+  per-platform seed, not a cross-platform one.
+- Also quoted, on paths: *"Git Bash treats unquoted backslashes as escape
+  characters, so a Windows-style path such as `C:\Users\username\script.mjs`
+  reaches the script runner with its separators removed and the command fails
+  **without a visible error**."* Forward slashes required; `~` expands.
+- **stdin** confirmed: *"Claude Code runs your script with JSON session data on
+  stdin and displays whatever the script prints to stdout."*
+- `refreshInterval`: *"re-runs your command every N seconds in addition to the
+  event-driven updates. The minimum is `1`. … Leave it unset to run only on
+  events."* Event triggers listed: session start/resume, a new assistant
+  message, `/compact` finishing, permission-mode change, Vim-mode toggle, and
+  changing the `command` itself.
+- **NOT documented, checked for deliberately:** any timeout Claude Code enforces
+  on the command; what happens on a non-zero exit, on empty output, or on a
+  hang; stderr handling; whether ANSI colour is officially supported (§28's
+  2026-07-04 reading said multi-line and ANSI are fine, and the page still shows
+  a multi-line colour example, but there is no normative sentence). Do not build
+  on an assumed timeout.
+
+### 2. Measured — where the ~900ms actually goes (this box, Windows 11, 2026-09-18)
+
+§86b's "**301ms** — 3.3×" is no longer what this machine does. Re-measured
+end-to-end, `node dist/cli/main.js statusline --color` with a session payload on
+stdin: **905 / 817 / 1071 / 1250 ms**. The fast path did not regress; the input
+grew.
+
+Broken down by phase (importing the built modules directly):
+
+| Phase | Cost |
+|---|---|
+| `import dist/cli/statusline.js` | **106ms** |
+| `collectGolemState(dir)` (includes one telemetry aggregate) | **423ms** |
+| `openTelemetryStore(dir).aggregate()` alone | **517ms** |
+| `loadConfig({projectDir})` alone | **6ms** |
+| bare `node -e "0"` startup | **164 / 173 / 195 ms** |
+
+The cause: `TelemetryStore.aggregate()` (`src/telemetry/jsonl-store.ts:189`)
+does `readFile(events.jsonl, "utf8")` then `raw.split("\n")` and `JSON.parse`
+per line — **the whole file, every tick**. This repo's own
+`.golem/telemetry/events.jsonl` is **25.8 MB / 70,102 events**. Isolated: 21ms
+to read, **218ms to split+parse** warm; 517ms through the store's own path.
+There is **no rotation, compaction, or cached rollup** anywhere in
+`src/telemetry/` — every `aggregate*` re-reads from byte zero. The cost grows
+linearly and without bound for the life of a project.
+
+So the per-tick cost is roughly **~170ms process start + ~106ms module load +
+~400–500ms telemetry + ~150ms everything else**. Node startup is the *minority*
+of it.
+
+### 3. Measured — `curl` does not save what the proposal assumes
+
+On this box, process startup only:
+
+| Binary | Cost |
+|---|---|
+| `node -e "0"` | 164 / 173 / 195 ms |
+| `curl --version` (Git `mingw64`) | 139 / 136 / 149 ms |
+| `curl --version` (`C:\Windows\System32\curl.exe`) | 135 / 131 / 149 ms |
+| `jq -r '.'` on `{}` | 311 / 198 / 339 ms |
+| `powershell -NoProfile -Command 1` | 681 / 446 ms |
+
+`curl` is ~135–150ms to start — it is **not** free, and swapping it for Node
+saves ~30–50ms of raw process start, ~136ms once the module load goes too. But
+the status line must MERGE Claude Code's stdin JSON with Golem state, and curl
+cannot merge anything: that needs a second process (`jq`, **198–339ms**, and it
+is not guaranteed installed — here it came from Chocolatey, not the OS) or a
+PowerShell host (**446–681ms**). **Any two-process pipeline is slower than the
+one Node process it would replace**, and it would still not touch the
+~400–500ms telemetry parse, which the daemon would have to do too unless it
+cached — and caching needs no daemon.
+
+### 4. What the loopback server actually is (read, not assumed)
+
+`src/proxy/loopback-serve.ts` is a real `node:https` server, so adding a route
+is mechanically trivial — but it is **not addressable by a static command
+string**. It listens on an **ephemeral port** (`options.port ?? 0`) and gates
+every request on a **per-run 24-byte nonce**; both are published only to
+`.golem/state/loopback-serve.json`. A `curl` one-liner would first have to parse
+that JSON — in whichever of three shells it landed in — before it could form a
+URL. Its TLS is the `nameConstraints`-limited CA from
+`src/proxy/loopback-cert.ts`, trusted by Claude Code via `NODE_EXTRA_CA_CERTS`;
+`curl` on Windows uses **Schannel** (confirmed: `curl 8.15.0 … Schannel`), which
+reads the Windows cert store, not that env var, so every invocation would need
+an explicit `--cacert <path>` — a fourth dynamic value for the command string to
+discover.
+
+### 5. Conclusion
+
+The loopback-`curl` statusline is **not worth building**. Two independent
+findings kill it: the win it targets (~136ms of Node startup) is smaller than
+the cost it adds (a second process at 198–681ms), and the command string cannot
+be written portably across the three shells Claude Code may choose, against an
+ephemeral port + nonce + cert path it cannot read without one.
+
+The real lever is **§2**: make `aggregate()` incremental or cached. That is a
+pure `src/telemetry/` change, needs no server, no cert, no shell, no new
+process, and no change to the seeded `statusLine` command at all.
+
+### 6. If the seeded command ever DOES change — the migration trap
+
+`writeStatusLine` (`src/hooks/settings-extras.ts:205`) recognises "ours" by
+**exact string equality** against the single constant `STATUS_LINE_COMMAND`
+(`"golem statusline --color"`). Every other value — including a previous Golem
+default — falls into the `"status line set to a non-Golem command; left as is"`
+branch. Changing that constant would therefore **freeze every existing install
+on the old command forever**, silently. Any future change needs a list of
+*previously seeded* Golem commands treated as upgradable, alongside the current
+one, the same way `refreshInterval` is already upgraded in place. `removeStatusLine`
+has the identical equality check and the identical problem.
