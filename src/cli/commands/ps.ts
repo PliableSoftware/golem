@@ -8,7 +8,8 @@
  * Sources:
  *   - proxy: pid files under <project>/.golem/proxy.pid (one per project)
  *   - mcp serve: session registry under <project>/.golem/state/hosted-sessions.json
- *   - statusline: parentage walk from the current process to a living claude.exe
+ *   - statusline: machine-wide `node.exe` scan for `golem-run ... statusline`
+ *     candidates, each proven live/dead via the same parentage walk as mcp/proxy
  *   - dashboard: not yet tracked (no pidfile)
  *
  * `golem ps --prune` removes ONLY processes Golem can prove are its own AND
@@ -140,6 +141,23 @@ async function getBootTime(): Promise<number> {
   return 0;
 }
 
+/**
+ * Whether `wmic` runs at all on this machine, probed once and cached for the
+ * life of the process. `wmic` is removed outright on newer Windows builds —
+ * not merely erroring on a bad query — so every hop of every ancestry walk
+ * otherwise pays a full failed spawn before falling back to PowerShell.
+ * Confirmed absent (not just slow) on at least one real machine in the wild.
+ */
+let _wmicAvailable: Promise<boolean> | undefined;
+function wmicAvailable(): Promise<boolean> {
+  _wmicAvailable ??= new Promise<boolean>((resolve) => {
+    const proc = spawn("wmic", ["quit"]);
+    proc.on("error", () => resolve(false));
+    proc.on("close", (code) => resolve(code === 0));
+  });
+  return _wmicAvailable;
+}
+
 /** Walk parent pids up to find a living claude.exe / cmd.exe / powershell.exe. */
 async function findOwningClaude(pid: number): Promise<boolean> {
   let current = pid;
@@ -147,30 +165,32 @@ async function findOwningClaude(pid: number): Promise<boolean> {
     let ppid: number | null = null;
     let name = "";
     if (process.platform === "win32") {
-      let wmicFailed = false;
-      try {
-        const proc = spawn("wmic", [
-          "process",
-          "where",
-          `ProcessId=${current}`,
-          "get",
-          "ParentProcessId,Name,CommandLine",
-          "/format:value",
-        ]);
-        const stdout = await new Promise<string>((resolve, reject) => {
-          let out = "";
-          proc.stdout.on("data", (d) => {
-            out += d;
+      let wmicFailed = !(await wmicAvailable());
+      if (!wmicFailed) {
+        try {
+          const proc = spawn("wmic", [
+            "process",
+            "where",
+            `ProcessId=${current}`,
+            "get",
+            "ParentProcessId,Name,CommandLine",
+            "/format:value",
+          ]);
+          const stdout = await new Promise<string>((resolve, reject) => {
+            let out = "";
+            proc.stdout.on("data", (d) => {
+              out += d;
+            });
+            proc.on("close", () => resolve(out));
+            proc.on("error", (err) => reject(err));
           });
-          proc.on("close", () => resolve(out));
-          proc.on("error", (err) => reject(err));
-        });
-        const ppidMatch = stdout.match(/ParentProcessId=(\d+)/);
-        const nameMatch = stdout.match(/Name=([^\r\n]+)/);
-        ppid = ppidMatch?.[1] ? parseInt(ppidMatch[1], 10) : null;
-        name = nameMatch?.[1] ? nameMatch[1].toLowerCase() : "";
-      } catch {
-        wmicFailed = true;
+          const ppidMatch = stdout.match(/ParentProcessId=(\d+)/);
+          const nameMatch = stdout.match(/Name=([^\r\n]+)/);
+          ppid = ppidMatch?.[1] ? parseInt(ppidMatch[1], 10) : null;
+          name = nameMatch?.[1] ? nameMatch[1].toLowerCase() : "";
+        } catch {
+          wmicFailed = true;
+        }
       }
       if (wmicFailed) {
         // wmic may not be available; try PowerShell Get-CimInstance
@@ -306,140 +326,299 @@ async function collectProxies(): Promise<GolemProcess[]> {
   return out;
 }
 
-/** Collect MCP serve processes from session registry. */
-async function collectMcpServes(): Promise<GolemProcess[]> {
+/**
+ * Collect MCP serve processes from every session registry this process can
+ * actually find, plus a machine-wide sweep for any `mcp serve` process that
+ * registry lookup missed.
+ *
+ * The registry lives at `<project>/.golem/state/hosted-sessions.json` — INSIDE
+ * each project, never under `~/.golem/<name>`. The `~/.golem` subdirectory
+ * scan below (kept for the current project layout, same as
+ * {@link collectProxies}) never actually finds cross-project entries this
+ * way: `~/.golem` holds shared state (`credentials/`, `state/`, `teams/`,
+ * `vibe/`, `settings.json`), not one subdirectory per project. Nothing in this
+ * codebase registers a project's path there, so this loop was previously the
+ * ONLY source for mcp sessions and always came up empty — this command could
+ * not see even its OWN session. The snapshot sweep is what actually finds
+ * anything outside the current project.
+ */
+async function collectMcpServes(
+  snapshot: Map<number, SnapshotEntry> | undefined,
+): Promise<GolemProcess[]> {
   const out: GolemProcess[] = [];
+  const seen = new Set<number>();
+
+  const projectDirs = new Set<string>([_DEFAULT_DIR]);
   const userProfile = process.env.USERPROFILE ?? process.env.HOME ?? "";
   const userDir = path.join(userProfile, ".golem");
   try {
     const fs = await import("node:fs/promises");
     const entries = await fs.readdir(userDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const projectDir = path.join(userDir, entry.name);
-      const sessions = await listHostSessions(projectDir);
-      for (const s of sessions) {
-        const rss = s.alive ? await getProcessRss(s.pid) : 0;
-        out.push({
-          pid: s.pid,
-          kind: "mcp",
-          projectDir,
-          startedAt: s.startedAt,
-          rssMb: rss,
-          pidfileMatches: s.alive,
-          parentAlive: s.alive ? await findOwningClaude(s.pid) : undefined,
-        });
-      }
+      if (entry.isDirectory()) projectDirs.add(path.join(userDir, entry.name));
     }
   } catch {}
+
+  for (const projectDir of projectDirs) {
+    const sessions = await listHostSessions(projectDir);
+    for (const s of sessions) {
+      seen.add(s.pid);
+      const rss = s.alive ? await getProcessRss(s.pid) : 0;
+      out.push({
+        pid: s.pid,
+        kind: "mcp",
+        projectDir,
+        startedAt: s.startedAt,
+        rssMb: rss,
+        pidfileMatches: s.alive,
+        parentAlive: s.alive ? await findOwningClaude(s.pid) : undefined,
+      });
+    }
+  }
+
+  // Any `mcp serve` process a registry lookup didn't already account for —
+  // typically a different project this machine has no registry path for.
+  // Project attribution isn't recoverable from the process table alone, so
+  // these are reported unattributed; pruning still only ever acts on a
+  // provably dead owning shell, same bar as everything else.
+  if (snapshot) {
+    for (const [pid, entry] of snapshot) {
+      if (seen.has(pid)) continue;
+      if (entry.name !== "node.exe") continue;
+      if (!entry.cmd.includes("golem-run")) continue;
+      if (!/\bmcp\b/.test(entry.cmd) || !/\bserve\b/.test(entry.cmd)) continue;
+      out.push({
+        pid,
+        kind: "mcp",
+        projectDir: "(unattributed)",
+        startedAt: entry.startedAt,
+        rssMb: entry.rssMb,
+        pidfileMatches: true,
+        parentAlive: walkOwnerFromSnapshot(pid, snapshot),
+      });
+    }
+  }
+
   return out;
 }
 
-/** Collect statusline processes by walking from current process. */
-async function collectStatuslines(): Promise<GolemProcess[]> {
-  const out: GolemProcess[] = [];
-  try {
-    // Walk up from current process to find claude
-    let current = process.pid;
-    for (let i = 0; i < 10; i++) {
-      let ppid: number | null = null;
-      let name = "";
-      let cmd = "";
-      if (process.platform === "win32") {
-        let wmicFailed = false;
-        try {
-          const proc = spawn("wmic", [
-            "process",
-            "where",
-            `ProcessId=${current}`,
-            "get",
-            "ParentProcessId,Name,CommandLine",
-            "/format:value",
-          ]);
-          const stdout = await new Promise<string>((resolve, reject) => {
-            let o = "";
-            proc.stdout.on("data", (d) => {
-              o += d;
-            });
-            proc.on("close", () => resolve(o));
-            proc.on("error", (err) => reject(err));
-          });
-          const ppidMatch = stdout.match(/ParentProcessId=(\d+)/);
-          const nameMatch = stdout.match(/Name=([^\r\n]+)/);
-          const cmdMatch = stdout.match(/CommandLine=([^\r\n]*)/);
-          ppid = ppidMatch?.[1] ? parseInt(ppidMatch[1], 10) : null;
-          name = nameMatch?.[1] ? nameMatch[1].toLowerCase() : "";
-          cmd = cmdMatch?.[1] ? cmdMatch[1] : "";
-        } catch {
-          wmicFailed = true;
-        }
-        if (wmicFailed) {
-          // wmic not available; try tasklist
-          try {
-            const proc = spawn("tasklist", ["/FI", `PID eq ${current}`, "/FO", "CSV", "/NH"]);
-            const stdout = await new Promise<string>((resolve, reject) => {
-              let o = "";
-              proc.stdout.on("data", (d) => {
-                o += d;
-              });
-              proc.on("close", () => resolve(o));
-              proc.on("error", (err) => reject(err));
-            });
-            const lines = stdout.trim().split("\n");
-            for (const line of lines) {
-              const cols = line.split(",").map((c) => c.replace(/"/g, "").trim());
-              if (cols.length >= 1 && cols[0]) {
-                name = cols[0].toLowerCase();
-              }
-            }
-            break; // can't get ppid/cmdline easily
-          } catch {
-            break;
-          }
-        }
-      } else {
-        try {
-          const fs = await import("node:fs/promises");
-          const stat = await fs.readFile(`/proc/${current}/stat`, "utf8");
-          const parts = stat.split(" ");
-          if (parts.length > 3 && parts[3]) {
-            ppid = parseInt(parts[3], 10);
-          }
-          const commMatch = stat.match(/\(([^)]+)\)/);
-          name = commMatch?.[1] ? commMatch[1].toLowerCase() : "";
-          // cmdline
-          try {
-            const cmdline = await fs.readFile(`/proc/${current}/cmdline`, "utf8");
-            cmd = cmdline.replace(/\0/g, " ");
-          } catch {}
-        } catch {
-          break;
+/** Spawn `cmd`, capture stdout, resolve on close, reject on a spawn error. */
+async function runCapture(cmd: string, args: string[]): Promise<string> {
+  const proc = spawn(cmd, args);
+  return await new Promise<string>((resolve, reject) => {
+    let o = "";
+    proc.stdout.on("data", (d) => {
+      o += d;
+    });
+    proc.on("close", () => resolve(o));
+    proc.on("error", (err) => reject(err));
+  });
+}
+
+/**
+ * Every live `node.exe` PID whose command line names `golem-run` and
+ * `statusline` — the candidate set for the statusline kind. A commandline
+ * match is a hint, never the gate: {@link findOwningClaude} still has to
+ * prove each candidate's owning shell is dead before anything is pruned.
+ */
+async function listStatuslineCandidates(): Promise<number[]> {
+  const isCandidate = (cmd: string): boolean =>
+    cmd.includes("golem-run") && /\bstatusline\b/.test(cmd);
+  if (process.platform === "win32") {
+    try {
+      if (!(await wmicAvailable())) throw new Error("wmic unavailable");
+      const stdout = await runCapture("wmic", [
+        "process",
+        "where",
+        "Name='node.exe'",
+        "get",
+        "ProcessId,CommandLine",
+        "/format:value",
+      ]);
+      const pids: number[] = [];
+      // wmic's /format:value prints one `Key=Value` line per field, blocks
+      // separated by a blank line — CommandLine arrives before ProcessId.
+      for (const block of stdout.split(/\r?\n\r?\n/)) {
+        const cmdMatch = block.match(/CommandLine=([^\r\n]*)/);
+        const pidMatch = block.match(/ProcessId=(\d+)/);
+        if (cmdMatch?.[1] && pidMatch?.[1] && isCandidate(cmdMatch[1])) {
+          pids.push(parseInt(pidMatch[1], 10));
         }
       }
-      if (name === "node" && cmd.includes("golem")) {
-        const rss = await getProcessRss(current);
-        const started = (await getProcessStartTime(current)) ?? new Date().toISOString();
-        out.push({
-          pid: current,
-          kind: "statusline",
-          projectDir: _DEFAULT_DIR,
-          startedAt: started,
-          rssMb: rss,
-          pidfileMatches: true,
-          parentAlive: isProcessAlive(ppid ?? 0),
-        });
+      return pids;
+    } catch {
+      // wmic is gone on newer Windows builds (confirmed absent, not merely
+      // erroring, on at least one real machine) — same data via Get-CimInstance.
+      try {
+        const stdout = await runCapture("powershell", [
+          "-NoProfile",
+          "-Command",
+          "Get-CimInstance -ClassName Win32_Process -Filter \"Name='node.exe'\" | " +
+            'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }',
+        ]);
+        const pids: number[] = [];
+        for (const line of stdout.split(/\r?\n/)) {
+          const sep = line.indexOf("|");
+          if (sep === -1) continue;
+          const pid = parseInt(line.slice(0, sep), 10);
+          const cmd = line.slice(sep + 1);
+          if (!Number.isNaN(pid) && isCandidate(cmd)) pids.push(pid);
+        }
+        return pids;
+      } catch {
+        return [];
       }
-      if (!ppid) break;
-      current = ppid;
-      if (
-        name.includes("claude") ||
-        name.includes("bash") ||
-        name.includes("zsh") ||
-        name.includes("fish")
-      )
-        break;
     }
-  } catch {}
+  }
+  try {
+    const fs = await import("node:fs/promises");
+    const entries = await fs.readdir("/proc");
+    const pids: number[] = [];
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const cmdline = (await fs.readFile(`/proc/${entry}/cmdline`, "utf8")).replace(/\0/g, " ");
+        if (isCandidate(cmdline)) pids.push(parseInt(entry, 10));
+      } catch {
+        // process exited between readdir and read, or is not ours to read
+      }
+    }
+    return pids;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Collect statusline processes machine-wide, not just ones on the CURRENT
+ * process's own ancestor chain. A leaked statusline belongs to some OTHER
+ * Claude Code session, so it is never an ancestor of this `golem ps`
+ * invocation — walking upward from `process.pid` (the previous
+ * implementation) could only ever find nothing, which is why `--prune` never
+ * reaped one. `findOwningClaude` is already written generically per-pid; this
+ * just has to feed it the right candidates.
+ */
+/** One row of a whole-machine process snapshot — see {@link fetchProcessSnapshot}. */
+interface SnapshotEntry {
+  readonly ppid: number;
+  readonly name: string;
+  readonly cmd: string;
+  readonly rssMb: number;
+  readonly startedAt: string;
+}
+
+/**
+ * The entire process table in ONE spawn, keyed by pid. Walking ancestry
+ * per-candidate with a fresh `Get-CimInstance` per hop is what made this
+ * command take 60+ seconds with a few dozen leaked statuslines: each hop pays
+ * a cold PowerShell start (hundreds of ms), so N candidates × up to 10 hops
+ * each is N×10 spawns. One bulk query, then walk in memory, is O(1) spawns.
+ * Windows only; POSIX ancestry reads `/proc/<pid>/stat` directly (no spawn),
+ * so it never had this problem.
+ */
+async function fetchProcessSnapshot(): Promise<Map<number, SnapshotEntry> | undefined> {
+  if (process.platform !== "win32") return undefined;
+  try {
+    const stdout = await runCapture("powershell", [
+      "-NoProfile",
+      "-Command",
+      "Get-CimInstance -ClassName Win32_Process | ForEach-Object { " +
+        "$c = $null; if ($_.CreationDate) { $c = [DateTimeOffset]$_.CreationDate | " +
+        "ForEach-Object { $_.ToUnixTimeMilliseconds() } }; " +
+        "[PSCustomObject]@{ Id = $_.ProcessId; PPid = $_.ParentProcessId; Name = $_.Name; " +
+        "Cmd = $_.CommandLine; Ws = $_.WorkingSetSize; Created = $c } } | ConvertTo-Json -Compress",
+    ]);
+    const parsed: unknown = JSON.parse(stdout);
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    const table = new Map<number, SnapshotEntry>();
+    for (const row of rows) {
+      if (typeof row !== "object" || row === null) continue;
+      const r = row as Record<string, unknown>;
+      const pid = Number(r.Id);
+      if (!Number.isFinite(pid)) continue;
+      const ppid = Number(r.PPid);
+      const ws = Number(r.Ws);
+      const created = Number(r.Created);
+      table.set(pid, {
+        ppid: Number.isFinite(ppid) ? ppid : 0,
+        name: String(r.Name ?? "").toLowerCase(),
+        cmd: String(r.Cmd ?? ""),
+        rssMb: Number.isFinite(ws) ? Math.round(ws / 1_048_576) : 0,
+        startedAt: Number.isFinite(created)
+          ? new Date(created).toISOString()
+          : new Date().toISOString(),
+      });
+    }
+    return table;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Same walk as {@link findOwningClaude}, but over an in-memory snapshot — no spawns. */
+function walkOwnerFromSnapshot(pid: number, table: Map<number, SnapshotEntry>): boolean {
+  let current = pid;
+  for (let i = 0; i < 10; i++) {
+    const entry = table.get(current);
+    if (!entry) return false;
+    if (
+      entry.name.includes("claude") ||
+      entry.name.includes("cmd.exe") ||
+      entry.name.includes("powershell") ||
+      entry.name.includes("bash") ||
+      entry.name.includes("zsh") ||
+      entry.name.includes("fish")
+    ) {
+      // The snapshot is a single live moment in time, so presence in it IS
+      // aliveness — no separate isProcessAlive() round-trip needed.
+      return table.has(entry.ppid);
+    }
+    if (!entry.ppid) return false;
+    current = entry.ppid;
+  }
+  return false;
+}
+
+async function collectStatuslines(
+  snapshot: Map<number, SnapshotEntry> | undefined,
+): Promise<GolemProcess[]> {
+  const out: GolemProcess[] = [];
+  const isCandidate = (name: string, cmd: string): boolean =>
+    name === "node.exe" && cmd.includes("golem-run") && /\bstatusline\b/.test(cmd);
+
+  if (snapshot) {
+    for (const [pid, entry] of snapshot) {
+      if (!isCandidate(entry.name, entry.cmd)) continue;
+      out.push({
+        pid,
+        kind: "statusline",
+        projectDir: _DEFAULT_DIR,
+        startedAt: entry.startedAt,
+        rssMb: entry.rssMb,
+        pidfileMatches: true,
+        parentAlive: walkOwnerFromSnapshot(pid, snapshot),
+      });
+    }
+    return out;
+  }
+
+  // Snapshot unavailable (non-Windows, or PowerShell itself missing) — the
+  // slower per-candidate path. Correct, just one spawn per ancestry hop.
+  const candidates = await listStatuslineCandidates();
+  for (const pid of candidates) {
+    if (!isProcessAlive(pid)) continue;
+    const rss = await getProcessRss(pid);
+    const started = (await getProcessStartTime(pid)) ?? new Date().toISOString();
+    out.push({
+      pid,
+      kind: "statusline",
+      projectDir: _DEFAULT_DIR,
+      startedAt: started,
+      rssMb: rss,
+      pidfileMatches: true,
+      parentAlive: await findOwningClaude(pid),
+    });
+  }
   return out;
 }
 
@@ -515,7 +694,15 @@ async function pruneProcesses(
         );
         removed++;
       } else if (p.kind === "mcp") {
-        if (!opts.dryRun) await forgetHostSession(p.projectDir, ""); // need session id
+        if (!opts.dryRun) {
+          // The registry keys sessions by id, not pid — forgetting requires
+          // looking the id up first. This used to pass "" and silently no-op
+          // while still reporting success, so the stale entry never actually
+          // went away (it reappeared on the very next `golem ps`).
+          const sessions = await listHostSessions(p.projectDir);
+          const session = sessions.find((s) => s.pid === p.pid);
+          if (session) await forgetHostSession(p.projectDir, session.id);
+        }
         process.stdout.write(
           `Removed stale mcp session pid ${p.pid} for ${path.basename(p.projectDir)}\n`,
         );
@@ -539,6 +726,18 @@ async function pruneProcesses(
         );
         removed++;
       }
+    }
+
+    // Prune orphaned statuslines — the owning claude/shell is provably dead
+    if (p.kind === "statusline" && !p.parentAlive) {
+      if (!opts.dryRun) {
+        try {
+          process.kill(p.pid);
+        } catch {}
+      }
+      process.stdout.write(`Stopped orphaned statusline pid ${p.pid}\n`);
+      removed++;
+      continue;
     }
 
     // Prune dead MCP sessions
@@ -593,10 +792,13 @@ export default function register(program: Command): void {
               ? parseInt(opts.idleTimeoutMs, 10)
               : (settings.proxy.idle_timeout_ms ?? 0);
 
+          // Fetched once and shared: both collectors below used to each fetch
+          // their own copy, paying for the whole-machine spawn twice per run.
+          const snapshot = await fetchProcessSnapshot();
           const [proxies, mcpServes, statuslines] = await Promise.all([
             collectProxies(),
-            collectMcpServes(),
-            collectStatuslines(),
+            collectMcpServes(snapshot),
+            collectStatuslines(snapshot),
           ]);
 
           let allProcs = [...proxies, ...mcpServes, ...statuslines];

@@ -1055,10 +1055,13 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     //
     // Composition follows one rule: staff the PHASES, not the hierarchy. There
     // is no `manager` — the interactive session is the only thing that can spawn
-    // a subagent, so a persona whose job is to dispatch is a fiction — and no
-    // `planner`, because planning is already a skill surface (`/golem:plan`,
-    // `/golem:grill`) and R9.11's rule is that skills orchestrate.
+    // a subagent, so a persona whose job is to dispatch is a fiction.
     personas: {
+      planner: {
+        discipline: "plan",
+        description:
+          "Breaks a non-trivial or ambiguous task down into a concrete implementation plan — critical files, ordering, trade-offs — before code changes begin.",
+      },
       coder: {
         discipline: "code",
         description:

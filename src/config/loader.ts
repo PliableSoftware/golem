@@ -385,6 +385,19 @@ const MERGE_PER_KEY_LEAVES: ReadonlySet<string> = new Set(["inference.personas"]
  * Provenance is recorded per `<leaf>.<id>.<field>` so `golem personas` can say
  * which layer supplied each field, not merely which layer last touched the
  * bench.
+ *
+ * KEY ORDER follows this layer's declared order for the keys it mentions, with
+ * keys only an earlier layer declared appended after in their prior relative
+ * order. The result is REBUILT rather than reassigned into a copy of
+ * `previous`, because JS fixes an object key's position at first insertion —
+ * writing `merged["coder"] = …` to an object that already has a `coder` key
+ * updates the value in place without moving it. A naive `{ ...previous }`
+ * then `merged[id] = value` per incoming key therefore lets the SCHEMA
+ * DEFAULT's key order win forever: restaffing `coder`/`reviewer`/`scribe` in
+ * `settings.local.json`, in any order, always rendered in the default's fixed
+ * order, because those three keys already existed before this layer's loop
+ * ever ran. Found 2026-09-17 when a user reordered `inference.personas` and
+ * the status line's persona list did not follow.
  */
 function mergePerKey(
   previous: unknown,
@@ -395,14 +408,15 @@ function mergePerKey(
   sourceFile: string | undefined,
   band: Band,
 ): Record<string, unknown> {
-  const merged: Record<string, unknown> = isPlainObject(previous) ? { ...previous } : {};
+  const prior: Record<string, unknown> = isPlainObject(previous) ? previous : {};
+  const merged: Record<string, unknown> = {};
   for (const [id, value] of Object.entries(incoming)) {
     if (!isPlainObject(value)) {
       merged[id] = value;
       continue;
     }
-    const prior = merged[id];
-    merged[id] = isPlainObject(prior) ? { ...prior, ...value } : { ...value };
+    const priorValue = prior[id];
+    merged[id] = isPlainObject(priorValue) ? { ...priorValue, ...value } : { ...value };
     for (const field of Object.keys(value)) {
       provenance[`${dotted}.${id}.${field}`] = {
         layer,
@@ -410,6 +424,12 @@ function mergePerKey(
         ...(band === "important" && { important: true as const }),
       };
     }
+  }
+  // Keys only an EARLIER layer declared: this layer said nothing about them,
+  // so there is no new order to prefer — keep their prior relative order,
+  // after everything this layer's own order just placed.
+  for (const [id, value] of Object.entries(prior)) {
+    if (!(id in merged)) merged[id] = value;
   }
   return merged;
 }

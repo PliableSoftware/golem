@@ -33,6 +33,31 @@ export const PERSONAL_RULES_GITIGNORE = ".claude/rules/golem-*.local.md";
 const MANAGED_BANNER = (name: string) =>
   `<!-- Managed by Golem — remove with \`golem guidance disable ${name}\` -->`;
 
+/**
+ * Appended to every rule's VISIBLE body — not the banner above, which is an
+ * HTML comment Claude Code strips before the model ever sees it (that is why
+ * the banner alone cannot carry this).
+ *
+ * User request 2026-09-16: make it clear, in the guidelines themselves, that
+ * Golem *distributes* them and that this project runs under the identical
+ * text. Before this, that fact lived in exactly one place — a hand-written
+ * sentence in CLAUDE.md's Multi-agent section, about `parallel-agent-isolation`
+ * specifically — so the other ten rules said nothing about being shared, and a
+ * rule read on its own (which is how Claude Code loads it: one file, no
+ * surrounding CLAUDE.md context) gave no hint that it wasn't local house style.
+ *
+ * True by construction, not just asserted: `guidanceRuleBody` is the ONE
+ * function every seeded `.claude/rules/golem-*.md` in every Golem-managed
+ * project is rendered from, this repository's own copies included — there is
+ * no second, hand-authored version for golem.run's own source.
+ */
+const DISTRIBUTION_NOTE =
+  "This rule is generated from Golem's own guidance registry " +
+  "(`src/hooks/guidance.ts`) and distributed by `golem init` / `golem guidance " +
+  "enable` — every Golem-managed project can receive this identical text. This " +
+  "repository, golem.run's own source, runs under the same unedited rule; Golem " +
+  "does not keep a separate house style for itself.";
+
 const CCR_REFS = [
   "## Golem: oversized tool outputs → CCR refs",
   "",
@@ -397,9 +422,9 @@ export function guidanceRulePath(projectDir: string, name: string, scope: Guidan
   return path.join(projectDir, RULES_SUBDIR, `golem-${name}${suffix}`);
 }
 
-/** The full rule-file body (managed banner + the feature snippet). */
+/** The full rule-file body (managed banner + the feature snippet + the distribution note). */
 export function guidanceRuleBody(feature: GuidanceFeature): string {
-  return `${MANAGED_BANNER(feature.name)}\n\n${feature.snippet}\n`;
+  return `${MANAGED_BANNER(feature.name)}\n\n${feature.snippet}\n\n${DISTRIBUTION_NOTE}\n`;
 }
 
 /**
