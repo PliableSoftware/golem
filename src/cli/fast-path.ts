@@ -32,6 +32,7 @@ export const FAST_HOOK_EVENTS: readonly string[] = [
   "post-tool-use",
   "prompt-submit",
   "notification",
+  "question-answered",
 ];
 
 /**
@@ -247,7 +248,25 @@ async function runStatusline(argv: readonly string[]): Promise<void> {
     const dir = session.cwd ?? process.cwd();
     const golem = await collectGolemState(dir);
     const color = forceColor || (process.stdout.isTTY === true && !process.env.NO_COLOR);
-    process.stdout.write(`${renderStatusLine(session, golem, { color })}\n`);
+    // The brand is painted from the Golem hex palette, so the line needs the
+    // terminal's colour DEPTH, not just a yes/no. Undetectable depth while
+    // colour is ON means `--color` was passed into something that is not a TTY
+    // (`detectColorLevel` returns 0 for a pipe before it looks at COLORTERM) —
+    // assume 24-bit there, because whatever reads a forced-colour line is a
+    // renderer, not a 1980s terminal.
+    const { detectColorLevel } = await import("../tui/ansi.js");
+    const detected = detectColorLevel();
+    const colorLevel = !color ? 0 : detected === 0 ? 3 : detected;
+    // `process.stdout.columns` is undefined on a pipe (the normal case — Claude
+    // Code captures this as text, not a TTY); `COLUMNS` covers a shell that
+    // exports it anyway. Neither known means the line never truncates.
+    const envColumns = Number(process.env.COLUMNS);
+    const columns =
+      process.stdout.columns ??
+      (Number.isFinite(envColumns) && envColumns > 0 ? envColumns : undefined);
+    process.stdout.write(
+      `${renderStatusLine(session, golem, { color, colorLevel, ...(columns !== undefined ? { columns } : {}) })}\n`,
+    );
   } catch {
     process.stdout.write("⬢ golem\n");
   }
@@ -348,6 +367,15 @@ async function runHook(argv: readonly string[]): Promise<void> {
       try {
         const { runNotificationHook } = await import("../hooks/session-hooks.js");
         process.exitCode = await runNotificationHook(stdio(), new Date().toISOString());
+      } catch {
+        process.exitCode = 0; // fail-safe
+      }
+      return;
+    }
+    case "question-answered": {
+      try {
+        const { runQuestionAnsweredHook } = await import("../hooks/session-hooks.js");
+        process.exitCode = await runQuestionAnsweredHook(stdio(), new Date().toISOString());
       } catch {
         process.exitCode = 0; // fail-safe
       }

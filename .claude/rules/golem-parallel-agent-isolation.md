@@ -42,3 +42,5 @@ PR's mergeability afterwards rather than assuming it still applies.
 
 See also the subagent-headroom rule — a child cannot park at a usage limit, so
 it must commit early on its own branch or its work dies with it.
+
+This rule is generated from Golem's own guidance registry (`src/hooks/guidance.ts`) and distributed by `golem init` / `golem guidance enable` — every Golem-managed project can receive this identical text. This repository, golem.run's own source, runs under the same unedited rule; Golem does not keep a separate house style for itself.

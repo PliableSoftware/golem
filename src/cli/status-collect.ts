@@ -195,6 +195,16 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
   // resolveDefaultTargetId and listTargets see the live value.
   const allServed = await readServedModel(projectDir).catch(() => null);
   const defaultTargetId = resolveDefaultTargetId(proxyWithDefault);
+  // The chat destination's own last-served row, scoped the same way `servedModel`
+  // already is (account-matched) — see the comment on `upstream.last_served_model`
+  // below for why this must not read the shared top-level fields directly.
+  const defaultServed =
+    servedModel === null
+      ? null
+      : (servedModel.targets?.[defaultTargetId] ??
+        (servedModel.targets === undefined
+          ? { model: servedModel.model, servedAtIso: servedModel.servedAtIso }
+          : null));
   const targetRows = listTargets(proxyWithDefault).map((t) => {
     const seen = allServed?.targets?.[t.id];
     return {
@@ -366,8 +376,15 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
       account: upstream.accountId,
       base_url: upstream.baseUrl,
       default_model: upstream.model ?? null,
-      ...(servedModel !== null
-        ? { last_served_model: servedModel.model, last_served_at: servedModel.servedAtIso }
+      // R9.2's top-level `servedModel.model` means "most recently served, by
+      // WHICHEVER target" — a persona/worker request updates it exactly like a
+      // chat request does. Reported here it would make the destination flicker
+      // to whatever model a coder/reviewer/scribe dispatch last used. Scope to
+      // the DEFAULT target's own row instead; a snapshot with no `targets` map
+      // predates per-target tracking and could only have been written by chat,
+      // so the top-level fields are trusted as-is in that case.
+      ...(defaultServed !== null
+        ? { last_served_model: defaultServed.model, last_served_at: defaultServed.servedAtIso }
         : {}),
     },
     // R9.2: only when the proxy is actually serving more than one target —
