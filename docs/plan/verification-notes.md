@@ -9998,3 +9998,17 @@ Checked for the Buzz-integration design ([[Buzz Integration]], tasks R14.2/R14.3
 - Execution model is confirmed **reactive/@mention-triggered**, not pollable
   or push-spawnable — this is load-bearing for the design (see [[Buzz
   Integration]]'s "why this doesn't map onto the `Agent` tool directly").
+
+## 18. Buzz — Golem-as-harness scope decision (2026-09-19)
+
+Follow-up to §17. USER decided (2026-09-19) that Golem should register as its
+own first-class ACP harness in Buzz (`golem`, peer to `goose`/`claude`/`codex`)
+rather than riding the existing `claude` harness. This reopens the same open
+question from §17 item 2 with sharper stakes: the ACP surface must now be
+implemented for a *new* harness identifier, not merely relied upon via the
+existing Claude Code integration. Re-scoped as its own foundational task,
+R14.3 ("Implement Golem as its own first-class ACP harness in Buzz"), with
+R14.2 (identity provisioning) and R14.4 (orchestrator dispatch, formerly
+numbered R14.3) both now depending on it. No new external verification done
+in this pass — still blocked on confirming the real ACP spec/`block/buzz`
+source before implementation starts.

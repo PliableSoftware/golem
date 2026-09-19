@@ -1,20 +1,22 @@
 ---
 title: Buzz Integration
 type: concept
-tags: [r14, r14-2, r14-3, buzz, agents, orchestration, personas, acp]
-sources: ["https://buzz.xyz", "https://engineering.block.xyz/blog/configuring-agents-in-buzz", "https://github.com/block/buzz", "src/inference/personas.ts", "docs/plan/tasks/R14.2.md", "docs/plan/tasks/R14.3.md"]
+tags: [r14, r14-2, r14-3, r14-4, buzz, agents, orchestration, personas, acp, harness]
+sources: ["https://buzz.xyz", "https://engineering.block.xyz/blog/configuring-agents-in-buzz", "https://github.com/block/buzz", "src/inference/personas.ts", "docs/plan/tasks/R14.2.md", "docs/plan/tasks/R14.3.md", "docs/plan/tasks/R14.4.md"]
 updated: 2026-09-19
 created: 2026-09-19
 ---
 
 # Buzz Integration
 
-Design for exposing Golem's persona bench ([[Persona Registry]]) as addressable
-agents inside [Buzz](https://buzz.xyz) — Block's open-source (Apache-2.0,
+Design for making Golem itself a **first-class ACP harness** inside
+[Buzz](https://buzz.xyz) — Block's open-source (Apache-2.0,
 `github.com/block/buzz`) Nostr-based chat workspace where humans and AI agents
-share channels — and for making Golem itself an addressable orchestrator
-inside that same workspace. Captured 2026-09-19 from a planning conversation;
-implementation tracked as R14.2 and R14.3.
+share channels — and for exposing Golem's persona bench ([[Persona Registry]])
+and Golem's own orchestrator as addressable agents running on that harness.
+Captured 2026-09-19 from a planning conversation; implementation tracked as
+R14.3 (Golem as a harness), R14.2 (identity provisioning on top of it), and
+R14.4 (orchestrator dispatch behavior).
 
 ## What Buzz actually is (verified 2026-09-19, see `verification-notes.md`)
 
@@ -43,6 +45,24 @@ implementation tracked as R14.2 and R14.3.
   existing agent to draft one for review; **no documented file-based or REST
   schema was found** during this pass (2026-09-19) — see the open
   verification item below before implementation starts.
+
+## Golem as its own harness, not a `claude`-harness passenger
+
+USER decision (2026-09-19, superseding an earlier draft of this doc): Golem
+should appear in Buzz as its **own peer harness** — `golem`, alongside
+`goose`, `claude`, `codex` in the Loadout picker — not as a Claude Code
+session that happens to run underneath the existing `claude` harness with
+Golem's proxy in front of it. Choosing harness `golem` on a Buzz agent means
+Buzz spawns Golem's own runtime (redaction, compression, routing, local
+tools, telemetry — this repo's full pipeline), which decides internally
+whether to run as the orchestrator or as a given persona.
+
+This is the foundational piece (task R14.3, "Implement Golem as its own ACP
+harness") — persona identities, the orchestrator identity, and dispatch
+behavior (R14.2, R14.4) are all built assuming harness `golem` already exists
+and can complete a turn. It also means every mapping and mechanism below that
+says "harness = `claude`" in an earlier draft is superseded: it is `golem`
+throughout, for personas and for Golem's own orchestrator identity alike.
 
 ## Why this doesn't map onto Claude Code's `Agent` tool directly
 
@@ -94,7 +114,7 @@ humans unable to intervene in the channel where the work is actually visible.
 | `.claude/agents/golem-<id>.md` body (role prompt) | Agent instructions |
 | `inference.personas.<id>.model` | Model |
 | — (not currently modeled) | Effort — new field Golem needs to carry per persona, or leave at model default |
-| fixed: `claude` | Harness — personas already run as Claude Code subagents |
+| fixed: `golem` | Harness — Golem's own runtime, not a passenger on `claude` (R14.3) |
 | `Only me` initially, project owner as trust root | `respond-to` |
 
 Open question carried into R14.2: Golem has no per-persona "effort" dial
@@ -105,14 +125,20 @@ or leave every persona at the model's shipped default.
 
 A human or another agent `@mention`s **Golem** itself in a project's Buzz
 channel (e.g. `@Golem ship task R14.2`). Golem's own orchestrator process —
-running as a Buzz agent with harness `claude`, its own identity — wakes,
-resolves the request the same way it does today (task doc lookup, ambiguity
-grilling, etc.), then dispatches by `@mention`-ing the appropriate persona
-agent(s) in-thread, using the same dispatch-prompt content it would pass to
-`Agent()`. It watches the thread (a reply mentioning Golem wakes it again),
-sequences work across personas exactly like `golem-planner` → `golem-coder` →
-`golem-reviewer` → `golem-scribe` do inline today, and posts a final summary
-back to the human in-channel.
+running as a Buzz agent with harness `golem` (R14.3), its own identity —
+wakes, resolves the request the same way it does today (task doc lookup,
+ambiguity grilling, etc.), then dispatches by `@mention`-ing the appropriate
+persona agent(s) in-thread, using the same dispatch-prompt content it would
+pass to `Agent()`. It watches the thread (a reply mentioning Golem wakes it
+again), sequences work across personas exactly like `golem-planner` →
+`golem-coder` → `golem-reviewer` → `golem-scribe` do inline today, and posts
+a final summary back to the human in-channel.
+
+A human or another agent can also `@mention` a persona **directly** —
+`@golem-coder`, skipping Golem's orchestrator entirely — because R14.2 gives
+each persona its own independently addressable Buzz identity with the project
+owner already inside its `respond-to` trust boundary. Orchestration through
+Golem is the common path, not the only path.
 
 Example flow (illustrative, not literal transcript):
 
@@ -125,14 +151,15 @@ Example flow (illustrative, not literal transcript):
   -> Golem posts final summary, mentions the human
 ```
 
-This is scoped as R14.3, separate from the persona-export work in
-R14.2, because it additionally requires Golem's own harness to speak ACP
-as a Buzz-hosted agent, not just its personas.
+This dispatch behavior is scoped as R14.4, separate from R14.3 (Golem
+speaking ACP as its own harness) and R14.2 (identities provisioned on that
+harness) — R14.4 assumes both already work and only adds the sequencing
+logic on top.
 
 ## Out of scope for this design
 
 - Buzz's own skill system (`.agents/skills/*.md`) — orthogonal to persona
-  dispatch; not needed for either R14.2 or R14.3.
+  dispatch; not needed for R14.2, R14.3, or R14.4.
 - Voice/huddle, canvas, and other Buzz surfaces beyond channel `@mention` text.
 - Self-hosting Buzz's relay vs using the hosted `buzz.xyz` — a deployment
   choice for the user, not a Golem design question.
@@ -145,8 +172,9 @@ Recorded in `verification-notes.md` (§ dated 2026-09-19):
    REST? Nostr event kind?) — the public engineering post documents the UI
    fields, not a machine-writable config surface. `golem init` cannot
    provision an identity/config it cannot write.
-2. Exact Agent Client Protocol (ACP) surface Buzz expects a `claude` harness
-   to implement, and whether Golem's existing Claude Code integration already
-   satisfies it or needs an ACP shim.
+2. Exact Agent Client Protocol (ACP) surface Buzz expects a harness to
+   implement (message shapes, session lifecycle, registration/spawn contract)
+   — needed to implement `golem` as a peer harness (R14.3), not merely to
+   reuse `claude`.
 3. Whether per-agent `effort` is settable outside the UI, needed for the
    persona → Buzz-agent mapping table above.
