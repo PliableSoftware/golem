@@ -103,6 +103,7 @@ import {
   type TargetTrust,
   upstreamChatCompletionsPath,
 } from "../providers/index.js";
+import { type LimitPrediction, parseLimitPrediction } from "../proxy/limit-prediction.js";
 import type { PersonaConfig } from "./personas.js";
 import { workerTargetFromPersona } from "./personas.js";
 import { workerTarget } from "./workers.js";
@@ -180,6 +181,21 @@ export interface DispatchRequest {
    * harness's own default upstream.
    */
   readonly worker?: string | undefined;
+  /**
+   * R14.3 — override the resolved target's own default model.
+   *
+   * Exists for the Buzz agent-lane one-shot: an agent-lane persona names a
+   * plain model id (`inference.personas.<id>.model`), which by definition
+   * resolves to NO registry target (see `resolvePersonaLane`). There is
+   * therefore no target whose own `model` could carry it — the request must
+   * carry it instead, applied over whichever target the four-step chain
+   * resolves to (most often the harness default, step 4).
+   *
+   * Honoured over the target's own `model`, but never over an explicit
+   * `targetId`'s target *selection* — this changes which model is asked,
+   * never which endpoint is asked.
+   */
+  readonly model?: string | undefined;
 }
 
 /**
@@ -254,6 +270,70 @@ export class TargetDispatchError extends Error {
     super(message);
     this.name = "TargetDispatchError";
   }
+}
+
+/**
+ * R14.3 — the target responded 429 (or 529, Anthropic's overloaded variant).
+ *
+ * A distinct class rather than a generic {@link TargetDispatchError} because a
+ * rate limit is a DIFFERENT kind of failure from a broken config or an
+ * unreachable endpoint: it is transient, it carries its own timing evidence
+ * (`retry-after`, or the `anthropic-ratelimit-unified-*` headers), and a
+ * caller like `golem acp` (`src/buzz/limit-guard.ts`) must react to it on a
+ * bounded retry-then-defer policy rather than surfacing it as an ordinary
+ * error. Both transports before this collapsed every non-ok status into one
+ * generic error and discarded `res.headers` entirely — a 429 was
+ * indistinguishable from a 500.
+ */
+export class RateLimitedError extends TargetDispatchError {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryAfterSeconds: number | null,
+    readonly prediction: LimitPrediction | null,
+  ) {
+    super(message);
+    this.name = "RateLimitedError";
+  }
+}
+
+/** `Headers` → the plain record `parseLimitPrediction` and `retry-after` parsing expect. */
+function headersToRaw(headers: Headers): Readonly<Record<string, string>> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+/**
+ * `retry-after` is delta-seconds OR an HTTP-date (RFC 9110 §10.2.3) — both are
+ * legal and real gateways send either. Returns null when absent/unparsable, in
+ * which case the caller falls back to exponential backoff.
+ */
+function parseRetryAfterSeconds(value: string | null, nowMs: number): number | null {
+  if (value === null || value.trim() === "") return null;
+  const asSeconds = Number(value.trim());
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) return asSeconds;
+  const asDateMs = Date.parse(value);
+  if (Number.isFinite(asDateMs)) return Math.max(0, Math.round((asDateMs - nowMs) / 1000));
+  return null;
+}
+
+/** Build a {@link RateLimitedError} from a 429/529 response, or null when the status is neither. */
+function classifyRateLimit(
+  target: ResolvedTarget,
+  res: Response,
+  nowMs: number,
+): RateLimitedError | null {
+  if (res.status !== 429 && res.status !== 529) return null;
+  const raw = headersToRaw(res.headers);
+  return new RateLimitedError(
+    `target "${target.id}" returned ${res.status} ${res.statusText} (rate limited).`,
+    res.status,
+    parseRetryAfterSeconds(res.headers.get("retry-after"), nowMs),
+    parseLimitPrediction(raw, new Date(nowMs).toISOString()),
+  );
 }
 
 /**
@@ -520,6 +600,8 @@ async function dispatchOpenAI(
     signal,
   });
   if (!res.ok) {
+    const rateLimited = classifyRateLimit(target, res, Date.now());
+    if (rateLimited !== null) throw rateLimited;
     throw new TargetDispatchError(
       `target "${target.id}" returned ${res.status} ${res.statusText}. No draft was produced.`,
     );
@@ -579,6 +661,8 @@ async function dispatchAnthropic(
     signal,
   });
   if (!res.ok) {
+    const rateLimited = classifyRateLimit(target, res, Date.now());
+    if (rateLimited !== null) throw rateLimited;
     throw new TargetDispatchError(
       `target "${target.id}" returned ${res.status} ${res.statusText}. No draft was produced.`,
     );
@@ -800,10 +884,20 @@ export function createTargetDispatcher(options: TargetDispatcherOptions): Target
       // Only on the harness step. Every other step named a target deliberately,
       // and a *named* target that declares no model is a configuration error
       // worth reporting rather than papering over.
-      const target =
-        base.model === undefined && route === "harness"
-          ? { ...base, model: await options.sessionModel?.() }
+      // R14.3 — an explicit `request.model` always wins over the target's own
+      // model. This is how an agent-lane Buzz persona (a bare model id that
+      // resolves to NO registry target, by definition) gets dispatched at
+      // all: it names no target, so it falls through to the harness default
+      // (or `inference.model`) and rides that target's endpoint/credential
+      // while overriding WHICH model is asked of it.
+      const overridden =
+        request.model !== undefined && request.model !== ""
+          ? { ...base, model: request.model }
           : base;
+      const target =
+        overridden.model === undefined && route === "harness"
+          ? { ...overridden, model: await options.sessionModel?.() }
+          : overridden;
 
       if (target.model === undefined) {
         throw new TargetDispatchError(

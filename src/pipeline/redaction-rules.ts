@@ -221,6 +221,16 @@ export const REDACTION_RULES: readonly RedactionRule[] = [
     description: "Email addresses (PII).",
     pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
   },
+  {
+    id: "nostr-secret-key",
+    description:
+      "R14.3 (Buzz integration) — Nostr secret keys in NIP-19 bech32 form " +
+      "(`nsec1...`). `buzz-acp` injects one into `golem acp`'s subprocess " +
+      "environment as `BUZZ_PRIVATE_KEY`; it must never reach a log, " +
+      "telemetry, or the KB. The bech32 charset excludes b/i/o/1 (data part), " +
+      "so the character class here is narrower than a generic base32 sweep.",
+    pattern: /\bnsec1[023456789acdefghjklmnpqrstuvwxyz]{58,}\b/g,
+  },
 ];
 
 // ---------------------------------------------------------------------------
