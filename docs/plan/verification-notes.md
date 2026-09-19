@@ -10012,3 +10012,264 @@ R14.2 (identity provisioning) and R14.4 (orchestrator dispatch, formerly
 numbered R14.3) both now depending on it. No new external verification done
 in this pass — still blocked on confirming the real ACP spec/`block/buzz`
 source before implementation starts.
+
+## 19. Buzz + ACP — the surface, resolved (2026-09-19)
+
+Closes the open items in §17 and §18. Sources, all read 2026-09-19:
+`github.com/block/buzz` → `crates/buzz-acp/README.md`, `ARCHITECTURE.md`,
+`AGENTS.md`, `crates/buzz-cli/README.md`; `agentclientprotocol.com`
+(`/protocol/overview`, `/libraries/typescript`);
+`github.com/block/buzz/pull/7359`; `engineering.block.xyz/blog/configuring-agents-in-buzz`.
+
+### 1. ACP is a real, named, open protocol — not a Buzz-internal one
+
+**Agent Client Protocol**, created by Zed Industries (Aug 2025), Apache-2.0,
+spec at `agentclientprotocol.com`, repo
+`github.com/agentclientprotocol/agent-client-protocol`. **JSON-RPC 2.0 over
+stdin/stdout.** Adopted by JetBrains and ~25 agents; an ACP Registry exists.
+It is the LSP-shaped analogue for agent↔editor integration — deliberately NOT
+a cross-organisation orchestration protocol (the spec points at Google A2A for
+that) and NOT a tool-connectivity protocol (that is MCP).
+
+Official TypeScript SDK: **`@agentclientprotocol/sdk`** on npm. Fluent
+`agent()` / `client()` entry points register typed handlers; the older
+`AgentSideConnection` / `ClientSideConnection` classes are deprecated but still
+exported. It is pure TypeScript over JSON-RPC — **no native bindings**, so it
+does not trip `CLAUDE.md`'s "no heavyweight native deps in default install".
+
+### 2. The direction is INVERTED from what [[Buzz Integration]] assumed
+
+In ACP the **Client** is the host (editor/workspace) and the **Agent** is the
+AI process the Client spawns as a subprocess. Buzz's `buzz-acp` crate is the
+**ACP Client**. So Golem does not "register a harness inside Buzz" — Golem
+implements an **ACP Agent** that `buzz-acp` spawns over stdio:
+
+```
+Buzz Relay ──WS──→ buzz-acp ──stdio(ACP/JSON-RPC)──→ golem acp
+                                                         │
+                                                    buzz-cli
+                                                 (messages send, …)
+```
+
+What Buzz's UI calls a "harness" (`goose`, `claude`, `codex`, `buzz-agent`) is
+exactly this: the agent command `buzz-acp` launches. `goose` is `goose acp`;
+`claude` is the npm adapter `@agentclientprotocol/claude-agent-acp`; `codex` is
+`@agentclientprotocol/codex-acp`. **The USER's "Golem as its own peer harness,
+not a `claude`-harness passenger" decision survives intact and is much smaller
+than feared** — it means shipping a `golem acp` runtime and selecting it, not
+writing Rust inside `block/buzz` or forking `buzz-acp`.
+
+### 3. The exact ACP surface `buzz-acp` requires (§17 item 2, §18 — RESOLVED)
+
+Quoted verbatim from `crates/buzz-acp/README.md`, "Using Any ACP Agent":
+
+- Accept `initialize` and return a result
+- Accept `session/new` with `mcpServers` and return a `sessionId`
+- Accept `session/prompt` with a text message and stream `session/update` notifications
+- Return a `stopReason` (`end_turn`, `cancelled`, `max_tokens`, etc.)
+
+Four methods. `session/load`, `session/set_mode`, `fs/*`, `terminal/*`,
+`elicitation/*` and `session/request_permission` are all optional and
+capability-gated. Selection is by env var / flag, not registration:
+`BUZZ_ACP_AGENT_COMMAND` (default `goose`) and `BUZZ_ACP_AGENT_ARGS` (default
+`acp`, **split on commas** — `acp,--persona,coder` works; args with values use
+the `-c,key="value"` form).
+
+### 4. Named-harness registration IS file-based and documented — "BYOH"
+
+`crates/buzz-acp/README.md` § "Bring Your Own Harness (BYOH)": Buzz Desktop
+supports registering any ACP-speaking agent as a selectable runtime **without a
+PR**, in three tiers.
+
+- **Tier-1**, compiled in, with auto-installers and auth probes. IDs `goose`,
+  `claude`, `codex`, `buzz-agent` are **reserved and cannot be overridden**.
+- **Tier-2**, preset catalog in
+  `desktop/src-tauri/src/managed_agents/discovery/presets.rs`
+  (`PRESET_HARNESSES`): Cursor, Oh My Pi, Pi, Grok Build, OpenCode, Kimi Code,
+  Amp, Hermes Agent, OpenClaw. PATH-probed, not user-editable.
+- **Tier-3, user custom harnesses** — **JSON files in
+  `<app-data>/custom_harnesses/`**, creatable from the Settings UI or dropped in
+  directly. Documented schema:
+
+```json
+{
+  "id": "my-agent",
+  "label": "My Agent",
+  "command": "my-agent-bin",
+  "args": ["acp"],
+  "env": { "MY_AGENT_MODE": "acp" },
+  "installInstructionsUrl": "https://example.com/docs",
+  "installHint": "Download from example.com"
+}
+```
+
+`id` must match `[a-z0-9_][a-z0-9_-]*` and is both the picker value and the file
+name. `env` is a **floor** — user/persona/global env override it, and
+Buzz-reserved identity keys (`BUZZ_MANAGED_AGENT`, etc.) are stripped and cannot
+be set from a definition. Invalid files are skipped with a warning rather than
+breaking discovery. `can_auto_install` is always false for tier-2/3 and no
+install shell commands are permitted — only the user's own PATH is consulted.
+
+**`golem` is not in the reserved namespace** (`BUILTIN_IDS` = tier-1 ids + all
+current preset ids), so `custom_harnesses/golem.json` is available. This is the
+machine-writable registration surface §17 item 1 could not find — it just isn't
+where the design looked, because it registers the *runtime*, not the *agent*.
+
+### 5. Agent identity provisioning — confirmed, and it is per-keypair
+
+From `crates/buzz-acp/README.md` § "Generating Keys":
+
+- `buzz-admin generate-key` prints a public/secret keypair as hex. **The secret
+  is not stored and cannot be recovered** — capture it at mint time or lose it.
+- `BUZZ_PRIVATE_KEY` (`nsec1…`) sets the process's identity; it is used for both
+  relay auth and agent identity.
+- The pubkey must then be registered as a relay member:
+  `BUZZ_RELAY_PRIVATE_KEY=<relay signing key> buzz-admin add-member --pubkey <hex>`,
+  which publishes a **kind:13534** membership event. The relay needs a stable
+  signing key set in its own environment and a restart before this works.
+- Verbatim: *"Running multiple agents? Mint a separate keypair for each. Every
+  agent needs its own identity."* — [[Buzz Integration]]'s one-identity-per-persona
+  rule is what Buzz itself prescribes, not a Golem invention.
+
+**`add-member` is a credentialed operator act** (it needs the relay's signing
+key). Golem may mint keypairs and print the command; it must not run it.
+
+### 6. `respond-to` IS settable outside the UI (§17 — RESOLVED)
+
+`--respond-to` / `BUZZ_ACP_RESPOND_TO`, default **`owner-only`**, one of
+`owner-only` · `allowlist` · `anyone` · `nobody`, with
+`--respond-to-allowlist` taking comma-separated 64-char hex pubkeys (the owner
+is always implicitly included). The blog's "Only me / Selected people / Anyone"
+are the UI names for the first three; `nobody` (heartbeat-only, broadcast) has
+no UI equivalent. The gate applies to *all* inbound events — mentions, DMs,
+thread replies — and an agent with no resolved `agent_owner_pubkey` under
+`owner-only` responds to **nothing** until the owner resolves.
+
+Owner control commands are consumed by the harness *before* the gate:
+`!shutdown`, `!cancel`, `!rotate`. They must be kind:9 stream messages from the
+owner, with the body exactly the command after trimming, and must mention the
+agent via a **separate `p` tag** — an inline `@Name` changes the body and does
+not match:
+
+```bash
+buzz messages send --channel <channel-id> --reply-to <thread-root-id> \
+  --mention <agent-pubkey> --content '!cancel'
+```
+
+### 7. Execution model — reactive confirmed, but with a timer escape hatch
+
+`buzz-acp` "How It Works": spawn N agent subprocesses → ACP `initialize` each →
+NIP-42 auth to the relay → discover channels via `GET /api/channels?member=true`
+→ listen for **kind 9 events carrying the agent's pubkey in a `#p` tag** →
+queue per channel → when nothing is in flight for that channel, **drain all
+queued events into a single batched `session/prompt`**. At most one prompt in
+flight per channel; multiple channels concurrent when `--agents > 1`. On
+startup it **replays all unprocessed @mentions since the last run** (expect a
+burst). On agent crash it respawns; on relay disconnect it reconnects with a
+`since` filter.
+
+Two corrections to [[Buzz Integration]]'s "the only way to wake an agent is to
+mention it":
+
+- `--heartbeat-interval` / `BUZZ_ACP_HEARTBEAT_INTERVAL` (0 = off, otherwise
+  ≥10s) fires a prompt on an **idle** agent, with `--heartbeat-prompt` /
+  `--heartbeat-prompt-file` for the text. It is lower priority than queued
+  events, **dropped** (never queued) when all agents are busy, and at most one
+  is in flight globally. So there *is* a timer wake — just a best-effort one.
+- Forum kinds (45001 post, 45002 vote, 45003 comment) do not mention anyone, so
+  they need `--kinds 9,46010,40007,45001,45002,45003 --no-mention-filter`, or
+  per-channel TOML `[channel.<UUID>] kinds = [...] / require_mention = false`.
+
+### 8. How an agent replies: `buzz-cli`, not an ACP method
+
+The agent posts by shelling out to **`buzz` (buzz-cli)** — "agent-first CLI,
+JSON in, JSON out", stdout JSON, stderr JSON errors, exit codes **0 ok · 1 user
+error · 2 network · 3 auth · 4 other · 5 write conflict**. `buzz-acp`
+**auto-injects `BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY` and `BUZZ_AUTH_TAG`** into
+the managed agent subprocess, so the CLI is pre-authenticated as that agent.
+Relevant commands: `buzz messages send --channel <uuid> --content … [--reply-to
+<event-id>] [--mention <pubkey>] [--broadcast]`, `messages get`, `messages
+thread`, `messages search`, `messages edit/delete`, `channels
+create|list|members|add-member`, plus canvas/reactions/DMs/workflows/feed/repos
+groups. `--content -` reads stdin.
+
+### 9. Timeouts and concurrency — load-bearing for long turns
+
+- `BUZZ_ACP_IDLE_TIMEOUT`, default **620s**: max seconds of silence before the
+  turn is cancelled, **reset on any agent stdout activity**. An ACP agent that
+  thinks quietly for >10 minutes gets killed; streaming `session/update`
+  notifications is therefore both the UX path and the keepalive.
+- `BUZZ_ACP_MAX_TURN_DURATION`, default **7200s**: absolute wall-clock cap.
+- `--agents` / `BUZZ_ACP_AGENTS`, 1–32, default 1. `--lazy-pool` defers
+  subprocess start until the first accepted event.
+- **All N agents behind one `buzz-acp` process authenticate as the SAME Nostr
+  identity** — "users see one bot regardless of how many agents are running."
+  So N distinct `@mention`-able personas require **N separate `buzz-acp`
+  processes**, each with its own keypair. `--agents` is a throughput dial, not a
+  roster.
+- Session scope defaults to **`channel`**; a **`thread`** policy exists, under
+  which `!cancel` / `!rotate` posted as a thread reply scope to that thread
+  alone. DMs are always one conversation scope. *(The exact flag/env name that
+  selects the policy was not captured in the README excerpt read — unconfirmed,
+  see below.)*
+
+### 10. `effort` (§17 item 3 / the open question in [[Buzz Integration]]) — ANSWERED, and it does not apply to us
+
+`effort` is real: the engineering blog describes Provider (where inference
+runs), Model (the LLM the runtime talks to) and **Effort** ("the tuning dial —
+how hard the model is allowed to think, the reasoning level, roughly medium /
+high / xhigh, defaulting to whatever the model ships with"). Desktop persists
+managed agents to a JSON file reported as
+`~/.local/share/xyz.block.buzz.app/agents/managed-agents.json`, holding one
+**definition** record per persona plus one **instance** record per
+community/relay, instances carrying `relay_url` and their own `env_vars`.
+
+**There is no documented CLI, REST or env-var path that sets `effort`** —
+`block/buzz#4869` ("expose a secured local control API/CLI for Desktop
+configuration and agent lifecycle") is open precisely because callers otherwise
+have to mutate `managed-agents.json` and custom-runtime files directly.
+
+But the more important finding is that **provider/model/effort are meaningless
+for a tier-3 `golem` runtime.** Buzz can only apply them to runtimes whose
+launch flags it knows (tier-1). For a custom harness, Buzz spawns `command` +
+`args` + `env` and nothing else — inference is entirely the runtime's business.
+A `golem` runtime therefore takes its model from Golem's own
+`inference.personas.<id>.model`, and "effort" from whatever Golem's routing
+decides. This **removes the need for a per-persona `effort` field in Golem
+config**, and removes most of R14.2's supposed write-to-Buzz requirement: the
+only thing Golem must put on the Buzz side is identity and process wiring.
+
+Corroborating gotcha from a field report on the same page: a harness logged
+`configured_model=sonnet` while the session used something else, because the
+user's global `~/.claude/settings.json` overrode the harness config — i.e.
+even for tier-1 the runtime's own config wins. Same lesson.
+
+### 11. Still unconfirmed after this pass
+
+- **`managed-agents.json` schema and path.** Sourced from a filed bug report
+  and the blog, not from a documented schema. Treat as private, Desktop-owned
+  state that may be rewritten under us. Do not write to it (see the task briefs
+  for the alternative).
+- **Whether BYOH exists on hosted `buzz.xyz`.** The README scopes tier-3 custom
+  harnesses to **Buzz Desktop**. A hosted-only user may have no way to select a
+  `golem` runtime; the headless `buzz-acp` path does not care, because it takes
+  `BUZZ_ACP_AGENT_COMMAND` from the environment.
+- **Persona packs.** `--persona-pack <DIR>` / `--persona <NAME>`
+  (`BUZZ_ACP_PERSONA_PACK` / `BUZZ_ACP_PERSONA_NAME`), `--workdir` /
+  `BUZZ_ACP_WORKDIR`, per-persona MCP servers from a pack `.mcp.json` plus
+  frontmatter `mcp_servers:`, and skills materialised into
+  `<workdir>/.agents/skills/<name>` and linked into `.claude/skills`,
+  `.goose/skills`, `.codex/skills` — all of this is **PR #7359, open and
+  unmerged as of 2026-09-19**. `buzz pack validate` / `buzz pack show` exist on
+  `main`; the *spawn* wiring does not. Do not build on it. Persona `hooks`,
+  `runtime_env_vars` and `${VAR}` interpolation in MCP env are called out in
+  that PR as still unwired.
+- **Session-scope policy flag name** (`channel` vs `thread`) — see §9.
+- **Private channel membership.** Verbatim: *"The relay doesn't yet have a
+  REST/event API for managing channel members — this is a known gap."* Workaround
+  is `create_channel` via buzz-cli, where the creator is automatically a member.
+- **Anything needing a live relay**: the NIP-42 handshake, a real end-to-end
+  turn, and whether `golem acp` satisfies `buzz-acp` in practice. That needs a
+  running relay (`just relay`, i.e. Docker Postgres + Redis) and a `buzz-acp`
+  binary (Rust/cargo build, or a Buzz Desktop install). Both are the user's to
+  provide — see R14.3's `blocked` field.
