@@ -23,7 +23,7 @@
 import { Readable, Writable } from "node:stream";
 import { type AgentApp, agent, ndJsonStream, type Stream } from "@agentclientprotocol/sdk";
 import { type AcpSession, createSessionRegistry, type SessionRegistry } from "./acp-session.js";
-import { runAcpTurn } from "./acp-turn.js";
+import { type RunAcpTurnDeps, runAcpTurn } from "./acp-turn.js";
 import {
   extractPromptText,
   initializeParamsSchema,
@@ -35,6 +35,12 @@ export interface GolemAcpAgentOptions {
   readonly projectDir: string;
   /** Bound at spawn via `--persona <id>` — never changes per-process. */
   readonly personaId: string;
+  /**
+   * Test-only seam: `runAcpTurn`'s own injectable deps (a fake `fetch`, a
+   * fixed clock). `golem acp`'s real CLI entry point never sets this — real
+   * turns always read real settings and dispatch for real.
+   */
+  readonly turnDeps?: RunAcpTurnDeps;
 }
 
 /**
@@ -92,6 +98,7 @@ export function createGolemAcpAgent(options: GolemAcpAgentOptions): AgentApp {
         personaId: session.personaId,
         promptText,
         emit,
+        ...(options.turnDeps !== undefined ? { deps: options.turnDeps } : {}),
       });
       await chain;
       return { stopReason: result.stopReason };

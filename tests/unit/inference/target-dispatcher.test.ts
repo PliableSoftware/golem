@@ -20,6 +20,7 @@ import {
   buildDispatchMessages,
   createTargetDispatcher,
   NoDrafterConfiguredError,
+  RateLimitedError,
   TargetDispatchError,
 } from "../../../src/inference/target-dispatcher.js";
 import type {
@@ -1496,5 +1497,177 @@ describe("R13.11 — prior attempts reach the model, redacted like everything el
       targetId: "cheap",
     });
     expect(result.text).toBe("the answer");
+  });
+});
+
+describe("R14.3 — DispatchRequest.model override", () => {
+  it("overrides the target's own model on an OpenAI-shaped (translating) target", async () => {
+    const { fetchImpl, sent } = captureFetch({
+      model: "openai/gpt-oss-20b:free",
+      choices: [{ message: { content: "done" } }],
+    });
+    const dispatcher = createTargetDispatcher({
+      inference: stubInference(),
+      settings: REMOTE,
+      fetchImpl,
+      env: { GOLEM_UPSTREAM_API_KEY__OPENROUTER: "sk-or-thekey" },
+    });
+
+    await dispatcher.dispatch({
+      role: "drafter",
+      prompt: "hi",
+      targetId: "cheap",
+      model: "openai/gpt-oss-120b",
+    });
+
+    const body = JSON.parse(sent[0]?.body ?? "{}") as { model?: string };
+    expect(body.model).toBe("openai/gpt-oss-120b");
+  });
+
+  it("overrides the model on an Anthropic-shaped target too", async () => {
+    const ANTHROPIC_SETTINGS: TargetRegistrySettings = {
+      ...REMOTE,
+      gateways: [
+        {
+          id: "inheritsgw",
+          provider: "anthropic",
+          base_url: "https://api.anthropic.com",
+          models: ["claude-sonnet-5"],
+        },
+      ],
+      targets: [
+        { id: "inherits", gateway: "inheritsgw", model: "claude-sonnet-5", trust: "vendor" },
+      ],
+    };
+    const { fetchImpl, sent } = captureFetch({ content: [{ type: "text", text: "ok" }] });
+    const dispatcher = createTargetDispatcher({
+      inference: stubInference(),
+      settings: ANTHROPIC_SETTINGS,
+      fetchImpl,
+      env: {},
+      resolveKey: () => "sk-ant-fake-key",
+    });
+
+    await dispatcher.dispatch({
+      role: "drafter",
+      prompt: "hi",
+      targetId: "inherits",
+      model: "claude-opus-5",
+    });
+
+    const body = JSON.parse(sent[0]?.body ?? "{}") as { model?: string };
+    expect(body.model).toBe("claude-opus-5");
+  });
+
+  it("this is how an agent-lane persona (a bare model id naming no target) actually dispatches", async () => {
+    // No targetId at all — the four-step chain falls through to the harness
+    // default, and `model` carries what the persona actually names.
+    const HARNESS_SETTINGS: TargetRegistrySettings = {
+      upstream_provider: "anthropic",
+      upstream_base_url: "https://api.anthropic.com",
+      upstream_auth_scheme: "x-api-key",
+    };
+    const { fetchImpl, sent } = captureFetch({ content: [{ type: "text", text: "ok" }] });
+    const dispatcher = createTargetDispatcher({
+      inference: stubInference(),
+      settings: HARNESS_SETTINGS,
+      fetchImpl,
+      env: {},
+      resolveKey: () => "sk-ant-fake-key",
+    });
+
+    const result = await dispatcher.dispatch({
+      role: "drafter",
+      prompt: "hi",
+      model: "claude-sonnet-5",
+    });
+
+    const body = JSON.parse(sent[0]?.body ?? "{}") as { model?: string };
+    expect(body.model).toBe("claude-sonnet-5");
+    expect(result.route).toBe("harness");
+  });
+});
+
+describe("R14.3 — RateLimitedError classification (429/529)", () => {
+  function rateLimitedFetch(headers: Record<string, string>): typeof fetch {
+    return (async () =>
+      new Response(JSON.stringify({ error: "rate limited" }), {
+        status: 429,
+        statusText: "Too Many Requests",
+        headers,
+      })) as unknown as typeof fetch;
+  }
+
+  it("classifies a 429 from an OpenAI-shaped target as RateLimitedError, not a generic error", async () => {
+    const fetchImpl = rateLimitedFetch({ "retry-after": "12" });
+    const dispatcher = createTargetDispatcher({
+      inference: stubInference(),
+      settings: REMOTE,
+      fetchImpl,
+      env: { GOLEM_UPSTREAM_API_KEY__OPENROUTER: "sk-or-thekey" },
+    });
+
+    const err = await dispatcher
+      .dispatch({ role: "drafter", prompt: "hi", targetId: "cheap" })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RateLimitedError);
+    expect((err as RateLimitedError).status).toBe(429);
+    expect((err as RateLimitedError).retryAfterSeconds).toBe(12);
+  });
+
+  it("classifies a 429 from an Anthropic-shaped target, parsing the unified rate-limit headers", async () => {
+    const ANTHROPIC_SETTINGS: TargetRegistrySettings = {
+      ...REMOTE,
+      gateways: [
+        { id: "inheritsgw", provider: "anthropic", base_url: "https://api.anthropic.com" },
+      ],
+      targets: [
+        { id: "inherits", gateway: "inheritsgw", model: "claude-sonnet-5", trust: "vendor" },
+      ],
+    };
+    const fetchImpl = rateLimitedFetch({
+      "retry-after": "30",
+      "anthropic-ratelimit-unified-5h-utilization": "1",
+      "anthropic-ratelimit-unified-5h-reset": String(Math.floor(Date.now() / 1000) + 3600),
+    });
+    const dispatcher = createTargetDispatcher({
+      inference: stubInference(),
+      settings: ANTHROPIC_SETTINGS,
+      fetchImpl,
+      env: {},
+      resolveKey: () => "sk-ant-fake-key",
+    });
+
+    const err = await dispatcher
+      .dispatch({ role: "drafter", prompt: "hi", targetId: "inherits" })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RateLimitedError);
+    const rateLimitedErr = err as RateLimitedError;
+    expect(rateLimitedErr.retryAfterSeconds).toBe(30);
+    expect(rateLimitedErr.prediction?.fiveHour.utilization).toBe(1);
+    expect(rateLimitedErr.prediction?.fiveHour.resetAtIso).not.toBeNull();
+  });
+
+  it("a 500 is still the ordinary generic error — only 429/529 classify as rate limits", async () => {
+    const fetchImpl = (async () =>
+      new Response("boom", {
+        status: 500,
+        statusText: "Internal Server Error",
+      })) as unknown as typeof fetch;
+    const dispatcher = createTargetDispatcher({
+      inference: stubInference(),
+      settings: REMOTE,
+      fetchImpl,
+      env: { GOLEM_UPSTREAM_API_KEY__OPENROUTER: "sk-or-thekey" },
+    });
+
+    const err = await dispatcher
+      .dispatch({ role: "drafter", prompt: "hi", targetId: "cheap" })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(TargetDispatchError);
+    expect(err).not.toBeInstanceOf(RateLimitedError);
   });
 });

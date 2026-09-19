@@ -78,6 +78,8 @@ export interface RunAcpTurnDeps {
   readonly postChannelMessage?: (text: string) => Promise<void>;
   /** R14.4's seam: record the thread as deferred in `thread-state.ts`. */
   readonly recordDeferred?: (info: DeferredTurnInfo) => Promise<void>;
+  /** Test-only: an isolated user config dir, so a test never reads the real `~/.golem`. */
+  readonly userDir?: string;
 }
 
 export interface RunAcpTurnInput {
@@ -190,7 +192,10 @@ function sleep(ms: number): Promise<void> {
 /** Run one turn. Never throws for an ordinary decline/defer/dispatch failure. */
 export async function runAcpTurn(input: RunAcpTurnInput): Promise<TurnResult> {
   const now = input.deps?.now ?? (() => Date.now());
-  const { settings } = await loadConfig({ projectDir: input.projectDir });
+  const { settings } = await loadConfig({
+    projectDir: input.projectDir,
+    ...(input.deps?.userDir !== undefined ? { userDir: input.deps.userDir } : {}),
+  });
   const personas = settings.inference.personas ?? {};
   const config = personas[input.personaId];
 

@@ -95,6 +95,11 @@ const CASES: readonly Case[] = [
     positive: "someone@example.com",
     negative: "not-an-email-just-text",
   },
+  {
+    rule: "nostr-secret-key",
+    positive: "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    negative: "nsec1tooshort",
+  },
 ];
 
 describe("redaction rule corpus (T-C3 audit surface)", () => {
