@@ -22,6 +22,7 @@ import { FOOTGUN_SKILLS } from "./skills/footguns.js";
 import { HYGIENE_SKILLS } from "./skills/hygiene.js";
 import { PACE_SKILLS } from "./skills/pace.js";
 import { RESEARCH_SKILLS } from "./skills/research.js";
+import { REVIEW_SKILLS } from "./skills/review.js";
 import { VIBE_SKILLS } from "./skills/vibe.js";
 
 /** command -> SKILL.md content; installed under .claude/skills/golem-<command>/. */
@@ -33,5 +34,6 @@ export const P0_SKILLS: Readonly<Record<string, string>> = {
   ...FOOTGUN_SKILLS,
   ...HYGIENE_SKILLS,
   ...PACE_SKILLS,
+  ...REVIEW_SKILLS,
   ...VIBE_SKILLS,
 };
