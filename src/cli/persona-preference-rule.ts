@@ -102,6 +102,15 @@ turns, or a side-investigation not worth a separate identity of its own — not
 as the default for work the roster above already names a persona for: that
 persona should get it instead.
 
+The same rule applies to the orchestrating session itself, not only to
+\`fork\`: when a request's shape matches a staffed persona's description above
+— most often planning/breakdown work matching the \`plan\`-discipline persona
+— dispatch to that persona rather than doing the work inline and reporting
+back. Grilling the user for the decisions a plan depends on is not itself
+planning work and stays in the orchestrating session (a dispatched persona has
+no channel back to ask); once those decisions are settled, the write-up and
+breakdown that follows is exactly the shape this bench exists to route.
+
 ## How this file got here
 
 \`golem init\` generated it from the personas currently staffed on the agent lane

@@ -9969,3 +9969,32 @@ on the old command forever**, silently. Any future change needs a list of
 *previously seeded* Golem commands treated as upgradable, alongside the current
 one, the same way `refreshInterval` is already upgraded in place. `removeStatusLine`
 has the identical equality check and the identical problem.
+
+## 17. Buzz (buzz.xyz / block/buzz) — agent config surface (2026-09-19)
+
+Checked for the Buzz-integration design ([[Buzz Integration]], tasks R14.2/R14.3).
+
+- **What it is**: confirmed via `buzz.xyz` (sparse landing page, no docs) and
+  `engineering.block.xyz/blog/configuring-agents-in-buzz` (2026-08-10) plus
+  `block.xyz/inside/introducing-buzz-where-humans-and-agents-work-together`.
+  Apache-2.0, `github.com/block/buzz`, Nostr-based channel chat, agents and
+  humans as first-class channel participants.
+- **Agent config fields confirmed** (from the engineering blog, UI-level):
+  name/avatar, agent instructions (system prompt), harness (`goose` | `claude`
+  | `codex` | `buzz-agent`, anything speaking Agent Client Protocol), provider,
+  model, effort, respond-to (`Only me` / `Selected people` / `Anyone`), plus
+  persistent per-agent "core memory" injected every session alongside the
+  agent instructions.
+- **Not found / unconfirmed**: any machine-writable config format for the
+  above (file, REST endpoint, or Nostr event kind) — the blog documents the
+  Settings UI and "ask an agent to draft one for review," not a provisioning
+  API. This blocks [[R14.2]] (Golem CLI provisioning Buzz agent identities)
+  until confirmed against the `block/buzz` source or an API doc, if one
+  exists, before writing any export code.
+- **Not found**: the exact ACP surface a `claude` harness must implement to
+  register as a Buzz agent — needed for [[R14.3]] (Golem itself addressable
+  in Buzz). Treat as unverified; do not assume Golem's existing Claude Code
+  integration satisfies it without checking the ACP spec Buzz targets.
+- Execution model is confirmed **reactive/@mention-triggered**, not pollable
+  or push-spawnable — this is load-bearing for the design (see [[Buzz
+  Integration]]'s "why this doesn't map onto the `Agent` tool directly").
