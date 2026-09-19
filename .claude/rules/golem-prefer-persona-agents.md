@@ -8,7 +8,6 @@ work matches one of the roles below — that is what this bench exists to route.
 
 Currently dispatchable:
 
-- `golem-coder` — claude-sonnet-5 (code) — A self-contained coding task — a first implementation, a test, a focused refactor — done on its own context and returned for review.
 - `golem-planner` — claude-opus-5 (plan) — Breaks a non-trivial or ambiguous task down into a concrete implementation plan — critical files, ordering, trade-offs — before code changes begin.
 - `golem-reviewer` — claude-opus-5 (review) — Reads code as code and reports defects, without the authoring session's assumptions.
 - `golem-scribe` — claude-haiku-4-5 (write) — Turns landed work into prose: wiki debriefs, task documents, README and docs updates.
