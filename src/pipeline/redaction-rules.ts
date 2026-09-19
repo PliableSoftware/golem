@@ -227,9 +227,12 @@ export const REDACTION_RULES: readonly RedactionRule[] = [
       "R14.3 (Buzz integration) — Nostr secret keys in NIP-19 bech32 form " +
       "(`nsec1...`). `buzz-acp` injects one into `golem acp`'s subprocess " +
       "environment as `BUZZ_PRIVATE_KEY`; it must never reach a log, " +
-      "telemetry, or the KB. The bech32 charset excludes b/i/o/1 (data part), " +
-      "so the character class here is narrower than a generic base32 sweep.",
-    pattern: /\bnsec1[023456789acdefghjklmnpqrstuvwxyz]{58,}\b/g,
+      "telemetry, or the KB. The class is the bech32 alphabet (excludes 1/i/o). " +
+      "No trailing \\b: a secret glued to a following word char (e.g. a log " +
+      "line suffix) must still match, and dropping the boundary can only widen " +
+      "redaction, never weaken it. The `i` flag covers bech32's valid " +
+      "all-uppercase form.",
+    pattern: /\bnsec1[023456789acdefghjklmnpqrstuvwxyz]{58,}/gi,
   },
 ];
 

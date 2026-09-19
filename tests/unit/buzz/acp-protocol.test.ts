@@ -233,6 +233,74 @@ describe("golem acp — scripted ACP client (Stage 1 gate)", () => {
       connection.close();
     }
   });
+
+  it("honours session/cancel: a cancelled turn posts no stale reply and returns stopReason cancelled", async () => {
+    // Under buzz-acp's default `steer` handling a new @mention cancels the
+    // turn in flight, so `session/cancel` fires mid-turn routinely — the
+    // cancelled turn must NOT surface its (now stale) reply.
+    const fixture = await makeFixture(workerLaneSettings());
+    let fetchStarted: () => void = () => {};
+    const started = new Promise<void>((res) => {
+      fetchStarted = res;
+    });
+    let resolveFetch: (v: Response) => void = () => {};
+    const willResolve = new Promise<Response>((res) => {
+      resolveFetch = res;
+    });
+    const hangingFetch: typeof fetch = (async () => {
+      fetchStarted();
+      return willResolve;
+    }) as unknown as typeof fetch;
+
+    const turnDeps: RunAcpTurnDeps = {
+      userDir: fixture.userDir,
+      dispatcherOverrides: { fetchImpl: hangingFetch, env: {}, resolveKey: () => "fake-key" },
+    };
+    const agentApp = createGolemAcpAgent({
+      projectDir: fixture.projectDir,
+      personaId: "echo",
+      turnDeps,
+    });
+    const updates: unknown[] = [];
+    const clientApp = client({ name: "test-client" }).onNotification(
+      "session/update",
+      ({ params }) => {
+        updates.push(params);
+      },
+    );
+    const connection = clientApp.connect(agentApp);
+    try {
+      await connection.agent.request("initialize", { protocolVersion: 1 });
+      const newSession = await connection.agent.request("session/new", {
+        cwd: fixture.projectDir,
+        mcpServers: [],
+      });
+
+      // Start a turn; do NOT await — its dispatch is hanging on fetch.
+      const promptPromise = connection.agent.request("session/prompt", {
+        sessionId: newSession.sessionId,
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      await started; // the turn has reached the hanging dispatch
+      await connection.agent.notify("session/cancel", { sessionId: newSession.sessionId });
+      // One macrotask turn so the agent's reader processes the cancel before
+      // the reply is allowed to arrive — the emit-drop must be visible to it.
+      await new Promise((r) => setTimeout(r, 0));
+
+      resolveFetch(
+        new Response(JSON.stringify({ content: [{ type: "text", text: "stale reply" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const promptResult = await promptPromise;
+
+      expect(promptResult.stopReason).toBe("cancelled");
+      expect(updates).toHaveLength(0); // the post-cancel reply never surfaced
+    } finally {
+      connection.close();
+    }
+  });
 });
 
 describe("R14.3 lane transparency — worker vs agent lane, same turn shape", () => {

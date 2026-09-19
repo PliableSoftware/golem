@@ -79,13 +79,30 @@ export const MAX_RETRY_ATTEMPTS = 3;
  * Pre-flight: read before dispatch starts. Wraps `decideSnoozeNudge` — see its
  * own doc for the fresh/stale/park logic. `stale` is a warning, never a block:
  * this process may legitimately be the only thing running for hours.
+ *
+ * Passes `enforce: true`. Advisory mode (`enforce: false`) is one-shot PER
+ * RESET WINDOW, keyed on `state.nudgedForResetIso` — state this module shares
+ * with Claude Code's own `PreToolUse` hook. In a project with an active
+ * interactive session, that hook has usually already nudged for the current
+ * window, which would silently make every `golem acp` turn in that window see
+ * `none` and dispatch, regardless of the ACTUAL utilization Buzz is adding on
+ * top. A headless daemon with nobody to nudge is exactly the enforcing case:
+ * park keeps firing every turn until the agent defers or the window resets,
+ * independent of what any other process already saw.
  */
 export function decidePreflight(
   prediction: LimitPrediction | null,
   state: SnoozeNudgeState,
   nowMs: number,
 ): ProceedVerdict | DeferVerdict {
-  const decision = decideSnoozeNudge(prediction, state, nowMs);
+  const decision = decideSnoozeNudge(
+    prediction,
+    state,
+    nowMs,
+    undefined,
+    undefined,
+    /* enforce */ true,
+  );
   if (decision.kind === "park") {
     return {
       kind: "defer",
@@ -123,13 +140,19 @@ export function decideInFlight(
   return deferFrom(err, nowMs, `retry-after ${Math.round(afterMs / 1000)}s exceeds the budget`);
 }
 
+/** A conservative fallback used only when neither the response nor the prediction gives a reset. */
+const FALLBACK_DEFER_MS = 300_000;
+
 function deferFrom(err: RateLimitedError, nowMs: number, why: string): DeferVerdict {
   const resetIso = err.prediction?.fiveHour.resetAtIso ?? null;
-  const untilIso =
-    resetIso ??
-    new Date(
-      nowMs + (err.retryAfterSeconds !== null ? err.retryAfterSeconds * 1000 : 300_000),
-    ).toISOString();
+  const fallbackMs =
+    // A pathological `retry-after` (e.g. a gateway sending a bogus huge value)
+    // must never overflow `Date`'s valid range and throw `RangeError` from
+    // inside a catch block, where nothing would catch it — clamp to a day.
+    err.retryAfterSeconds !== null && Number.isFinite(err.retryAfterSeconds)
+      ? Math.min(err.retryAfterSeconds * 1000, 24 * 60 * 60 * 1000)
+      : FALLBACK_DEFER_MS;
+  const untilIso = resetIso ?? new Date(nowMs + fallbackMs).toISOString();
   return { kind: "defer", untilIso, reason: `in-flight: ${why} (status ${err.status})` };
 }
 

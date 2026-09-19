@@ -86,8 +86,17 @@ export interface RunAcpTurnInput {
   readonly projectDir: string;
   readonly personaId: string;
   readonly promptText: string;
-  /** Called once per chunk of output as it arrives — the `session/update` keepalive. */
+  /** Called once per chunk of the reply as it arrives. */
   readonly emit: (text: string) => void;
+  /**
+   * Called during an in-turn rate-limit retry wait, purely to produce real
+   * stdout activity — `BUZZ_ACP_IDLE_TIMEOUT` resets on ANY agent stdout
+   * activity, and a silent `sleep()` produces none. Separate from `emit`
+   * because a keepalive must never become part of the reply's visible text;
+   * `acp-agent.ts` wires it to an `agent_thought_chunk` update, not
+   * `agent_message_chunk`.
+   */
+  readonly keepalive?: () => void;
   readonly deps?: RunAcpTurnDeps;
 }
 
@@ -168,16 +177,26 @@ async function deferTurn(
   nowIso: string,
 ): Promise<TurnResult> {
   const message = deferralChannelMessage(untilIso, reason);
-  input.emit(message);
-  await persistSnoozeNote(
+  // Exactly ONE channel message, on exactly one transport. `postChannelMessage`
+  // (R14.4's `buzz messages send` wiring, for the orchestrator's dispatch
+  // flow) and `input.emit` (this turn's own ACP reply, which `buzz-acp`
+  // forwards to the channel as this persona's message) both reach the same
+  // channel — using both here would double-post once R14.4 supplies the
+  // former. R14.3 ships only the latter; the former is a seam, not yet wired.
+  if (input.deps?.postChannelMessage !== undefined) {
+    await input.deps.postChannelMessage(message);
+  } else {
+    input.emit(message);
+  }
+  const breadcrumb = await persistSnoozeNote(
     input.projectDir,
     `Buzz turn for persona "${input.personaId}" deferred: ${reason}. Resumes after ${untilIso}.`,
     { nowIso },
   );
-  if (input.deps?.postChannelMessage !== undefined) {
-    await input.deps.postChannelMessage(message);
-  } else {
-    process.stderr.write(`golem acp: deferred (no channel transport wired) — ${message}\n`);
+  if (!breadcrumb.ok) {
+    process.stderr.write(
+      `golem acp: failed to file the deferral breadcrumb: ${breadcrumb.error}\n`,
+    );
   }
   if (input.deps?.recordDeferred !== undefined) {
     await input.deps.recordDeferred({ untilIso, reason, personaId: input.personaId, lane });
@@ -189,8 +208,28 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Run one turn. Never throws for an ordinary decline/defer/dispatch failure. */
+/**
+ * Run one turn. Never throws — an unhandled rejection here takes the whole
+ * process down and triggers a `buzz-acp` respawn loop, so ANY failure this
+ * function's own logic did not already turn into a specific message (a
+ * malformed `.golem/settings.json`, an unreadable `prompt_file`, a
+ * `RangeError` from bad rate-limit header math, a failed `postChannelMessage`
+ * once R14.4 wires one) becomes a generic honest decline instead.
+ */
 export async function runAcpTurn(input: RunAcpTurnInput): Promise<TurnResult> {
+  try {
+    return await runAcpTurnInner(input);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`golem acp: turn for persona "${input.personaId}" failed: ${message}\n`);
+    input.emit(
+      `Persona "${input.personaId}" hit an unexpected error and could not complete this turn.`,
+    );
+    return { stopReason: "end_turn" };
+  }
+}
+
+async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
   const now = input.deps?.now ?? (() => Date.now());
   const { settings } = await loadConfig({
     projectDir: input.projectDir,
@@ -270,7 +309,7 @@ export async function runAcpTurn(input: RunAcpTurnInput): Promise<TurnResult> {
         attempt += 1;
         const verdict = decideInFlight(err, attempt, now());
         if (verdict.kind === "retry") {
-          input.emit(""); // keepalive — resets buzz-acp's idle timer without changing the reply
+          input.keepalive?.(); // real stdout activity — resets buzz-acp's idle timer
           await sleep(verdict.afterMs);
           continue;
         }

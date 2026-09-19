@@ -14,7 +14,6 @@ describe("acp-session registry", () => {
       cwd: "/project",
       mcpServers: [{ type: "stdio", name: "buzz" }],
       personaId: "coder",
-      history: [],
     });
   });
 

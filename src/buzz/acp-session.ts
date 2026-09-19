@@ -7,10 +7,16 @@
  * in-memory map, not a durable store. Nothing here survives a process
  * restart, and nothing needs to: `buzz-acp` respawns the agent and the client
  * calls `session/new` again.
+ *
+ * **The registry holds no conversation history.** R14.3 is a bounded
+ * single-shot per turn (see [[Buzz Integration]]), so each `session/prompt`
+ * is context-free by design and the registry carries only the session's spawn
+ * bindings. Durable cross-turn state (which task, what was already dispatched
+ * or posted) is R14.4's `thread-state.ts`, keyed by the thread root, not
+ * something an ACP session id can own — a rotate or respawn wipes this map.
  */
 
 import crypto from "node:crypto";
-import type { DispatchMessage } from "../inference/target-dispatcher.js";
 import type { McpServerInput } from "./types.js";
 
 export interface AcpSession {
@@ -19,8 +25,6 @@ export interface AcpSession {
   readonly mcpServers: readonly McpServerInput[];
   /** From `BUZZ_ACP_AGENT_ARGS=acp,--persona,<id>` — bound at process spawn, never changes. */
   readonly personaId: string;
-  /** Prior turns, oldest first — threaded into `DispatchRequest.attempts` by `acp-turn.ts`. */
-  history: DispatchMessage[];
 }
 
 export interface CreateSessionInput {
@@ -51,7 +55,6 @@ export function createSessionRegistry(options: SessionRegistryOptions = {}): Ses
         cwd: input.cwd,
         mcpServers: input.mcpServers,
         personaId: input.personaId,
-        history: [],
       };
       sessions.set(session.id, session);
       return session;

@@ -851,6 +851,20 @@ export function createTargetDispatcher(options: TargetDispatcherOptions): Target
       // every other target in this function.
       const unredacted = permitsUnredactedDispatch(base);
       if (unredacted && servesLocalTieredService(base, options)) {
+        // R14.3's `request.model` override cannot be honoured here: the
+        // frozen `InferenceService` contract is role-based, not model-based
+        // (see this module's header) — there is no parameter to carry a
+        // model string to. Every other branch below fails closed on a model
+        // it cannot honour; silently ignoring the override here would be the
+        // one exception, and it would report success while dispatching on a
+        // different model than the caller named.
+        if (request.model !== undefined && request.model !== "") {
+          throw new TargetDispatchError(
+            `target "${base.id}" is the local tiered service, which dispatches by ROLE — it ` +
+              `cannot be asked for a specific model ("${request.model}"). Route this request to ` +
+              "a registry target instead.",
+          );
+        }
         const result = await options.inference.chat(request.role, messages);
         options.audit?.({
           targetId: base.id,

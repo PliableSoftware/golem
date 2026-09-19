@@ -33,6 +33,16 @@ describe("decidePreflight (R14.3 MUST HANDLE, layer 1)", () => {
     }
   });
 
+  it("defers even when Claude Code's hook already nudged this window (enforce mode)", () => {
+    // decideSnoozeNudge's advisory one-shot keys on nudgedForResetIso; a headless
+    // daemon must park independently of what the interactive session already saw,
+    // else layer 1 is silently disabled for every Buzz turn in an active project.
+    const resetAtIso = new Date(NOW + 60_000).toISOString();
+    const alreadyNudged = { nudgedForResetIso: resetAtIso };
+    const verdict = decidePreflight(prediction(0.95, resetAtIso), alreadyNudged, NOW);
+    expect(verdict.kind).toBe("defer");
+  });
+
   it("never blocks on a stale reading — proceeds and lets the caller warn instead", () => {
     const staleObservedAtIso = new Date(NOW - 60 * 60 * 1000).toISOString(); // 1h old
     const stalePrediction: LimitPrediction = {

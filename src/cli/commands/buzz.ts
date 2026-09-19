@@ -20,18 +20,21 @@ export default function register(program: Command): void {
         "`BUZZ_ACP_AGENT_COMMAND=golem BUZZ_ACP_AGENT_ARGS=acp,--persona,<id>` points at",
     )
     .option("--persona <id>", "the persona this process serves — bound for the process lifetime")
-    .option(
-      "--dir <path>",
-      "project directory",
-      () => findProjectDir(process.cwd()) ?? process.cwd(),
-    )
-    .action(async (opts: { persona?: string; dir: string }) => {
+    // Commander's third `.option()` argument is a PARSE FUNCTION, not a
+    // default value — passing one here silently discarded an explicit
+    // `--dir` and never applied the fallback (both `opts.dir` outcomes
+    // resolved to whatever the function itself returned). Resolve the
+    // fallback in the action instead, where `opts.dir` is `undefined` when
+    // the flag was never given.
+    .option("--dir <path>", "project directory")
+    .action(async (opts: { persona?: string; dir?: string }) => {
       if (opts.persona === undefined || opts.persona.trim() === "") {
         process.stderr.write("golem acp: --persona <id> is required.\n");
         process.exitCode = 1;
         return;
       }
-      const code = await serveAcp({ projectDir: opts.dir, personaId: opts.persona });
+      const projectDir = opts.dir ?? findProjectDir(process.cwd()) ?? process.cwd();
+      const code = await serveAcp({ projectDir, personaId: opts.persona });
       process.exitCode = code;
     });
 }
