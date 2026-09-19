@@ -10273,3 +10273,258 @@ even for tier-1 the runtime's own config wins. Same lesson.
   running relay (`just relay`, i.e. Docker Postgres + Redis) and a `buzz-acp`
   binary (Rust/cargo build, or a Buzz Desktop install). Both are the user's to
   provide — see R14.3's `blocked` field.
+
+## 20. Buzz — rate limits, setup cost, and the session-scope flag (2026-09-19)
+
+Third pass, after §19. Two things prompted it: a gap the task briefs did not
+cover (what a headless `golem acp` turn does when the model call is
+rate-limited), and four items §19 left open. Sources, all read 2026-09-19:
+`raw.githubusercontent.com/block/buzz/main/` → `README.md`,
+`crates/buzz-acp/README.md`, `crates/buzz-acp/src/config.rs`,
+`crates/buzz-acp/src/scope.rs`, `crates/buzz-acp/src/acp.rs`,
+`crates/buzz-acp/src/pool.rs`; `api.github.com/repos/block/buzz/releases/latest`
+and `.../releases/383339197/assets`; `github.com/block/buzz/pull/7359`;
+`github.com/block/buzz/issues/2312`; `engineering.block.xyz/blog/run-your-own-buzz-relay`;
+`agentclientprotocol.com/protocol/{overview,prompt-turn,agent-plan,schema}`;
+`raw.githubusercontent.com/agentclientprotocol/claude-agent-acp/main/docs/session-failure-extension.md`;
+`github.com/agentclientprotocol/codex-acp/tree/main/docs`;
+`registry.npmjs.org`. Golem-side facts are from this checkout at `5b94936`.
+
+### 1. Golem's usage-limit protection does NOT reach a `golem acp` turn
+
+Read in this repo, not inferred:
+
+- **`.golem/state/limit-state.json` is written from exactly one place** —
+  `src/cli/proxy-build/telemetry-hooks.ts:181-191`, inside the **proxy
+  process**. It calls `parseLimitPrediction(headers, nowIso)` on upstream
+  responses (throttled by `LIMIT_PERSIST_THROTTLE_MS`) and then
+  `writeLimitState(dir, {...prediction, targetId: route?.targetId ?? null})`.
+  The file is therefore a **side effect of proxied traffic**, not of Golem
+  making a model call.
+- **Every reader is a Claude Code session surface**: `src/hooks/pre-tool-use.ts`
+  (the park gate at :229, the spawn gate at :288) and `src/cli/status-collect.ts`
+  (:282). Nothing under `src/inference/` reads it.
+- **In-process dispatch has no rate-limit awareness whatsoever.**
+  `src/inference/target-dispatcher.ts` collapses every non-ok response into one
+  generic error in both transports — `dispatchOpenAI` (:522-526) and
+  `dispatchAnthropic` (:581-585) throw
+  `TargetDispatchError('target "<id>" returned <status> <statusText>. No draft
+  was produced.')` and **discard `res.headers`**. A grep for
+  `429|rate.limit|ratelimit|retry-after` over `src/inference/*.ts` returns
+  **zero hits**. The whole error taxonomy is `TargetDispatchError` plus
+  `NoDrafterConfiguredError` (a *decline*, not a failure).
+
+So a `golem acp` turn that dispatches in-process sees a 429 as a string
+indistinguishable from a 500 or a 401, and writes no limit state. The park hook
+cannot help either: it is a Claude Code `PreToolUse` gate that denies the *next
+tool call* and redirects a human-driven session to call `snooze`. A headless
+daemon reacting to an `@mention` has no tool-call loop for that gate to sit in
+front of, and no human to answer it.
+
+**The proxy is dialable from another local process**, which is the cheap fix:
+`src/cli/proxy-daemon.ts` binds `127.0.0.1` on a deterministic per-project port
+(`PROXY_PORT_BASE = 4653`, `PROXY_PORT_SPAN = 1000`, derived from the project
+path, overridable via `proxy.port`). Pointing `golem acp`'s dispatch at it makes
+limit state, redaction, compression and telemetry all apply for free.
+
+**Reusable, already-pure pieces of the snooze machinery** (none of which need
+MCP or a hook):
+
+- `decideSnoozeNudge(prediction, state, nowMs, threshold =
+  DEFAULT_NUDGE_UTILIZATION (0.9), staleAfterMs = STALE_AFTER_MS (30 min),
+  enforce = false)` in `src/hooks/snooze-nudge.ts` → `{kind:"none"|"park"|"stale"}`.
+  A pure function of a `LimitPrediction`; the hook is only the delivery channel.
+- `persistSnoozeNote(projectDir, note, {nowIso})` in `src/mcp/snooze-note.ts`
+  writes a queued local task via `FileTaskStore`, fail-open `{ok:false}`.
+- `resolveSnoozeTargetMs()` in `src/mcp/snooze.ts` is pure.
+  **`runSnooze()` is the one piece that must not be reused** — it blocks the
+  live session, which is precisely the deadlock described in item 3.
+
+### 2. ACP has no way to say "come back later" — confirmed, by absence
+
+- **The complete `StopReason` enum is five values**, verbatim from
+  `agentclientprotocol.com/protocol/prompt-turn`: `end_turn`, `max_tokens`,
+  `max_turn_requests`, `refusal`, `cancelled`. There is **no `error` value and
+  no provider-failure value**. §19 item 3's trailing "etc." was doing more work
+  than the spec supports.
+- **Error handling is plain JSON-RPC 2.0** (`code` + `message`, per
+  `/protocol/overview`). Core ACP defines **no** taxonomy distinguishing a
+  transient external failure from a permanent one, and **no** retryable or
+  deferred-turn concept. `/protocol/overview`, `/protocol/prompt-turn` and
+  `/protocol/agent-plan` were read in full looking for one; it is not there.
+- **Cancellation**: `session/cancel` is a notification. On receipt the agent
+  must stop model requests, abort tool calls, flush pending `session/update`s,
+  and — verbatim — *"MUST respond to the original session/prompt request with
+  the cancelled stop reason."* There is no way to end a turn with no response.
+- **`session/update` has no status variant for a degraded turn.** `plan`
+  entries are constrained to `pending`/`in_progress`/`completed`;
+  `usage_update` carries numbers only.
+
+### 3. The ecosystem's answer: end the turn, narrate out of band — and Buzz ignores the out-of-band part
+
+`@agentclientprotocol/claude-agent-acp` (npm, v0.79.0, published 2026-09-19)
+ships a **`sessionFailure` extension** — opt-in, negotiated via
+`_meta.jetbrains.air.capabilities`, documented at
+`docs/session-failure-extension.md`. Its provider-condition table maps
+`billing_error`, `rate_limit`, `max_output_tokens` and spend/budget limits to
+category **`limit`**. The load-bearing sentence, verbatim: *"A turn-terminal
+failure is attached to the successful ACP `PromptResponse` in `_meta`; the
+response uses `stopReason: end_turn`."* Retries happen **inside the Claude Agent
+SDK**, below the adapter, which merely narrates them as `severity: warning`
+records on the same failure id; the wire schema deliberately has **no**
+`retryable`, `retryAfterMs` or retry-counter field. Unnegotiated, it degrades to
+plain ACP with no rate-limit signal at all.
+
+`@agentclientprotocol/codex-acp` has **no** equivalent — its `docs/` directory
+carries nine extension docs and `session-failure-extension.md` is not among
+them. Its per-turn rate-limit behaviour could not be confirmed from the web
+(npm page 403s to fetch; the TypeScript source was not read). **Unconfirmed.**
+
+`goose`'s handling is **provider-level and predates its ACP mode**: env-tuned
+retry/backoff (`BEDROCK_MAX_RETRIES`, `BEDROCK_INITIAL_RETRY_INTERVAL_MS`,
+`BEDROCK_BACKOFF_MULTIPLIER`, `BEDROCK_MAX_RETRY_INTERVAL_MS`), default reported
+in `block/goose#4173` as 3 tries / 1s / ×2. `block/goose#322` reports goose
+*crashing* at Tier 1 rate limits. How `goose acp` maps an exhausted 429 onto a
+`stopReason` **could not be sourced** — flagged rather than guessed.
+
+**And the decisive Buzz-side fact**: `crates/buzz-acp/src/acp.rs` handles
+`_meta` for `goose.activeRunId`, `steering.supported`, `systemPrompt` and
+`sessionTitle` — and **nothing else**. There is no `sessionFailure` handling.
+A `_meta` failure payload from Golem would be **silently dropped**.
+
+`crates/buzz-acp/src/pool.rs` then settles which `stopReason` to return:
+
+- `MaxTokens | MaxTurnRequests` → **the ACP session is rotated** (`:3240-3243`),
+  i.e. discarded.
+- Every reason, including `Refusal`, produces **only a `tracing::warn!`**
+  (`:4830-4842`). **No stopReason is ever posted to the channel.**
+
+So the only rate-limit signal that can reach a human is **a chat message posted
+with `buzz messages send`**, and `end_turn` is the only stopReason that neither
+throws away the session nor misreports the cause. That is also exactly what
+claude-agent-acp returns for this condition.
+
+### 4. Session-scope flag — CONFIRMED (§19 item 11, closed)
+
+From `crates/buzz-acp/src/config.rs:353-364` and `src/scope.rs:30-42`:
+
+```
+--session-policy <channel|thread>     env BUZZ_ACP_SESSION_POLICY     default: channel
+```
+
+`SessionPolicy::Channel` (default) = one provider session per channel;
+`SessionPolicy::Thread` = each canonical channel thread gets an isolated
+provider session. DMs stay conversation-scoped either way. The source comment
+says it "ships as `channel` so thread scoping can be canaried and rolled back
+without code changes" — i.e. `thread` is **implemented but shipped dark**, which
+is a reason to verify it live before depending on it, not a reason to avoid it.
+
+### 5. A correction to §19: the default is NOT queue-and-batch
+
+§19 item 7 said queued events are "drained into a single batched
+`session/prompt`". That is the **non-default** mode. From `config.rs:366-378`:
+
+```
+--multiple-event-handling <steer|queue|interrupt|owner-interrupt>
+    env BUZZ_ACP_MULTIPLE_EVENT_HANDLING    default: steer
+```
+
+Verbatim: *"steer (default): cancel+re-prompt, framing the new mention as a
+message that arrived mid-task"*; `queue` is *"events wait until the current turn
+completes"*; `interrupt` is a supersede; `owner-interrupt` restricts that to the
+owner. **So by default a new @mention CANCELS the in-flight turn.** R14.4's
+replay-idempotency requirement stands, and gains a second reason: a cancelled
+turn may already have posted messages before it was cut off.
+
+Two more defaults worth having: `--context-message-limit` (env
+`BUZZ_ACP_CONTEXT_MESSAGE_LIMIT`, default **12**, max 100) means buzz-acp
+fetches recent thread context automatically, so a turn does not start blind;
+`--max-turns-per-session` (default 0) rotates a session proactively, and at 0
+rotates "only on MaxTokens / MaxTurnRequests".
+
+### 6. Owner-user infra — the setup is one command, but the CLIs are source-only
+
+- **A `just` quickstart exists** (`README.md`): `git clone … && cd buzz`,
+  `. ./bin/activate-hermit`, `just setup && just build`, then `just dev` (relay
+  + desktop, relay on `ws://localhost:3000`) or `just relay` alone. `just setup`
+  runs `just bootstrap`, which copies `.env.example` → `.env`, fetches tools via
+  Hermit, and starts Docker services + migrations. Other recipes: `just build`,
+  `just check`, `just test-unit`, `just test`, `just ci`, `just reset`.
+  Prereqs are Docker + Hermit, or Rust 1.88+ / Node 24+ / pnpm 10+ / `just`.
+- A root `docker-compose.yml` covers the dev loop; a **separate production
+  bundle** lives at `deploy/compose/` with a `run.sh` (`./run.sh start|status|
+  add-member npub1… --role member|list-members`) per
+  `engineering.block.xyz/blog/run-your-own-buzz-relay` (2026-07-31). There is
+  also a **one-click "Deploy on Railway"** template
+  (`railway.com/deploy/buzz-relay-block`) that provisions relay + Postgres +
+  Redis + object storage.
+- **`buzz-admin` is available prebuilt inside the relay container image** —
+  `docker run --rm --entrypoint /usr/local/bin/buzz-admin ghcr.io/block/buzz:main
+  generate-key` (same blog post). That removes the Rust toolchain from the
+  *key-minting* step specifically.
+- **There are no standalone CLI binaries.** Checked the release API directly:
+  latest release is `desktop-v0.5.23` (published 2026-09-05) and its **twelve
+  assets are, in full**: `Buzz_0.5.23_aarch64.app.tar.gz` (+ `.sig`),
+  `Buzz_0.5.23_aarch64.dmg`, `Buzz_0.5.23_amd64.AppImage` (+ `.sig`),
+  `Buzz_0.5.23_amd64.deb`, `Buzz_0.5.23_x64-setup_alpha-unsigned.exe` (+ `.sig`),
+  `Buzz_0.5.23_x64.app.tar.gz` (+ `.sig`), `Buzz_0.5.23_x64.dmg`,
+  `updater-manifest.json`. All Buzz **Desktop** installers. No `buzz`,
+  `buzz-acp` or `buzz-admin` asset. No Homebrew tap or formula found; no npm
+  distribution. Documented install for all three crates is
+  `cargo build --release -p <crate>` / `cargo run -p buzz-admin -- …`.
+- **Hosted relays are real, but they are per-user communities, not a shared
+  public relay.** `engineering.block.xyz/blog/run-your-own-buzz-relay`: *"Don't
+  want to run infrastructure? buzz.xyz offers hosted relays — same open-source
+  relay, managed for you."* `block/buzz#2312` (2026-07-22) shows the flow:
+  Desktop's "Create your community" opens a hosted sign-in at
+  `app.builderlab.xyz`, you bind your npub, pick a name matching
+  `^[a-z0-9]+(?:-[a-z0-9]+)*$`, and get a dedicated community at
+  `<name>.communities.buzz.xyz`, limited to 3 per account. So a user can skip
+  Docker entirely for the relay — but they own that community rather than
+  joining a shared one.
+- **Whether a hosted community can register an agent pubkey without the relay
+  signing key is UNCONFIRMED.** `add-member` needs `BUZZ_RELAY_PRIVATE_KEY`,
+  which Block would hold for a hosted community. `block/buzz#4209` ("Invite /
+  Relay Access UI is missing for self-hosted communities") implies hosted
+  communities *do* have an in-app invite UI that self-hosted ones lack, which
+  would be the path — but that is inferred from an issue title, not a
+  walkthrough. **Needs a live Builderlab account.**
+- **Whether tier-3 BYOH works against a hosted community is UNCONFIRMED.** BYOH
+  shipped in Buzz Desktop v0.5.0 (2026-07-28, PR #2773) and reads as a
+  client-side runtime seam that should be relay-agnostic, but no text confirms
+  it. The headless `buzz-acp` path is unaffected either way, since it takes
+  `BUZZ_ACP_AGENT_COMMAND` from the environment.
+
+### 7. PR #7359 (persona packs) — still open, direction unchanged
+
+`github.com/block/buzz/pull/7359`, "feat(buzz-acp): wire persona-pack MCP
+servers and skills into spawn", by `mraad`, opened 2026-09-04, **6 commits into
+`block:main`, not merged and not closed as of 2026-09-19**. Flags unchanged
+(`--persona-pack`, `--persona`, `--workdir` and their `BUZZ_ACP_*` env vars);
+the author still lists *"desktop spawn plumbing, persona hooks (still
+parsed-but-unwired), persona runtime_env_vars, and `${VAR}` interpolation in MCP
+env"* as out of scope. **§19's "do not build on this" stands unchanged.**
+Whether there has been review pushback could not be read — GitHub's review
+threads did not render to an unauthenticated fetch, and the GitHub MCP server
+was down this session (`AUTH_HEADER_REJECTED`). **Unconfirmed, minor.**
+
+### 8. No TypeScript client for buzz-cli exists
+
+npm registry search (`registry.npmjs.org/-/v1/search?text=buzz-cli`) returns
+only unrelated packages: `buzz-cli` (a Vue/Webpack tool, repo
+`zlxbuzz/buzz-cli`), `buzz` (an HTML5 audio library), `@infomiho/buzz-cli` (a
+static-site deploy CLI), `@eve/buzz-acp-adapter` (repo `vercel/eve`, a generic
+ACP adapter, **not** Block's). `buzz-agent-skill` (`thalixinc/buzz-agent-skill`)
+is a third-party installer for the Buzz CLI *skill files*, not a client library.
+No `@buzz-xyz/*` or `@block/buzz*` scope exists. `block/buzz`'s own crate map
+lists `buzz-sdk`, `buzz-core`, `buzz-cli` etc. as **Rust** crates; there is no
+`clients/`, `sdk/` or `packages/` JS directory.
+
+The realistic alternatives to shelling out, neither of them a drop-in: a generic
+Nostr library such as `nostr-tools` over the relay's WebSocket (implementing
+NIP-42 auth by hand), or plain `fetch` against the relay's REST surface —
+`GET /api/channels?member=true` is confirmed in `crates/buzz-acp/README.md`, but
+**no full REST reference or OpenAPI spec was found**. Both paths would also
+require reimplementing the credential handling that `buzz-acp`'s injected
+`BUZZ_PRIVATE_KEY` / `BUZZ_AUTH_TAG` currently give the CLI for free. **R14.4's
+shell-out to `buzz` stands**; this is recorded so the option is not re-derived.

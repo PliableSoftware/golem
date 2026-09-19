@@ -1,8 +1,8 @@
 ---
 title: Buzz Integration
 type: concept
-tags: [r14, r14-2, r14-3, r14-4, buzz, agents, orchestration, personas, acp, harness, nostr]
-sources: ["https://buzz.xyz", "https://github.com/block/buzz", "https://github.com/block/buzz/blob/main/crates/buzz-acp/README.md", "https://github.com/block/buzz/blob/main/ARCHITECTURE.md", "https://github.com/block/buzz/blob/main/crates/buzz-cli/README.md", "https://agentclientprotocol.com", "https://engineering.block.xyz/blog/configuring-agents-in-buzz", "docs/plan/verification-notes.md", "src/inference/personas.ts", "docs/plan/tasks/R14.2.md", "docs/plan/tasks/R14.3.md", "docs/plan/tasks/R14.4.md"]
+tags: [r14, r14-2, r14-3, r14-4, buzz, agents, orchestration, personas, acp, harness, nostr, rate-limits]
+sources: ["https://buzz.xyz", "https://github.com/block/buzz", "https://github.com/block/buzz/blob/main/crates/buzz-acp/README.md", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/config.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/scope.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/pool.rs", "https://github.com/block/buzz/blob/main/ARCHITECTURE.md", "https://github.com/block/buzz/blob/main/crates/buzz-cli/README.md", "https://agentclientprotocol.com", "https://agentclientprotocol.com/protocol/prompt-turn", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/docs/session-failure-extension.md", "https://engineering.block.xyz/blog/configuring-agents-in-buzz", "https://engineering.block.xyz/blog/run-your-own-buzz-relay", "docs/plan/verification-notes.md", "src/inference/personas.ts", "src/proxy/limit-prediction.ts", "src/hooks/snooze-nudge.ts", "docs/plan/tasks/R14.2.md", "docs/plan/tasks/R14.3.md", "docs/plan/tasks/R14.4.md"]
 updated: 2026-09-19
 created: 2026-09-19
 ---
@@ -18,9 +18,11 @@ from a planning conversation; implementation tracked as R14.3 (the runtime),
 R14.2 (identity provisioning), R14.4 (orchestrator dispatch).
 
 **The protocol research is complete**: `docs/plan/verification-notes.md` §19
-(2026-09-19) resolves everything §17 and §18 left open. That section is the
-authority on wire-level facts; this page carries the design and the decisions.
-Where the two ever disagree, §19 is right and this page is stale.
+(2026-09-19) resolves everything §17 and §18 left open, and **§20** (2026-09-19)
+adds the rate-limit/usage-cap behaviour, the setup and distribution picture, the
+session-scope flag, and one correction to §19. Those sections are the authority
+on wire-level facts; this page carries the design and the decisions. Where they
+ever disagree, the notes are right and this page is stale.
 
 ## Architecture, as confirmed
 
@@ -107,17 +109,62 @@ An earlier draft said Golem "watches the thread". It cannot:
   a reply deadlocks the channel the reply must arrive through.
 - `BUZZ_ACP_IDLE_TIMEOUT` (620s default) cancels a quiet turn; it resets only on
   agent stdout activity, which makes streaming `session/update` the keepalive.
-- Queued events are **drained into one batched prompt**, so two replies can
-  arrive together, in one turn.
+- **A new @mention cancels the turn in flight, by default.**
+  `--multiple-event-handling` / `BUZZ_ACP_MULTIPLE_EVENT_HANDLING` defaults to
+  `steer` (cancel + re-prompt, framed as a message that arrived mid-task).
+  Batched draining into one prompt is the non-default `queue` mode. So a turn
+  must survive being cut off part-way through its own posting, not only being
+  handed two events at once.
 - Unprocessed mentions are **replayed on harness startup**, so the same event
   can arrive twice.
+- Session scope is selected by `--session-policy` / `BUZZ_ACP_SESSION_POLICY`
+  (`channel` default, `thread` available but shipped dark).
 
 So the orchestrator is a **state machine across turns**, resuming from durable
 per-thread state, never a loop inside one. This is R14.4's central constraint.
 
 An optional `--heartbeat-interval` (≥10s) does fire a prompt on an idle agent,
 so mention-triggering is not the *only* wake — but it is dropped when busy and
-never queued, which makes it a safety net rather than a mechanism.
+never queued, which makes it a safety net rather than a mechanism. Golem's
+orchestrator runs with one anyway (R14.4), because the rate-limit design below
+needs *some* unattended wake; the honest framing is that it makes resumption
+likely, never certain.
+
+## Rate limits and usage caps: end the turn, say so in the channel
+
+Golem's usage-limit protection ([[Usage Limit Park]], [[Spawn Headroom Gate]])
+is a Claude Code `PreToolUse` hook — it denies the next *tool call* and
+redirects an *interactive* session to call `snooze`. **None of it reaches a
+`golem acp` turn**, which has no tool-call loop and no human present. Nor does
+`.golem/state/limit-state.json` get written by it: that file is a side effect of
+traffic through Golem's **proxy**, and Golem's in-process dispatcher throws away
+response headers and reports a 429 as an unclassified error
+(`verification-notes.md` §20 item 1).
+
+Decision (2026-09-19): a rate-limited turn **posts an honest status message with
+`buzz messages send`, records the thread as deferred, and returns
+`stopReason: end_turn`** — with a small bounded in-turn retry (≤ ~60s) first, so
+ordinary per-minute throttling never becomes a channel message. Waiting out the
+window inside the turn is not an option worth weighing: `buzz-acp` allows one
+prompt in flight per channel, so a parked turn deadlocks the channel its own
+resume must arrive through, and a 5-hour Anthropic window outlives
+`BUZZ_ACP_MAX_TURN_DURATION` (7200s) regardless.
+
+The channel message is not a stylistic choice — it is **the only path to a
+human**. `buzz-acp` never posts a `stopReason` (every value is a `tracing::warn!`
+and nothing more), and it drops every `_meta` key it does not already handle, so
+the `sessionFailure` extension `@agentclientprotocol/claude-agent-acp` uses for
+this exact condition would be swallowed. `end_turn` is also the only safe
+stopReason: `max_tokens` and `max_turn_requests` make `buzz-acp` discard the ACP
+session, and `refusal` misreports a transient external condition as policy.
+
+What *is* reused from snooze is its **decision**, not its mechanism:
+`decideSnoozeNudge()` is already a pure function of a `LimitPrediction`, so Buzz
+turns and Claude Code sessions park on the same threshold instead of drifting
+apart, and `persistSnoozeNote()` files an operator breadcrumb into
+`golem task list`. `runSnooze()` — the part that blocks — is exactly what must
+not be reused. Detail and evidence: `verification-notes.md` §20 items 1-3;
+build split in R14.3 (detect, retry, post, end) and R14.4 (defer, resume).
 
 ## Identity and scoping
 
@@ -200,6 +247,17 @@ PATH and reports what is missing; it must not try to build or bundle them, per
 `CLAUDE.md`'s no-heavyweight-deps rule. This is what keeps R14.3's live gate an
 `owner: user` step.
 
+**There are no prebuilt CLI binaries** — every asset of the latest release
+(`desktop-v0.5.23`, 2026-09-05) is a Buzz Desktop installer, and there is no
+Homebrew tap or npm distribution, so the documented path is `cargo build
+--release -p <crate>`. Two shortcuts are real and worth surfacing in tooling:
+`buzz-admin` ships inside the relay container image (`docker run --rm
+--entrypoint /usr/local/bin/buzz-admin ghcr.io/block/buzz:main generate-key`),
+so key-minting needs no Rust toolchain; and the relay itself can be stood up
+with `just setup && just build` + `just relay`, a one-click Railway template, or
+a Block-hosted community at `<name>.communities.buzz.xyz` (three per account).
+Hosted relays are per-user communities, not a shared public relay.
+
 ## Out of scope for this design
 
 - **Buzz persona packs** (`--persona-pack` / `--persona` / `--workdir`,
@@ -215,7 +273,21 @@ PATH and reports what is missing; it must not try to build or bundle them, per
 
 ## Still unverified
 
-See `verification-notes.md` §19 item 11 for the full list. The ones that affect
-design rather than detail: whether BYOH exists on hosted `buzz.xyz`, the flag
-that selects `thread` rather than `channel` session scope, and everything that
-needs a live relay to observe.
+See `verification-notes.md` §19 item 11 and §20 for the full list. §20 closed
+two of the three that mattered — the session-scope flag is `--session-policy` /
+`BUZZ_ACP_SESSION_POLICY`, and there is no npm client to wrap instead of
+shelling out to `buzz`. What remains, design-first:
+
+- **Whether tier-3 BYOH works against a hosted community.** It reads as a
+  client-side runtime seam and so should be relay-agnostic, but nothing says so.
+  The headless `buzz-acp` path does not care either way.
+- **Whether a hosted community's owner can register an agent pubkey** without
+  the relay's signing key. An in-app invite UI is implied by `block/buzz#4209`
+  but nobody has walked it. Needs a live account.
+- **`thread` session scope on a real relay** — implemented but shipped dark, so
+  it deserves observation rather than trust.
+- **How `goose acp` and `codex-acp` handle a provider rate limit**, which would
+  be corroboration for the design above rather than a dependency of it. Neither
+  could be sourced without reading their source directly.
+- Everything else that needs a live relay to observe: the NIP-42 handshake, a
+  real end-to-end turn, and whether `golem acp` satisfies `buzz-acp` in practice.
