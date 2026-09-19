@@ -10528,3 +10528,410 @@ NIP-42 auth by hand), or plain `fetch` against the relay's REST surface —
 require reimplementing the credential handling that `buzz-acp`'s injected
 `BUZZ_PRIVATE_KEY` / `BUZZ_AUTH_TAG` currently give the CLI for free. **R14.4's
 shell-out to `buzz` stands**; this is recorded so the option is not re-derived.
+
+## 21. Nesting `claude-agent-acp` inside `golem acp` — lane-transparent dispatch, confirmed (2026-09-20)
+
+Checked for the USER requirement of 2026-09-19: a worker-lane persona must be
+**just as addressable in Buzz** as an agent-lane one — same `@mention` handle,
+same identity, same prompt source, same model source — with only the execution
+mechanism differing behind that identity. See [[Buzz Integration]] and the lane
+resolver at `src/inference/persona-lane.ts`.
+
+Package under test: `@agentclientprotocol/claude-agent-acp`, version `0.79.0`
+(published 2026-09-17T14:55:56Z). **Caveat that applies to every line below**:
+the source was read from the repo's `main` branch on 2026-09-20, not from the
+`0.79.0` tag — the published tarball contains only compiled `dist/`. That tag's
+`gitHead` is `d421f56a6c43cde16d9a7531d08a750a5ef2f04a`. Drift between what is
+recorded here and what the pinned build does is possible, so **pin the version
+and re-verify against the pinned build before relying on any `_meta` key** —
+all of them are extension points, not spec surface.
+
+### 1. The constraint that created the lane split does not apply to `golem acp`
+
+`src/inference/persona-lane.ts:11-15` states why the agent lane exists: *"an MCP
+server exposes tools to its client and cannot invoke the client's own tools, so
+there is no call that spawns a subagent."* That is a fact about Golem's **MCP
+server**, not about Golem. `golem acp` is a process Buzz spawns directly over
+stdio (§19), so it is a top-level process free to spawn children of its own.
+
+What does **not** dissolve is the narrower fact underneath: **Golem owns no
+agent loop of its own.** Buzz does not create one; it only removes the barrier
+to borrowing one. Hence the rest of this section.
+
+### 2. `@agentclientprotocol/sdk` ships both halves — nesting costs no new dependency
+
+`https://raw.githubusercontent.com/agentclientprotocol/typescript-sdk/main/README.md`
+(read 2026-09-20), verbatim:
+
+> If you're building an Agent, start with `agent({ name })`, register handlers
+> such as `initialize(...)`, `newSession(...)`, and `prompt(...)`, then call
+> `connect(stream)`.
+>
+> If you're building a Client, start with `client({ name })`, register
+> client-side handlers such as `requestPermission(...)` and `sessionUpdate(...)`,
+> then run your agent workflow with `connectWith(stream, async (ctx) => ...)`.
+
+So `golem acp` being an ACP **Agent** upward (to `buzz-acp`) and an ACP
+**Client** downward (to a nested agent) is two objects from the *same* package
+R14.3 already settled on. The transport half of nesting is free.
+
+**Also read off that README, and worth pinning in R14.3:** ACP **v2 exists in
+the same package** behind an explicit `@agentclientprotocol/sdk/experimental/v2`
+import, carrying its own warning — *"ACP v2 is still a draft. Its wire protocol
+and this TypeScript API may change incompatibly in any SDK release."* The stable
+entry point remains v1. **Stay on v1.** R14.3 noted a v2 draft existed but did
+not say which to use.
+
+### 3. Subprocess contract — designed for any client, not only Zed
+
+Sources: `https://unpkg.com/@agentclientprotocol/claude-agent-acp/package.json`,
+`.../main/examples/simple-client.ts`, `.../main/src/index.ts`,
+`.../main/src/acp-agent.ts`.
+
+- **`bin`**: one entry, `{"claude-agent-acp": "dist/index.js"}`. `type: "module"`,
+  `engines.node: ">=22"`, `main: "dist/lib.js"` so it is importable as a library too.
+- **Not Zed-only.** Authored by Zed Industries but published under the neutral
+  `agentclientprotocol` org (it moved off the old `@zed-industries/claude-code-acp`
+  name), and the source carries JetBrains-specific `_meta` keys. The README's own
+  framing is *"Use Claude Agent SDK from ACP-compatible clients"*.
+- **The package ships its own reference nesting client.** `examples/simple-client.ts`
+  spawns `dist/index.js` as a child with `stdio: ["pipe","pipe","pipe"]`, wraps
+  its stdio in `ndJsonStream`, and relays `session/update` — precisely the shape
+  `golem acp` needs. This is the strongest single piece of evidence that nesting
+  is a supported use rather than a trick.
+- **No arguments needed.** `src/index.ts` special-cases only `--cli` (delegate to
+  the native binary) and `--version`/`-v`; everything else falls through to
+  `runAcp()`.
+- **Wire format**: `runAcp()` (acp-agent.ts:10088-10091) calls
+  `ndJsonStream(nodeToWebWritable(process.stdout), nodeToWebReadable(process.stdin))`
+  — newline-delimited JSON-RPC 2.0 over stdio, via `@agentclientprotocol/sdk@1.4.0`.
+- **Its stdout is protocol-only, by the same discipline R14.3 imposes on ours**:
+  `src/index.ts:57-60` reassigns `console.log/info/warn/debug` to `console.error`.
+  Optional file log via `CLAUDE_AGENT_LOGS=<dir>`.
+- **Lifecycle**: exits on stdin EOF, handles SIGTERM/SIGINT.
+
+Agent methods it implements (registration table, acp-agent.ts:10101-10136):
+`initialize`, `session/new`, `session/load`, `session/fork`, `session/list`,
+`session/delete`, `session/resume`, `session/close`, `session/set_mode`,
+`session/set_config_option`, `authenticate`, `providers/list|set|disable`,
+`logout`, `session/prompt`, `session/cancel`.
+
+### 4. What a nesting parent must implement
+
+Methods the adapter calls on its client (`ClaudeAgentAcpClient`, acp-agent.ts:1634-1649):
+
+| Called | Must Golem implement it? |
+|---|---|
+| `session/update` | **Yes** — this is the relay channel |
+| `session/request_permission` (6955) | **Yes.** Called unconditionally; see §5 |
+| `fs/read_text_file` / `fs/write_text_file` (6894-6902) | Probably not — but see the caveat below |
+| `session/create_elicitation` / `complete_elicitation` | Only if `elicitation.form`/`.url` is advertised |
+| `extNotification` (`_auth/status_update`, `_claude/sdkMessage`) | No — fire-and-forget, dropped when unknown |
+
+Minimum viable capabilities, from `examples/simple-client.ts:426-429`:
+
+```
+clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false }
+```
+
+**Two obligations could not be pinned down, and both were searched for
+specifically — record them as open rather than assumed:**
+
+- **Whether the SDK's own `Read`/`Write`/`Edit` tools route through
+  `fs/read_text_file`/`fs/write_text_file`, or do direct Node `fs` inside the
+  subprocess.** The adapter's forwarding methods exist and delegate to the
+  client, but no tool-execution call site into them was located. The example
+  client's comment at `simple-client.ts:379-380` claims the latter — *"Minimal
+  file-system stubs. This agent performs its own file I/O inside the Claude
+  Agent SDK subprocess and never calls these today."* That is evidence about the
+  example's expectation, not proof about the adapter. **UNCONFIRMED.**
+- **Whether `terminal/*` client methods are ever called.** One pass found zero
+  matches for `client.createTerminal|terminalOutput|releaseTerminal|waitForTerminalExit|killTerminal`
+  across `src/`; a second found `terminal_info`/`terminal_output`/`terminal_exit`
+  `_meta` content blocks and `supportsTerminalOutput` gating in `src/tools.ts`
+  (~104-166, 637-848) routing Bash/PowerShell output through terminal-content
+  blocks when the capability is present, without locating explicit `terminal/*`
+  request call sites. The two readings agree that terminals are surfaced as
+  tool-call *content* and that `terminal: false` works; they disagree only on
+  whether a request path exists at all. **UNCONFIRMED**; resolving it needs a
+  full read of `src/tools.ts` (51 KB) and `src/file-change-audit.ts`.
+
+Neither blocks a first implementation — advertise `terminal: false` and
+`fs` stubs as the upstream example does — but neither should be written into a
+design as settled.
+
+### 5. Permission posture — the parent holds it, and that is a decision to take deliberately
+
+Two independent reads converged here after appearing to conflict, and the
+reconciliation matters:
+
+- `canUseTool: this.canUseTool(sessionId)` is **always wired** (line 8058). The
+  adapter does not skip permission gating based on what the client advertised;
+  **every tool call round-trips through `session/request_permission`**.
+- `permissionMode` and `canUseTool` are listed in the adapter's own docstring as
+  managed/overridden — meaning they are not passed through to the SDK verbatim —
+  **but the parent's value is still honoured**: `initialPermissionMode` resolves
+  from `creationOpts.permissionMode` or settings (7905-7909), and
+  `allowDangerouslySkipPermissions` is read from `_meta.claudeCode.options`
+  (7902-7903, gated by `ALLOW_BYPASS`). So a parent *can* set the mode; it just
+  does not do so by pass-through.
+- There is **no capability-gated fallback to "the SDK writes files with no ask"**.
+  A parent that never implements `session/request_permission` gets tool calls
+  that hang or error — not silent permission-free execution.
+
+**So the security posture is entirely in the parent's hands**, through
+`permissionMode` / `allowDangerouslySkipPermissions` plus whatever Golem does on
+receiving a permission request. The upstream example answers every request with
+`allow_once` (`simple-client.ts:372-378`), which is full unattended write access.
+
+That is the decision to put in front of the user rather than infer: **an
+unattended agent, triggered by a chat mention, writing into a real repository.**
+It is a genuine choice, not a missing sandbox — but it must be made explicitly,
+default-deny, and surfaced, not inherited from an example.
+
+### 6. Prompt injection — `_meta.systemPrompt`, confirmed in source
+
+`src/acp-agent.ts:7877-7895`, on the `createSession` path (reached by
+`session/new` and `session/load`):
+
+```ts
+let systemPrompt: Options["systemPrompt"] = { type: "preset", preset: "claude_code" };
+if (params._meta?.systemPrompt) {
+  const customPrompt = params._meta.systemPrompt;
+  if (typeof customPrompt === "string") {
+    systemPrompt = customPrompt;
+  } else if (typeof customPrompt === "object" && customPrompt !== null && !Array.isArray(customPrompt)) {
+    systemPrompt = { ...(customPrompt as object), type: "preset", preset: "claude_code" } as Options["systemPrompt"];
+  }
+}
+```
+
+- a **string** replaces the whole system prompt (`--system-prompt`);
+- an **object** is spread with `type`/`preset` force-pinned, so `{"append": "…"}`
+  is the `--append-system-prompt` equivalent, and `excludeDynamicSections` passes;
+- an **array** is ignored.
+
+**Unconfirmed**: whether `_meta.systemPrompt` is honoured on `session/prompt` as
+well — only the `createSession` path was read. Immaterial for Golem, whose
+persona is fixed for the life of a session.
+
+**`_meta.systemPrompt` is not ACP spec surface.** A grep for `systemPrompt` in
+`@agentclientprotocol/sdk@1.4.0`'s `schema/schema.json` returns **0 matches**,
+and `https://agentclientprotocol.com/protocol/schema` says only that `_meta` is
+reserved extensibility and *"Implementations MUST NOT make assumptions about
+values at these keys."* It is a de-facto convention that this adapter genuinely
+implements — and per §20 item 3 `buzz-acp`'s own `acp.rs` handles a
+`systemPrompt` `_meta` key too, so there are at least two independent
+implementors. Pin and re-verify; do not treat it as a contract.
+
+### 7. The wider door: `_meta.claudeCode.options`
+
+`NewSessionMeta` (acp-agent.ts:1163-1194) declares `options?: Options` — the
+Claude Agent SDK's full `Options` — spread into the query at line 8041/8047,
+**after** `systemPrompt` and `settingSources`, so it overrides both. It carries
+`model`, `agents`, `env`, `settings`, `settingSources`, `additionalDirectories`,
+`resume`, `forkSession`, `tools`, `mcpServers`, `hooks`, `maxTurns`.
+
+**`agent` (singular) is deleted** at line 7917: *"Main-thread agent selection is
+intentionally not part of this adapter's ACP contract."*
+
+This is the one thing the obvious design does **not** support: Golem cannot
+point a nested session at its already-generated `.claude/agents/golem-<id>.md`
+and say *"be that one"*. Persona injection on the main thread goes through
+`_meta.systemPrompt` instead — which is the better answer anyway, since it reads
+`resolvePersonaPrompt()` directly rather than a file one lane generates and the
+other parses.
+
+Two related facts:
+
+- `settingSources` defaults to `["user", "project", "local"]` (line 8039), so a
+  nested session **does** load `CLAUDE.md`, `.claude/settings.json` and
+  `.claude/agents/` from the `cwd` passed in `session/new`. A deliberate choice
+  is required: it means a Buzz turn inherits the repo's own instructions
+  (probably wanted), and that `golem-<id>` definitions become available
+  *subagents* of the nested session — a persona could dispatch a persona. Feature
+  or recursion hazard, but not something to discover in production.
+- `_meta.claudeCode.options.agents` (SDK `Options.agents?: Record<string, AgentDefinition>`,
+  `sdk.d.ts:1488`) passes through un-stripped, for dynamically defined subagents.
+
+### 8. Model selection — two mechanisms, both confirmed
+
+1. **At creation**: `_meta.claudeCode.options.model` (SDK `Options.model`,
+   `sdk.d.ts:1856`).
+2. **At runtime, over ACP proper**: `session/set_config_option` with
+   `configId: "model"` (`MODEL_CONFIG_ID = "model"`, `src/session-model.ts:5`),
+   handled by `setSessionConfigOption` → `query.setModel(...)` (acp-agent.ts:6569).
+   **Not** `session/set_model` — ACP v1 models this as a session config option.
+   `configId: "effort"` and `"fast"` work the same way.
+3. A deployment fallback, `CLAUDE_MODEL_CONFIG` (`docs/model-configuration.md`),
+   is *"ignored entirely"* when the caller supplies `_meta.claudeCode.options.settings`.
+
+Note (2) incidentally answers a question §19/§20 never asked: Buzz's `effort`
+dial is unreachable for a *tier-3* runtime, but a **nested** session's effort is
+reachable by Golem. This still does not justify a per-persona `effort` field —
+R14.2's "Settled: no per-persona `effort` field" stands — and is recorded only
+so the two facts are not confused later.
+
+### 9. **Claude Code is NOT a separate prerequisite** — the npm install brings the binary
+
+`dependencies`, exactly three: `@agentclientprotocol/sdk@1.4.0`,
+`@anthropic-ai/claude-agent-sdk@0.3.274`, `zod@4.6.5`.
+
+It uses the Agent SDK as a **library**; the SDK in turn spawns a native `claude`
+binary that it ships as a **platform-specific optional dependency**.
+`claudeCliPath()` (acp-agent.ts:1438-1476) resolves it via
+`createRequire(import.meta.resolve("@anthropic-ai/claude-agent-sdk"))` to
+`@anthropic-ai/claude-agent-sdk-${platform}-${arch}/claude${ext}` (`.exe` on
+Windows; glibc/musl detected on Linux). **It never consults `PATH`** — the only
+override is `CLAUDE_CODE_EXECUTABLE`. Its failure message: *"Reinstall
+@anthropic-ai/claude-agent-sdk without --omit=optional, or set
+`CLAUDE_CODE_EXECUTABLE`."*
+
+**Plainly: on a machine with Node ≥ 22 and npm and no Claude Code install,
+`npx @agentclientprotocol/claude-agent-acp` works.** The whole tree, native
+binary included, arrives transitively. There is no "install Claude Code first"
+step. *Authentication* is a separate question — §10.
+
+**But it is a native binary**, which meets `CLAUDE.md`'s *"no heavyweight native
+deps in default install"* rule head-on. It must be an **optional add-on**
+installed on demand, never a dependency of the default `golem-run` tarball.
+
+Bonus: `claude-agent-acp --cli <args…>` delegates straight to that binary with
+`stdio: "inherit"` (index.ts:12-25), so the package also yields a working
+`claude` CLI without a separate install.
+
+### 10. Authentication — the `gateway` method makes Golem's proxy the credential holder
+
+`authenticate` (acp-agent.ts:2238-2266) implements **only**
+`methodId === "gateway"` and `"gateway-bedrock"`, which store a client-supplied
+`_meta.gateway.baseUrl`/`headers`; any other `methodId` throws
+`Method not implemented.` (line 2265).
+
+Real subscription/Console login is **not** an ACP flow at all. `initialize`
+(~2040-2079) advertises `authMethods` of `type: "terminal"` —
+`claude-ai-login` → `["--cli","auth","login","--claudeai"]`, `console-login` →
+`["--cli","auth","login","--console"]` — i.e. an instruction to the *client* to
+run that command in a terminal it owns and let a human complete a browser OAuth.
+Existing credentials in the machine's `~/.claude` store are reused if present
+(probed by `claude auth status --json`, 2378-2383; `logout()` at 2599-2601
+clears that same native store).
+
+**On a fresh machine with no login and no gateway config, `session/new` errors**
+— not a structured retry. The adapter's own hint (`simple-client.ts:456`) is
+*"if this is an auth error, log in first: `node dist/index.js --cli auth login`"*.
+The exact JSON-RPC error shape is **UNCONFIRMED**.
+
+**For Golem the answer is to skip login entirely.** `createEnvForProvider()`
+(acp-agent.ts:8812-8862) emits, for `apiType: "anthropic"`:
+
+```
+ANTHROPIC_BASE_URL:       config.baseUrl,
+ANTHROPIC_CUSTOM_HEADERS: customHeaders,   // "Name: value\n" joined
+ANTHROPIC_AUTH_TOKEN:     "acp-proxy",     // Bypass local Claude login checks
+```
+
+plus a `resetRouting` block (8816-8828) that blanks `ANTHROPIC_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN` and the Bedrock/Vertex switches. The `"acp-proxy"`
+literal exists **specifically** so a local proxy can stand in with no real
+credential. This is a first-class, source-documented path, not a workaround.
+
+### 11. The proxy route — three ways in, and the adapter defends it
+
+Query env is built at acp-agent.ts:8018-8027:
+
+```ts
+const env = { ...process.env, ...userProvidedOptions?.env, ...providerEnv,
+              CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1" };
+```
+
+Merge order is the answer to which wins:
+
+1. **Ambient** — `ANTHROPIC_BASE_URL` set on the `golem acp` process is inherited
+   untouched, and nothing clears it unless a provider config is active. **This is
+   the simplest path and the recommended one for a local proxy.**
+2. **Per-session** — `_meta.claudeCode.options.env`, layered over ambient but
+   *under* `providerEnv`. It passes through unmodified when no provider is
+   configured.
+3. **`providers/set` / `authenticate`-gateway** — last in the merge, so it wins
+   (*"Client-managed LLM routing: `providers/set` config wins"*, 8021-8022). The
+   full `resolveProviderConfig()` precedence was not traced — **unconfirmed in detail.**
+
+`isValidBaseUrl` requires an absolute `http:`/`https:` URL, so
+`http://127.0.0.1:<port>` passes. And the adapter **actively defends the route**,
+injecting it into the programmatic settings tier too (8006-8017): *"Claude Code
+applies env from settings.json after the subprocess env. Put an active ACP route
+in the programmatic settings tier too so user/project settings cannot silently
+restore a different ANTHROPIC_BASE_URL."*
+
+**This settles R14.3's open recommendation in the affirmative.** Pointing a
+nested session at the project's own proxy is not merely possible; it is the
+mechanism the adapter is built around. Redaction, compression, limit prediction
+and telemetry therefore reach a nested agent-lane turn on exactly the same
+footing as a worker-lane one, with no second implementation.
+
+### 12. The `claude` CLI headless fallback — and the one thing only it can do
+
+`https://docs.claude.com/en/docs/claude-code/cli-reference`. `claude -p` /
+`--print` is non-interactive, with `--output-format text|json|stream-json` and
+`--input-format text|stream-json`. Confirmed flags include `--system-prompt`,
+`--system-prompt-file`, `--append-system-prompt`, `--append-system-prompt-file`,
+`--model`, `--agents '<json>'`, `--append-subagent-system-prompt[-file]`
+(print-mode only), `--setting-sources`, `--settings`,
+`--include-partial-messages`, `--max-turns`, `--max-budget-usd`,
+`--permission-prompt-tool`, `--permission-prompts none`.
+
+And **`--agent <name>`** — *"Specify an agent for the current session (overrides
+the agent setting)"* — which **is** main-thread selection of a named
+`.claude/agents/` subagent: the one capability the ACP adapter deliberately
+removes (§7). If running the persona as the main-thread agent ever becomes
+essential, `--cli -p --agent` is the route and ACP is not.
+
+From the same page, worth carrying: *"`claude --help` does not list every flag,
+so a flag's absence from `--help` does not mean it is unavailable."*
+
+**Not preferred, for the reason §11 gives**: the CLI route means hand-parsing
+`stream-json` into `session/update`, and loses the adapter's settings-tier
+defence of the proxy route. Keep it as the documented fallback.
+
+### 13. Two local findings the lane-transparency requirement exposes
+
+Neither needed external research; both are wrong today, and both must be fixed
+before a persona can be framed identically in either lane.
+
+- **`resolvePersonaPrompt()` is lane-agnostic as a function, but no worker-lane
+  dispatcher calls it.** The only one that exists, `src/mcp/coder-tools.ts:133`,
+  hardcodes `resolveCoderPrompt(grounding.coderPrompt)` and never reads
+  `.golem/personas/coder.md`. The agent lane (`src/cli/persona-sync.ts:98-104`)
+  calls `resolvePersonaPrompt()` for every persona **but** special-cases `coder`
+  to `resolveCoderPrompt()` when neither `prompt` nor `prompt_file` is set. So
+  the two lanes genuinely disagree about the coder's prompt today. "The prompt
+  always comes from `resolvePersonaPrompt()`" is therefore a **change** on the
+  worker side, not a description of existing behaviour, and the
+  `inference.coder_prompt` precedence collision needs an explicit rule — or
+  `golem acp --persona coder` will frame the coder differently from the `coder`
+  MCP tool.
+- **`DispatchRequest` has no model override.** `src/inference/target-dispatcher.ts:153-183`
+  accepts `targetId` or `worker` and otherwise falls through to `inference.model`,
+  then a synthetic `"harness"` default over `proxy.upstream_*`. An agent-lane
+  persona's model (`claude-opus-5`) names no registry target *by definition* —
+  that is what makes it agent-lane — so Golem cannot dispatch it itself today
+  even as a bounded one-shot. A `model?: string` field on `DispatchRequest` is
+  the smallest fix, in the same file R14.3 already opens for `RateLimitedError`.
+
+Also reusable rather than rebuilt: **`decideSpawnGate()`**
+(`src/hooks/spawn-gate.ts:139`) is already a pure function, and a nested
+`claude-agent-acp` **is** a subagent spawn in exactly the sense
+`snooze.spawn_gate` means. Gate the child spawn with that decision rather than
+inventing a second one — see [[Spawn Headroom Gate]].
+
+### Still open after this section
+
+- The published `0.79.0` build versus `main` (the drift caveat at the top).
+- Whether the SDK's `Read`/`Write`/`Edit` tools route through `fs/*`, and whether
+  `terminal/*` client methods are ever called (§4).
+- Whether `_meta.systemPrompt` is honoured on `session/prompt` (§6).
+- `resolveProviderConfig()`'s precedence in full detail (§11).
+- The exact JSON-RPC error shape for an unauthenticated `session/new` (§10).
+- Everything that needs a live relay, unchanged from §19/§20.
+- **The permission posture in §5 is a user decision, not a research gap.** No
+  further reading resolves it.
