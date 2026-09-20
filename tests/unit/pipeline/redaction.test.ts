@@ -95,6 +95,11 @@ const CASES: readonly Case[] = [
     positive: "someone@example.com",
     negative: "not-an-email-just-text",
   },
+  {
+    rule: "nostr-secret-key",
+    positive: "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    negative: "nsec1tooshort",
+  },
 ];
 
 describe("redaction rule corpus (T-C3 audit surface)", () => {
@@ -113,6 +118,33 @@ describe("redaction rule corpus (T-C3 audit surface)", () => {
       expect(out).toBe(c.negative);
     });
   }
+});
+
+describe("R14.3 nsec (Nostr secret key) redaction — glue and case", () => {
+  // A 63-char bech32 body (52 data + 6 checksum is the real length; >58 is the
+  // rule's floor). Built at runtime so the source holds no literal secret.
+  const body = "qp".repeat(32); // 64 lowercase bech32 chars
+  const key = `nsec1${body}`;
+
+  it("redacts a key glued to a following word char (the trailing-\\b trap)", () => {
+    // Without dropping the boundary these leak in full: the following char is
+    // a word char outside the class, so no backtracking satisfies `\b`.
+    for (const suffix of ["bi", "o1", "_1", "9"]) {
+      const out = redact(`${key}${suffix}`);
+      expect(out).not.toContain(body);
+      expect(out).toContain("[REDACTED:nostr-secret-key");
+    }
+  });
+
+  it("redacts the all-uppercase bech32 form (the `i` flag)", () => {
+    const out = redact(`NSEC1${body.toUpperCase()}`);
+    expect(out).not.toContain(body.toUpperCase());
+    expect(out).toContain("[REDACTED:nostr-secret-key");
+  });
+
+  it("still refuses a too-short run (no false positive on `nsec1<short>`)", () => {
+    expect(redact("nsec1tooshort")).toBe("nsec1tooshort");
+  });
 });
 
 describe("high-entropy heuristic", () => {

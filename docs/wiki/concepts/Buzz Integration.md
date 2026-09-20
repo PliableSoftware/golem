@@ -1,9 +1,9 @@
 ---
 title: Buzz Integration
 type: concept
-tags: [r14, r14-2, r14-3, r14-4, buzz, agents, orchestration, personas, acp, harness, nostr, rate-limits]
-sources: ["https://buzz.xyz", "https://github.com/block/buzz", "https://github.com/block/buzz/blob/main/crates/buzz-acp/README.md", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/config.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/scope.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/pool.rs", "https://github.com/block/buzz/blob/main/ARCHITECTURE.md", "https://github.com/block/buzz/blob/main/crates/buzz-cli/README.md", "https://agentclientprotocol.com", "https://agentclientprotocol.com/protocol/prompt-turn", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/docs/session-failure-extension.md", "https://engineering.block.xyz/blog/configuring-agents-in-buzz", "https://engineering.block.xyz/blog/run-your-own-buzz-relay", "docs/plan/verification-notes.md", "src/inference/personas.ts", "src/proxy/limit-prediction.ts", "src/hooks/snooze-nudge.ts", "docs/plan/tasks/R14.2.md", "docs/plan/tasks/R14.3.md", "docs/plan/tasks/R14.4.md"]
-updated: 2026-09-19
+tags: [r14, r14-2, r14-3, r14-4, buzz, agents, orchestration, personas, acp, harness, nostr, rate-limits, lanes, nesting]
+sources: ["https://buzz.xyz", "https://github.com/block/buzz", "https://github.com/block/buzz/blob/main/crates/buzz-acp/README.md", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/config.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/scope.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/pool.rs", "https://github.com/block/buzz/blob/main/ARCHITECTURE.md", "https://github.com/block/buzz/blob/main/crates/buzz-cli/README.md", "https://agentclientprotocol.com", "https://agentclientprotocol.com/protocol/prompt-turn", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/docs/session-failure-extension.md", "https://engineering.block.xyz/blog/configuring-agents-in-buzz", "https://engineering.block.xyz/blog/run-your-own-buzz-relay", "docs/plan/verification-notes.md", "src/inference/personas.ts", "src/inference/persona-lane.ts", "src/inference/target-dispatcher.ts", "src/cli/persona-sync.ts", "src/hooks/spawn-gate.ts", "src/proxy/limit-prediction.ts", "src/hooks/snooze-nudge.ts", "https://raw.githubusercontent.com/agentclientprotocol/typescript-sdk/main/README.md", "https://unpkg.com/@agentclientprotocol/claude-agent-acp/package.json", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/src/acp-agent.ts", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/examples/simple-client.ts", "https://agentclientprotocol.com/protocol/schema", "https://docs.claude.com/en/docs/claude-code/cli-reference", "docs/plan/tasks/R14.2.md", "docs/plan/tasks/R14.3.md", "docs/plan/tasks/R14.4.md"]
+updated: 2026-09-20
 created: 2026-09-19
 ---
 
@@ -18,11 +18,14 @@ from a planning conversation; implementation tracked as R14.3 (the runtime),
 R14.2 (identity provisioning), R14.4 (orchestrator dispatch).
 
 **The protocol research is complete**: `docs/plan/verification-notes.md` §19
-(2026-09-19) resolves everything §17 and §18 left open, and **§20** (2026-09-19)
+(2026-09-19) resolves everything §17 and §18 left open, **§20** (2026-09-19)
 adds the rate-limit/usage-cap behaviour, the setup and distribution picture, the
-session-scope flag, and one correction to §19. Those sections are the authority
-on wire-level facts; this page carries the design and the decisions. Where they
-ever disagree, the notes are right and this page is stale.
+session-scope flag, and one correction to §19, and **§21** (2026-09-20) settles
+lane-transparent dispatch — whether a worker-lane persona can be as addressable
+in Buzz as an agent-lane one, and what it takes to borrow an agent loop by
+nesting ACP. Those sections are the authority on wire-level facts; this page
+carries the design and the decisions. Where they ever disagree, the notes are
+right and this page is stale.
 
 ## Architecture, as confirmed
 
@@ -83,6 +86,202 @@ This closes the open question this page previously carried: **Golem does not
 need a per-persona `effort` field.** If one is ever wanted it must be justified
 on Golem's own routing merits, not as a mirror of a Buzz field that cannot
 reach us.
+
+## Lane-transparent dispatch: one identity, either lane
+
+USER requirement (2026-09-19): *"a Golem worker should be a Buzz agent, the same
+way as a Claude subagent… this should be almost invisible to the end user, and
+the rules used to route to the ideal target should appear the same in Buzz, but
+route to the relevant lane, with the same prompt from the relevant
+`.golem/personas/` .md and with the model specified in the `inference.personas`
+map."*
+
+Golem's bench has two lanes, resolved by `resolvePersonaLane()`
+(`src/inference/persona-lane.ts`): a **registry target** puts a persona on the
+**worker** lane, which Golem dispatches to itself as a bounded single-shot; a
+plain **model id** puts it on the **agent** lane, where the *harness* runs a
+subagent. That split is visible today — `resolveDesiredAgents()` in
+`src/cli/persona-sync.ts:92` generates `.claude/agents/golem-<id>.md` only for
+agent-lane personas, so a worker-lane persona is absent from the roster rule
+entirely and reached by a different mechanism (the `coder` MCP tool). In Buzz
+that asymmetry must not exist.
+
+### Separate the three things the word "lane" is doing
+
+The requirement is achievable, but only once three axes are pulled apart. They
+have different answers, and conflating them is what makes the problem look
+harder than it is:
+
+1. **Addressability** — identity, `@mention` handle, provisioning, roster.
+   **Must be lane-agnostic, and already can be.** R14.2 provisions one Nostr
+   identity per *staffed* persona, and staffing is a lane-independent property.
+2. **Framing** — which prompt and which model the turn runs with.
+   **Must be lane-agnostic**, from `resolvePersonaPrompt()` and
+   `inference.personas.<id>.model`. Two real defects block this today; see below.
+3. **Execution capability** — does the turn get a tool-use loop?
+   **Cannot be equalised by fiat**, because it is a property of the *model*, not
+   of Buzz. A 4B local model cannot drive an agent loop wherever it runs. This
+   axis is reported honestly, never hidden.
+
+The user's requirement binds axes 1 and 2. Axis 3 is an honest capability
+difference — and the right shape for it is that the Buzz human never sees a
+*different kind of thing*, only a persona that answers conversationally rather
+than one that opens files.
+
+### Why Buzz removes the constraint that created the split
+
+`persona-lane.ts:11-15` records the reason the agent lane exists: *"an MCP
+server exposes tools to its client and cannot invoke the client's own tools, so
+there is no call that spawns a subagent."* That is a fact about Golem's **MCP
+server**, not about Golem. `golem acp` is a process Buzz spawns directly over
+stdio — a top-level process, free to spawn children of its own. The barrier is
+gone.
+
+What does *not* dissolve is the fact underneath it: **Golem owns no agent loop.**
+Buzz does not create one; it only removes the barrier to **borrowing** one.
+
+### Borrowing a loop: nested ACP, confirmed viable
+
+`golem acp` can be an ACP **Agent** upward to `buzz-acp` and an ACP **Client**
+downward to a nested `@agentclientprotocol/claude-agent-acp`, relaying
+`session/update` up the chain. Verified 2026-09-20 —
+`verification-notes.md` §21 carries the evidence and the caveats:
+
+- **No new dependency.** `@agentclientprotocol/sdk`, already settled on in
+  R14.3, ships both halves: `agent({name})` + `connect(stream)` and
+  `client({name})` + `connectWith(stream, …)`. (Stay on ACP **v1**; v2 lives
+  behind an `experimental/v2` import and warns it may break in any release.)
+- **Nesting is a supported use, not a trick.** The adapter ships its own
+  reference client that spawns `dist/index.js` over piped stdio and relays
+  `session/update` — exactly this shape.
+- **The persona prompt injects cleanly.** `_meta.systemPrompt` on `session/new`
+  takes a string (full replacement) or `{"append": …}` (the
+  `--append-system-prompt` equivalent), so `resolvePersonaPrompt()`'s text goes
+  in directly. The model goes in via `_meta.claudeCode.options.model`, or at
+  runtime via `session/set_config_option` with `configId: "model"`.
+- **Claude Code is *not* a separate prerequisite.** The adapter depends on
+  `@anthropic-ai/claude-agent-sdk`, which ships the native `claude` binary as a
+  platform-specific optional dependency; it never consults `PATH`. One npm
+  install brings everything. Because that binary *is* a heavyweight native dep,
+  it must be an **optional add-on**, never part of the default `golem-run`
+  tarball.
+- **Golem's pipeline still applies — this is the mechanism the adapter is built
+  around.** `authenticate` with `methodId: "gateway"` sets the nested session's
+  `ANTHROPIC_BASE_URL` to Golem's own proxy and `ANTHROPIC_AUTH_TOKEN` to a
+  literal `"acp-proxy"` whose in-source comment is *"Bypass local Claude login
+  checks"* — so the proxy holds the real credential and **no `claude login` is
+  needed**. The adapter even re-asserts that route into the programmatic
+  settings tier so a user's `settings.json` cannot silently restore a different
+  base URL. Redaction, compression, limit prediction and telemetry therefore
+  reach a nested turn on the same footing as a worker-lane one.
+
+One thing the obvious design cannot do: **`_meta` cannot select the main-thread
+agent.** The adapter deletes `agent` (singular) on purpose, so Golem cannot
+point a nested session at its own generated `.claude/agents/golem-<id>.md` and
+say *"be that one"*. Injecting the prompt via `_meta.systemPrompt` is the
+answer — and it is the better one, because both lanes then read
+`resolvePersonaPrompt()` directly instead of one lane parsing a file the other
+lane generated. (`claude -p --agent <name>` *can* do main-thread selection; it is
+the documented fallback, not the preference.)
+
+Note too that `settingSources` defaults to `["user","project","local"]`, so a
+nested session loads the repo's `CLAUDE.md` and `.claude/agents/` from its
+`cwd`. Wanted, probably — but it also makes `golem-<id>` definitions available
+as *subagents* of the nested session, so a persona could dispatch a persona.
+Decide that deliberately rather than discover it.
+
+### What ships when
+
+Three layers, deliberately ordered so the research-gated one moves the least:
+
+| | Scope | Gated on |
+|---|---|---|
+| **A. Addressability** | one Buzz identity per staffed persona, whatever its lane | nothing — R14.2 as written |
+| **B. One-shot execution** | *either* lane runs a bounded single-shot on its configured model with its persona prompt | a `model?:` field on `DispatchRequest` |
+| **C. Borrowed loop** | agent-lane turns nest `claude-agent-acp` for real tool use | the permission decision below |
+
+**B is the right scope for R14.3, and not a consolation prize.** R14.3's stated
+scope is already *"the plain-conversation case only"* — and for conversation a
+one-shot is the *correct* execution mode, not a degraded one. Someone asking
+`@golem-reviewer` what they think of an approach wants an answer, not a file
+edit. **B handles conversation; C handles work.** That makes C a natural
+follow-on task rather than scope creep inside R14.3, and it keeps the executor
+behind one interface so swapping B for C changes a single module.
+
+### Two defects that block axis 2 today
+
+Both are local, both are real, and neither was visible before this requirement:
+
+- **No worker-lane dispatcher calls `resolvePersonaPrompt()`.** The only one
+  that exists (`src/mcp/coder-tools.ts:133`) hardcodes `resolveCoderPrompt()`
+  and never reads `.golem/personas/coder.md`; the agent lane calls
+  `resolvePersonaPrompt()` for every persona *but* special-cases `coder` to
+  `resolveCoderPrompt()` when nothing explicit is set. The lanes genuinely
+  disagree about the coder's prompt right now. "The prompt always comes from
+  `resolvePersonaPrompt()`" is a **change**, not a citation — and the
+  `inference.coder_prompt` precedence collision needs an explicit rule.
+- **`DispatchRequest` has no model override**, so an agent-lane model id — which
+  names no registry target *by definition* — cannot be dispatched by Golem at
+  all today, even as a one-shot. One optional field, in the file R14.3 already
+  opens.
+
+### Resolve the lane per turn, and record which one ran
+
+The persona is bound at spawn (`--persona <id>` arrives in
+`BUZZ_ACP_AGENT_ARGS`, and `buzz-acp` respawns with the same environment), so
+identity cannot drift. The **lane** can: it is derived from
+`inference.personas.<id>.model`, which a settings edit changes live — exactly
+what happened to `coder` on 2026-09-19.
+
+Read it **at turn start, once per turn**. No file watcher: `persona-watcher.ts`
+exists to regenerate *artifacts*, and a headless daemon that consumes the value
+at turn start gains only a race by watching. Caching it for the turn is the part
+that matters — a settings edit must never make a single turn change execution
+style halfway through.
+
+**Then record the resolved lane in R14.4's thread state.** A thread deferred
+under one lane and resumed after a settings change would otherwise switch
+execution style silently mid-sequence. Pin the lane for the sequence, or say in
+the channel that it changed; do not let it happen quietly.
+
+### Rate limits interact with the lane, and C is not B
+
+R14.3's policy — bounded in-turn retry, then post once and `end_turn` — holds
+unchanged for the worker lane *and* for B, since both go through
+`target-dispatcher.ts`. A **nested** turn is different in four ways:
+
+- **Golem never sees the 429.** It happens inside the child, so the planned
+  `RateLimitedError` at Golem's dispatch boundary cannot fire. Golem reads the
+  child's `stopReason` and its `_meta` failure instead. Note the inversion: the
+  `sessionFailure` `_meta` extension is **dropped** by `buzz-acp` going up (which
+  is why the channel message exists) but is **load-bearing** coming down.
+- **No in-turn retry.** A nested turn is not idempotent — it may already have
+  written files or run commands — so retrying the whole turn can duplicate side
+  effects. The ≤60s budget is right for a one-shot and wrong here: detect, kill
+  the child, defer, post once, `end_turn`.
+- **The pre-flight gate matters more, and already exists.** A nested spawn *is* a
+  subagent spawn in the sense [[Spawn Headroom Gate]] means, so gate it with the
+  existing pure `decideSpawnGate()` rather than a second rule, alongside
+  [[Usage Limit Park]]'s `decideSnoozeNudge()`.
+- **Both timeouts bite for real.** The child's `session/update` must be relayed
+  as it arrives — buffering kills the parent turn at the 620s idle timeout — and
+  Golem must impose its own child timeout below `BUZZ_ACP_MAX_TURN_DURATION`
+  (7200s) and kill the child, or `buzz-acp` kills the parent and orphans a
+  grandchild. `session/cancel` must be forwarded down, which the `steer` default
+  makes routine rather than rare.
+
+### The open decision, stated plainly
+
+Nesting means **an unattended agent, woken by a chat mention, writing into a real
+repository.** The adapter puts that entirely in the parent's hands: every tool
+call round-trips through `session/request_permission`, there is no silent
+bypass, and `permissionMode` / `allowDangerouslySkipPermissions` are the
+parent's to set. The upstream reference client answers every request
+`allow_once` — full unattended write access.
+
+That is a **user decision, not a research gap**; no further reading resolves it.
+Tier C should not ship until it is taken explicitly, default-deny, and surfaced
+in `golem buzz status`.
 
 ## Why this doesn't map onto Claude Code's `Agent` tool directly
 
@@ -193,8 +392,8 @@ build split in R14.3 (detect, retry, post, end) and R14.4 (defer, resume).
 | Golem persona field | Buzz side |
 |---|---|
 | persona id (`coder`, `planner`, …) | the agent's Nostr identity + display name; `@mention` resolves by `p` tag |
-| `.claude/agents/golem-<id>.md` body | the role prompt, applied by Golem's own runtime — Buzz's "agent instructions" field is not needed for a tier-3 runtime |
-| `inference.personas.<id>.model` | **stays on Golem's side** — read at turn time, never written to Buzz |
+| `resolvePersonaPrompt(id, …)` | the role prompt, applied by Golem's own runtime — Buzz's "agent instructions" field is not needed for a tier-3 runtime. **Not** the `.claude/agents/golem-<id>.md` body: that file exists only for agent-lane personas, so reading it would reintroduce the asymmetry this design removes |
+| `inference.personas.<id>.model` | **stays on Golem's side** — read at turn time, never written to Buzz. Decides the *lane*, and so the execution mechanism, but never the identity |
 | effort | **not modelled, deliberately** — unreachable for a tier-3 runtime (see above) |
 | fixed: `golem` | `BUZZ_ACP_AGENT_COMMAND` (headless) or the `custom_harnesses/golem.json` id (Desktop) |
 | project owner as trust root | `BUZZ_ACP_RESPOND_TO=owner-only` (the default, and the floor Golem sets) |
@@ -258,6 +457,20 @@ with `just setup && just build` + `just relay`, a one-click Railway template, or
 a Block-hosted community at `<name>.communities.buzz.xyz` (three per account).
 Hosted relays are per-user communities, not a shared public relay.
 
+**Claude Code is not on this list, and that is a confirmed finding rather than
+an omission** (§21 item 9). The nested agent-lane path (tier C above) needs
+`@agentclientprotocol/claude-agent-acp`, which depends on
+`@anthropic-ai/claude-agent-sdk`, which ships the native `claude` binary as a
+platform-specific **optional dependency** and never consults `PATH`. One npm
+install brings the whole tree, so there is no "install Claude Code first" step
+and — via the `gateway` auth method pointing at Golem's own proxy — no
+`claude login` step either.
+
+What it *is* is a **heavyweight native dependency**, which `CLAUDE.md` forbids
+in the default install. So it must be an **optional add-on** that `golem buzz
+status` reports as present or absent, installed on demand for tier C only.
+Worker-lane and tier-B personas need none of it.
+
 ## Out of scope for this design
 
 - **Buzz persona packs** (`--persona-pack` / `--persona` / `--workdir`,
@@ -270,13 +483,18 @@ Hosted relays are per-user communities, not a shared public relay.
 - Self-hosting the relay vs using hosted `buzz.xyz` — a deployment choice for
   the user. Note only that tier-3 custom harnesses are documented for **Buzz
   Desktop**; the headless path works either way.
+- **Tier C (nested `claude-agent-acp`) is out of scope for R14.3**, which ships
+  tiers A and B. It is confirmed viable rather than built, it carries a native
+  optional dependency and an unsettled permission decision, and folding it into
+  an already size-M task would make neither half reviewable. It wants its own
+  task doc.
 
 ## Still unverified
 
-See `verification-notes.md` §19 item 11 and §20 for the full list. §20 closed
-two of the three that mattered — the session-scope flag is `--session-policy` /
-`BUZZ_ACP_SESSION_POLICY`, and there is no npm client to wrap instead of
-shelling out to `buzz`. What remains, design-first:
+See `verification-notes.md` §19 item 11, §20 and §21 for the full list. §20
+closed two of the three that mattered — the session-scope flag is
+`--session-policy` / `BUZZ_ACP_SESSION_POLICY`, and there is no npm client to
+wrap instead of shelling out to `buzz`. What remains, design-first:
 
 - **Whether tier-3 BYOH works against a hosted community.** It reads as a
   client-side runtime seam and so should be relay-agnostic, but nothing says so.
@@ -291,3 +509,16 @@ shelling out to `buzz`. What remains, design-first:
   could be sourced without reading their source directly.
 - Everything else that needs a live relay to observe: the NIP-42 handshake, a
   real end-to-end turn, and whether `golem acp` satisfies `buzz-acp` in practice.
+
+Added by §21, all of them tier-C concerns that do not block R14.3:
+
+- **`@agentclientprotocol/claude-agent-acp` was read from `main`, not from the
+  `0.79.0` tag** — the published tarball ships only compiled `dist/`. Every
+  `_meta` key above is an extension point rather than spec surface, so pin the
+  version and re-verify against the pinned build before depending on one.
+- **Whether the SDK's `Read`/`Write`/`Edit` tools route through `fs/*`**, and
+  whether `terminal/*` client methods are ever called. Two passes disagreed on
+  the second; both agree `terminal: false` works and that terminals surface as
+  tool-call content. Resolving it means reading `src/tools.ts` in full.
+- **The permission posture is a user decision, not a research gap** — no further
+  reading resolves it, and tier C should not ship before it is taken.

@@ -1,6 +1,6 @@
 {
   "name": "golem-run",
-  "version": "0.54.1",
+  "version": "0.54.2",
   "description": "Golem (golem.run) — local-first proxy + unified MCP server that cuts Claude token spend and gives Claude local tools",
   "license": "Apache-2.0",
   "author": "Golem <paul.clarke@golem.run>",
@@ -43,6 +43,7 @@
     "check": "npm run verify:deps && npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "commander": "14.0.3",
     "env-paths": "3.0.0",

@@ -22,6 +22,7 @@ program.addHelpText(
 
 import register_autonomy from "./commands/autonomy.js";
 import register_bench from "./commands/bench.js";
+import register_buzz from "./commands/buzz.js";
 import register_checkpoint from "./commands/checkpoint.js";
 import register_config from "./commands/config.js";
 import register_device from "./commands/device.js";
@@ -56,6 +57,7 @@ register_session(program);
 register_device(program);
 register_dials_stats(program);
 register_bench(program);
+register_buzz(program);
 register_checkpoint(program);
 register_pkg_models(program);
 register_plugin(program);
