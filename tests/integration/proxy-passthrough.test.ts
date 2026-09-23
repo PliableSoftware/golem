@@ -51,7 +51,15 @@ describe("proxy non-streaming passthrough", () => {
       }
       res.writeHead(404).end();
     });
-    proxy = await startProxy({ upstreamBaseUrl: upstream.origin });
+    proxy = await startProxy({
+      upstreamBaseUrl: upstream.origin,
+      // R14.5: the rate-limited fixture below always answers 429 with
+      // retry-after: 13 — without this the proxy's own retry loop (now
+      // generalized from Buzz onto every upstream request) would spend real
+      // exponential/retry-after-driven wall-clock time proving the SAME
+      // "still-429, forwarded unchanged" outcome this test already asserts.
+      rateLimitSleep: () => Promise.resolve(),
+    });
   });
 
   afterAll(async () => {

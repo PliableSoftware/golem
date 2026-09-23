@@ -103,7 +103,11 @@ import {
   type TargetTrust,
   upstreamChatCompletionsPath,
 } from "../providers/index.js";
-import { type LimitPrediction, parseLimitPrediction } from "../proxy/limit-prediction.js";
+import {
+  classifyRateLimit,
+  RateLimitedError,
+  TargetDispatchError,
+} from "../proxy/rate-limit-retry.js";
 import type { PersonaConfig } from "./personas.js";
 import { workerTargetFromPersona } from "./personas.js";
 import { workerTarget } from "./workers.js";
@@ -264,77 +268,11 @@ export interface TargetDispatcher {
   selectableTargets(): readonly SelectableTarget[];
 }
 
-/** Raised for a target the caller may not use, or cannot be dispatched to. */
-export class TargetDispatchError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "TargetDispatchError";
-  }
-}
-
-/**
- * R14.3 — the target responded 429 (or 529, Anthropic's overloaded variant).
- *
- * A distinct class rather than a generic {@link TargetDispatchError} because a
- * rate limit is a DIFFERENT kind of failure from a broken config or an
- * unreachable endpoint: it is transient, it carries its own timing evidence
- * (`retry-after`, or the `anthropic-ratelimit-unified-*` headers), and a
- * caller like `golem acp` (`src/buzz/limit-guard.ts`) must react to it on a
- * bounded retry-then-defer policy rather than surfacing it as an ordinary
- * error. Both transports before this collapsed every non-ok status into one
- * generic error and discarded `res.headers` entirely — a 429 was
- * indistinguishable from a 500.
- */
-export class RateLimitedError extends TargetDispatchError {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly retryAfterSeconds: number | null,
-    readonly prediction: LimitPrediction | null,
-  ) {
-    super(message);
-    this.name = "RateLimitedError";
-  }
-}
-
-/** `Headers` → the plain record `parseLimitPrediction` and `retry-after` parsing expect. */
-function headersToRaw(headers: Headers): Readonly<Record<string, string>> {
-  const out: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    out[key] = value;
-  });
-  return out;
-}
-
-/**
- * `retry-after` is delta-seconds OR an HTTP-date (RFC 9110 §10.2.3) — both are
- * legal and real gateways send either. Returns null when absent/unparsable, in
- * which case the caller falls back to exponential backoff.
- */
-function parseRetryAfterSeconds(value: string | null, nowMs: number): number | null {
-  if (value === null || value.trim() === "") return null;
-  const asSeconds = Number(value.trim());
-  if (Number.isFinite(asSeconds) && asSeconds >= 0) return asSeconds;
-  const asDateMs = Date.parse(value);
-  if (Number.isFinite(asDateMs)) return Math.max(0, Math.round((asDateMs - nowMs) / 1000));
-  return null;
-}
-
-/** Build a {@link RateLimitedError} from a 429/529 response, or null when the status is neither. */
-function classifyRateLimit(
-  target: ResolvedTarget,
-  res: Response,
-  nowMs: number,
-): RateLimitedError | null {
-  if (res.status !== 429 && res.status !== 529) return null;
-  const raw = headersToRaw(res.headers);
-  return new RateLimitedError(
-    `target "${target.id}" returned ${res.status} ${res.statusText} (rate limited).`,
-    res.status,
-    parseRetryAfterSeconds(res.headers.get("retry-after"), nowMs),
-    parseLimitPrediction(raw, new Date(nowMs).toISOString()),
-  );
-}
+// `TargetDispatchError` and `RateLimitedError` moved to `../proxy/rate-limit-retry.js`
+// (R14.5) — re-exported below so every existing importer of this module keeps
+// working unchanged. `classifyRateLimit` moved with them; call sites here now
+// adapt this transport's `fetch` `Response` shape to its generalized signature.
+export { RateLimitedError, TargetDispatchError };
 
 /**
  * R13.11 — nothing routes this worker, and the harness default cannot be
@@ -600,7 +538,13 @@ async function dispatchOpenAI(
     signal,
   });
   if (!res.ok) {
-    const rateLimited = classifyRateLimit(target, res, Date.now());
+    const rateLimited = classifyRateLimit(
+      target.id,
+      res.status,
+      res.statusText,
+      res.headers,
+      Date.now(),
+    );
     if (rateLimited !== null) throw rateLimited;
     throw new TargetDispatchError(
       `target "${target.id}" returned ${res.status} ${res.statusText}. No draft was produced.`,
@@ -661,7 +605,13 @@ async function dispatchAnthropic(
     signal,
   });
   if (!res.ok) {
-    const rateLimited = classifyRateLimit(target, res, Date.now());
+    const rateLimited = classifyRateLimit(
+      target.id,
+      res.status,
+      res.statusText,
+      res.headers,
+      Date.now(),
+    );
     if (rateLimited !== null) throw rateLimited;
     throw new TargetDispatchError(
       `target "${target.id}" returned ${res.status} ${res.statusText}. No draft was produced.`,

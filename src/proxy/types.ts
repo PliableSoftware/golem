@@ -254,6 +254,16 @@ export interface ProxyServerOptions {
    * recorded-shape test passes unmodified.
    */
   readonly resolveRoute?: RouteResolver;
+  /**
+   * R14.5 — the wait between retry attempts on a rate-limited (429/529)
+   * upstream response, abortable on the client's own abort signal. Default:
+   * a real `setTimeout`-based wait (see `server.ts`'s `sleep`). Overriding
+   * this is a TEST SEAM ONLY — it exists so a test can prove the retry loop's
+   * decision-making (attempt count, which response is ultimately forwarded)
+   * without paying real wall-clock seconds for exponential backoff; no real
+   * caller should ever set it.
+   */
+  readonly rateLimitSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 /**
@@ -371,6 +381,30 @@ export interface ProxyConfig {
   ) => Record<string, string | string[]>;
   readonly translateUpstream?: UpstreamTranslator;
   readonly resolveRoute?: RouteResolver;
+  readonly rateLimitSleep: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+/**
+ * R14.5 — wait for `ms`, or return early the moment `signal` aborts (the
+ * client hung up) — never left ticking after the request it belongs to is
+ * already gone. The real (non-test) `rateLimitSleep`.
+ */
+function defaultRateLimitSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 export function resolveProxyConfig(options: ProxyServerOptions = {}): ProxyConfig {
@@ -395,5 +429,6 @@ export function resolveProxyConfig(options: ProxyServerOptions = {}): ProxyConfi
       ? { translateUpstream: options.translateUpstream }
       : {}),
     ...(options.resolveRoute !== undefined ? { resolveRoute: options.resolveRoute } : {}),
+    rateLimitSleep: options.rateLimitSleep ?? defaultRateLimitSleep,
   };
 }
