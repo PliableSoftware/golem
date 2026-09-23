@@ -185,24 +185,30 @@ Every one of these is load-bearing for `golem.run`, which redirects to
 The release job **asserts** every required asset is present after uploading,
 rather than trusting the upload.
 
-**Publishing to npm is an explicit opt-in**, not a consequence of a secret
-existing. The gate is `vars.NPM_PUBLISH == 'true'` **and** a non-empty
-`NPM_TOKEN`. That distinction was learned the hard way: the job originally fired
-whenever the token was non-empty, treating *a secret is configured* as a proxy
-for *we intend to publish*. A token was present but did not authenticate, so
-v0.50.0 and v0.51.0 each produced a complete, correct release and then reported
-FAILURE — and a run that is expected to be red is not a signal, it is training.
-(Same predicate-as-proxy mistake R13.11 recorded for `inherit` auth.)
+**Publishing to npm always runs** — no opt-in gate, as of v0.54.3. It used to be
+`vars.NPM_PUBLISH == 'true'` **and** a non-empty `NPM_TOKEN`, learned the hard
+way: the job originally fired whenever the token was non-empty, treating *a
+secret is configured* as a proxy for *we intend to publish*. A token was
+present but did not authenticate, so v0.50.0 and v0.51.0 each produced a
+complete, correct release and then reported FAILURE — and a run that is
+expected to be red is not a signal, it is training. (Same predicate-as-proxy
+mistake R13.11 recorded for `inherit` auth.)
 
-Setting the variable while the token is empty fails loudly rather than skipping
-silently, because that combination can only mean someone meant to publish.
+The fix wasn't a better gate — it was removing the static token the gate
+existed to protect. `npm-publish` now authenticates via npm's **OIDC Trusted
+Publisher** flow (folded in from the standalone `publish.yml`, deleted): the
+job requests `id-token: write`, mints a short-lived OIDC token scoped to this
+exact repo + workflow, and npm exchanges it for a publish grant — no
+`NPM_TOKEN` secret to set, rotate, or have go quietly stale. `npm publish
+--access public --provenance` attaches the same attestation npm's own
+provenance UI shows.
 
 Not `continue-on-error`: hiding a real publish failure in the one workflow whose
 job is to be trustworthy would be worse than the failure. The VS Code publish
 remains gated on `VSCE_PAT` alone — it has never mis-fired.
 
-Either way the release is complete: `golem-run-<version>.tgz` is attached to the
-Release, so nothing is lost by not publishing.
+`golem-run-<version>.tgz` is still attached to the Release either way, so a
+publish failure never leaves the release itself incomplete.
 
 ## `config-schema.json` must not describe the build machine
 
@@ -240,7 +246,7 @@ enforce and nothing on either side to rotate. Body — unchanged by the switch:
   "event": "release.published",
   "tag": "v0.48.0",
   "version": "0.48.0",
-  "repository": "cloudcatalyst/golem",
+  "repository": "PliableSoftware/golem",
   "commit": "<sha>",
   "released_at": "<iso8601>",
   "config_schema": { "url": "https://…/config-schema.json", "sha256": "<hex>" },
@@ -258,6 +264,14 @@ Three properties worth keeping, and kept when the portal side was built:
 - **It is inert until `PORTAL_WEBHOOK_URL` is set.** That is now a repository
   *variable*, not a secret: a URL is not a secret, and storing it as one makes it
   invisible in the log exactly when you want to read it.
+
+**Paused as of the `PliableSoftware/golem` move (v0.54.3).** The portal's OIDC
+check still hardcodes `repository must be cloudcatalyst/golem`, so every call
+401s from the portal's side — this workflow's own claims are correct (the repo
+in the token tracks `github.repository` dynamically). Paused by clearing the
+`PORTAL_WEBHOOK_URL` variable rather than editing the workflow, so the job's
+own "inert without it" behavior is doing the pausing. Re-set the variable once
+the portal accepts the new repo slug.
 
 The portal verifies the token, then fetches `config_schema.url` and checks it
 against `sha256` before caching it by `version`.
