@@ -34,15 +34,16 @@ async function run(...args: string[]): Promise<void> {
 describe("golem session forget", () => {
   it("forget <id> deletes exactly that conversation from the real store", async () => {
     const store = new LocalConversationStore(`${projectDir}/.golem/conversations`);
+    const now = new Date().toISOString();
     await store.appendTurn("keep-me", {
       role: "user",
       content: "hi",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: now,
     });
     await store.appendTurn("drop-me", {
       role: "user",
       content: "bye",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: now,
     });
 
     await run("drop-me", "--dir", projectDir);

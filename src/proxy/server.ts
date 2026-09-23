@@ -27,6 +27,7 @@ import {
   forwardableResponseHeaders,
   isBypassRequest,
 } from "./headers.js";
+import { classifyRateLimit, decideRetry } from "./rate-limit-retry.js";
 import {
   type ProxyConfig,
   type ProxyRequest,
@@ -206,6 +207,23 @@ export class GolemProxy {
       this.#pipelineEnabled = false;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ pipeline_enabled: false }));
+      return;
+    }
+
+    // Statusline endpoint — returns Golem state as JSON for the CLI statusline tool
+    if (req.url === "/__golem/statusline" && req.method === "GET") {
+      try {
+        // Import collectGolemState from the statusline module
+        // Note: We use dynamic import to avoid circular deps at bundle time
+        const { collectGolemState } = await import("../cli/statusline.js");
+        const state = await collectGolemState(process.cwd());
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(state));
+      } catch (_err) {
+        // On error, return minimal state to avoid breaking the statusline
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({}));
+      }
       return;
     }
 
@@ -416,30 +434,82 @@ export class GolemProxy {
       requestHeaders = { ...upstreamHeaders, "content-type": "application/json" };
     }
 
+    // R14.5 — the origin actually being dialled, named once for every retry
+    // attempt's RateLimitedError message. Falls back the same way the pool
+    // lookup below does: the route's own target when there is one, else the
+    // single configured upstream.
+    const rateLimitSubject =
+      outcomeTargetId ?? upstreamOrigin?.origin ?? this.config.upstreamBaseUrl;
+
     let upstream: Dispatcher.ResponseData;
-    try {
-      upstream = await this.poolFor(
-        upstreamOrigin?.origin ?? new URL(this.config.upstreamBaseUrl).origin,
-      ).request({
-        path: requestPath,
-        method: forward.method as Dispatcher.HttpMethod,
-        headers: requestHeaders,
-        body: requestBody,
-        signal: abort.signal,
-      });
-    } catch (err) {
-      if (abort.signal.aborted) {
-        res.destroy();
-        report("client_gone", { detail: "the client hung up before the upstream answered" });
+    let attempt = 1;
+    for (;;) {
+      try {
+        upstream = await this.poolFor(
+          upstreamOrigin?.origin ?? new URL(this.config.upstreamBaseUrl).origin,
+        ).request({
+          path: requestPath,
+          method: forward.method as Dispatcher.HttpMethod,
+          headers: requestHeaders,
+          body: requestBody,
+          signal: abort.signal,
+        });
+      } catch (err) {
+        if (abort.signal.aborted) {
+          res.destroy();
+          report("client_gone", { detail: "the client hung up before the upstream answered" });
+          return;
+        }
+        const mapped = mapUpstreamError(err);
+        this.respondProxyError(res, mapped.status, undefined, mapped.body);
+        report("upstream_error", {
+          status: mapped.status,
+          detail: "the upstream request failed before any response",
+        });
         return;
       }
-      const mapped = mapUpstreamError(err);
-      this.respondProxyError(res, mapped.status, undefined, mapped.body);
-      report("upstream_error", {
-        status: mapped.status,
-        detail: "the upstream request failed before any response",
-      });
-      return;
+
+      // R14.5 — transparently retry a rate-limited (429/529) response before
+      // forwarding anything to the client, invisible to Claude Code beyond
+      // taking longer: the request body is already fully buffered above
+      // (`readBody`), so replaying it is trivially safe, and nothing has been
+      // written to `res` yet. Bounded (MAX_RETRY_ATTEMPTS, RETRY_BUDGET_MS,
+      // see rate-limit-retry.ts) — once exhausted, the loop falls through and
+      // the still-rate-limited response is forwarded exactly as it always
+      // was, byte for byte.
+      const rateLimited = classifyRateLimit(
+        rateLimitSubject,
+        upstream.statusCode,
+        upstream.statusText,
+        upstream.headers,
+        Date.now(),
+      );
+      if (rateLimited === null) break;
+      const decision = decideRetry(rateLimited, attempt);
+      if (decision.kind === "give-up") break;
+
+      // Discard this attempt's body before reissuing on the same pool — undici
+      // requires the body be consumed or dumped, and forwarding a rate-limited
+      // response's headers to the caller's limit-prediction hook, then piping
+      // its body to the client, would defeat the retry (and lie about which
+      // response the client actually got).
+      await upstream.body.dump().catch(() => {});
+      if (abort.signal.aborted) {
+        res.destroy();
+        report("client_gone", {
+          detail: "the client hung up while golem proxy was retrying a rate-limited upstream",
+        });
+        return;
+      }
+      await this.config.rateLimitSleep(decision.afterMs, abort.signal);
+      if (abort.signal.aborted) {
+        res.destroy();
+        report("client_gone", {
+          detail: "the client hung up while golem proxy was retrying a rate-limited upstream",
+        });
+        return;
+      }
+      attempt += 1;
     }
 
     // Translating upstream (R6.1 case b): convert the response to the Anthropic

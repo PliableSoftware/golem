@@ -26,12 +26,23 @@ const SETTINGS: TargetRegistrySettings = {
       id: "openrouter",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["qwen/qwen3.7-flash"],
+      models: [{ name: "qwen/qwen3.7-flash" }],
     },
   ],
   targets: [
-    { id: "cheap", gateway: "openrouter", model: "qwen/qwen3.7-flash", trust: "third-party" },
+    {
+      id: "cheap",
+      gateway: "openrouter",
+      model: { name: "qwen/qwen3.7-flash" },
+      trust: "third-party",
+    },
   ],
+};
+
+/** Personas with worker models set. */
+const PERSONAS_WITH_WORKER = {
+  coder: { discipline: "code", model: "cheap" },
+  reviewer: { discipline: "review" },
 };
 
 describe("resolveCoderRoute", () => {
@@ -64,7 +75,7 @@ describe("resolveCoderRoute", () => {
   });
 
   it("resolves a bare GATEWAY id the way the rest of the registry does (R9.23)", () => {
-    // Resolves to that gateway's FIRST target, exactly as `default_target` does.
+    // Resolves to that gateway's FIRST target, exactly as `model` does.
     expect(resolveCoderRoute({ settings: SETTINGS, defaultCoder: "openrouter" })).toEqual({
       kind: "target",
       targetId: "openrouter:qwen/qwen3.7-flash",
@@ -108,6 +119,28 @@ describe("resolveCoderRoute", () => {
       resolveCoderRoute({
         settings: SETTINGS,
         workerTargets: { coder: "" },
+        defaultCoder: "claude-sonnet-5",
+      }),
+    ).toEqual({ kind: "harness", model: "claude-sonnet-5" });
+  });
+
+  it("uses personas[worker].model for worker lane when worker_targets not set", () => {
+    // R14.3: worker lane reads personas.coder.model
+    expect(
+      resolveCoderRoute({
+        settings: SETTINGS,
+        personas: PERSONAS_WITH_WORKER,
+        defaultCoder: "claude-sonnet-5",
+      }),
+    ).toEqual({ kind: "target", targetId: "cheap", via: "persona_worker" });
+  });
+
+  it("falls through to harness when personas[worker].model is not a target", () => {
+    const personas = { coder: { discipline: "code", model: "claude-sonnet-5" } };
+    expect(
+      resolveCoderRoute({
+        settings: SETTINGS,
+        personas,
         defaultCoder: "claude-sonnet-5",
       }),
     ).toEqual({ kind: "harness", model: "claude-sonnet-5" });

@@ -4,6 +4,7 @@
  * ?key=) and Gemini↔Anthropic body translation, non-streaming and streaming.
  */
 
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   anthropicToGemini,
@@ -45,7 +46,7 @@ describe("proxy Gemini translation seam (R6.1 b4-gemini)", () => {
 
   beforeEach(async () => {
     lastRequest = null;
-    upstream = await startUpstream((req, res, body) => {
+    upstream = await startUpstream((req: IncomingMessage, res: ServerResponse, body: Buffer) => {
       lastRequest = { path: req.url ?? "", body: JSON.parse(body.toString("utf8") || "{}") };
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -96,7 +97,7 @@ describe("proxy Gemini translation seam (R6.1 b4-gemini)", () => {
 
   it("streams: uses streamGenerateContent?alt=sse and yields an Anthropic SSE stream", async () => {
     await upstream.close();
-    upstream = await startUpstream((req, res, body) => {
+    upstream = await startUpstream((req: IncomingMessage, res: ServerResponse, body: Buffer) => {
       lastRequest = { path: req.url ?? "", body: JSON.parse(body.toString("utf8") || "{}") };
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(

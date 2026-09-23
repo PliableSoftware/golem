@@ -53,13 +53,13 @@ beforeEach(async () => {
         id: "work",
         provider: "openai",
         base_url: "https://api.openai.com/v1",
-        models: ["gpt-5.2"],
+        models: [{ name: "gpt-5.2" }],
       },
       {
         id: "local",
         provider: "ollama",
         base_url: "http://gpubox.lan:11434/v1",
-        models: ["qwen2.5-coder:7b"],
+        models: [{ name: "qwen2.5-coder:7b" }],
       },
     ],
     { projectDir: dir },
@@ -122,7 +122,7 @@ describe("useGateway", () => {
   });
 
   /**
-   * R10.24 — `inference.default_target` is a TARGET selector, and a gateway that
+   * R10.24 — `inference.model` is a TARGET selector, and a gateway that
    * fronts several models collapses to one target when selected by gateway id. A
    * user with two OpenRouter models configured could therefore reach only the
    * first, and the VS Code picker could only ever offer the gateway. Selecting a
@@ -141,7 +141,7 @@ describe("useGateway", () => {
     expect(work?.active).toBe(true);
     // The row names the model actually in force, not the gateway's first.
     expect(work?.model).toBe("gpt-5.2");
-    expect(work?.models).toEqual(["gpt-5.2"]);
+    expect(work?.models).toEqual([{ name: "gpt-5.2" }]);
   });
 
   it("preflights the credential of the gateway BEHIND a target, not the target id", async () => {
@@ -237,7 +237,7 @@ describe("addGateway", () => {
         id: "gemini",
         provider: "gemini",
         base_url: "https://generativelanguage.googleapis.com",
-        models: ["gemini-2.5-pro"],
+        models: [{ name: "gemini-2.5-pro" }],
       },
       "2026-07-26T00:00:00.000Z",
     );
@@ -245,7 +245,7 @@ describe("addGateway", () => {
     const ids = (settings.proxy.gateways ?? []).map((g) => g.id);
     expect(ids).toEqual(["work", "local", "gemini"]); // existing preserved, new appended
     const added = (settings.proxy.gateways ?? []).find((g) => g.id === "gemini");
-    expect(added).toMatchObject({ provider: "gemini", models: ["gemini-2.5-pro"] });
+    expect(added).toMatchObject({ provider: "gemini", models: [{ name: "gemini-2.5-pro" }] });
 
     const log = await readFile(path.join(dir, ".golem", "state", "account-log.jsonl"), "utf8");
     expect(log).toContain('"action":"add"');
@@ -307,7 +307,7 @@ describe("addGateway", () => {
           id: "foundry-pinned",
           provider: "azure-foundry",
           base_url: "https://x.example/anthropic",
-          models: ["claude-opus-5"],
+          models: [{ name: "claude-opus-5" }],
         },
         "2026-07-26T00:00:00.000Z",
       );
@@ -341,7 +341,7 @@ describe("addGateway", () => {
           id: "spawned",
           provider: "claude-cli",
           base_url: "https://api.anthropic.com",
-          models: ["claude-sonnet-5"],
+          models: [{ name: "claude-sonnet-5" }],
         },
         "2026-07-26T00:00:00.000Z",
       );
@@ -384,7 +384,7 @@ describe("addGateway", () => {
           id: "openrouter-laguna",
           provider: "openrouter",
           base_url: "https://openrouter.ai/api/v1",
-          models: ["poolside/laguna-s-2.1:free"],
+          models: [{ name: "poolside/laguna-s-2.1:free" }],
           auth_scheme: "bearer",
         },
         "2026-07-26T00:00:00.000Z",
@@ -481,7 +481,7 @@ describe("removeGateway", () => {
     });
     expect(was_active).toBe(true);
     const { settings } = await loadConfig({ projectDir: dir });
-    expect(settings.inference.default_target).toBeUndefined();
+    expect(settings.inference.model).toBeUndefined();
     expect((await collectGateways(dir, {}, { store_backend: store })).active).toBe("anthropic");
   });
 });

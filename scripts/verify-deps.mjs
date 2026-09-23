@@ -29,8 +29,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
  * Ceiling on runtime dependencies. Decision 51 brought this back to 6 by removing
  * ink; Decision 53 moved `unpdf` to optional, leaving 5. Raising this number is a
  * deliberate act, so it lives in one place and fails loudly.
+ *
+ * R14.3 raises it to 6 for `@agentclientprotocol/sdk` (`golem acp`'s ACP
+ * transport for Buzz) — checked before adding: 1.4.0, zero declared runtime
+ * dependencies of its own, ~5.6 MB unpacked, pure TypeScript over JSON-RPC
+ * with no native bindings. `golem acp` is a CLI subcommand shipped in the
+ * default `golem-run` tarball, not an optional add-on, so it belongs here
+ * rather than in `optionalDependencies`.
  */
-const MAX_RUNTIME_DEPS = 5;
+const MAX_RUNTIME_DEPS = 6;
 
 /** An exact semver: no range operators, no tags, no URLs. */
 const EXACT_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;

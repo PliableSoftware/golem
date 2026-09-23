@@ -9,7 +9,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,19 +171,23 @@ describe("verify-deps", () => {
   });
 
   it("fails when the runtime dependency count creeps past the ceiling", async () => {
-    await fixture(dir, {
-      dependencies: {
-        a: "1.0.0",
-        b: "1.0.0",
-        c: "1.0.0",
-        d: "1.0.0",
-        e: "1.0.0",
-        f: "1.0.0",
-      },
-    });
+    // Read the ceiling from the script rather than re-pinning a literal:
+    // `MAX_RUNTIME_DEPS` is raised deliberately (R14.3 took it 5 -> 6 for
+    // @agentclientprotocol/sdk), and a hard-coded `f` + "the 5 allowed" here
+    // turned every one of those deliberate raises into a whole-CI red run —
+    // one failing test, identical on every OS and node version, which is the
+    // signature of a stale expectation rather than a load flake.
+    const source = await readFile(SCRIPT, "utf8");
+    const ceiling = Number(source.match(/const MAX_RUNTIME_DEPS = (\d+);/u)?.[1]);
+    expect(Number.isInteger(ceiling) && ceiling > 0).toBe(true);
+
+    const dependencies: Record<string, string> = {};
+    for (let i = 0; i <= ceiling; i += 1) dependencies[`dep${i}`] = "1.0.0";
+    await fixture(dir, { dependencies });
+
     const result = await run(dir);
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("exceeds the 5 allowed");
+    expect(result.stderr).toContain(`exceeds the ${ceiling} allowed`);
   });
 
   it("fails when the lockfile is missing entirely", async () => {

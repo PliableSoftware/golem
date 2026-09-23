@@ -41,37 +41,37 @@ const SIX_GATEWAYS: TargetRegistrySettings = {
       id: "moonshotai-kimi-k2.7-code",
       provider: "openai",
       base_url: "https://api.moonshot.ai/v1",
-      models: ["moonshotai/kimi-k2.7-code"],
+      models: [{ name: "moonshotai/kimi-k2.7-code" }],
     },
     {
       id: "openrouter-gpt-oss",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["openai/gpt-oss-20b:free"],
+      models: [{ name: "openai/gpt-oss-20b:free" }],
     },
     {
       id: "openrouter-laguna",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["poolside/laguna-s-2.1:free"],
+      models: [{ name: "poolside/laguna-s-2.1:free" }],
     },
     {
       id: "openrouter-qwen3",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["qwen/qwen3-14b"],
+      models: [{ name: "qwen/qwen3-14b" }],
     },
     {
       id: "openrouter-gemma4",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["google/gemma-4-26b-a4b-it"],
+      models: [{ name: "google/gemma-4-26b-a4b-it" }],
     },
     {
       id: "openrouter-deepseek-v4",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["qwen/qwen3-14b"],
+      models: [{ name: "qwen/qwen3-14b" }],
     },
   ],
 };
@@ -123,7 +123,7 @@ describe("target registry -- composition", () => {
         {
           id: "openrouter-qwen3:qwen/qwen3-14b",
           gateway: "openrouter-qwen3",
-          model: "qwen/qwen3-14b",
+          model: { name: "qwen/qwen3-14b" },
           trust: "third-party",
         },
       ],
@@ -190,14 +190,14 @@ describe("target registry -- trust defaults", () => {
           id: "lan-box",
           provider: "ollama",
           base_url: "http://homebox.lan:11434/v1",
-          models: ["qwen2.5-coder:14b"],
+          models: [{ name: "qwen2.5-coder:14b" }],
         },
       ],
       targets: [
         {
           id: "lan-box/qwen2.5-coder:14b",
           gateway: "lan-box",
-          model: "qwen2.5-coder:14b",
+          model: { name: "qwen2.5-coder:14b" },
           trust: "lan",
         },
       ],
@@ -207,8 +207,8 @@ describe("target registry -- trust defaults", () => {
 });
 
 describe("target registry -- the default selector", () => {
-  it("reads default_target — resolves a gateway id to the first target from that gateway (R9.23)", () => {
-    expect(resolveDefaultTargetId({ ...SIX_GATEWAYS, default_target: "openrouter-laguna" })).toBe(
+  it("reads model — resolves a gateway id to the first target from that gateway (R9.23)", () => {
+    expect(resolveDefaultTargetId({ ...SIX_GATEWAYS, model: "openrouter-laguna" })).toBe(
       "openrouter-laguna:poolside/laguna-s-2.1:free",
     );
   });
@@ -253,7 +253,7 @@ describe("target registry -- credential preflight inputs", () => {
         {
           id: "cheap/openai/gpt-oss-20b:free",
           gateway: "openrouter-gpt-oss",
-          model: "openai/gpt-oss-20b:free",
+          model: { name: "openai/gpt-oss-20b:free" },
         },
       ],
     });
@@ -311,7 +311,7 @@ describe("target registry -- startup warnings", () => {
   it("warns for EVERY misconfigured target, not just the default one", () => {
     const warnings = targetWarnings({
       ...BASE,
-      default_target: "anthropic",
+      model: "anthropic",
       gateways: [
         { id: "a", provider: "openrouter", base_url: "https://openrouter.ai/api/v1" },
         { id: "b", provider: "openai", base_url: "https://api.openai.com/v1" },

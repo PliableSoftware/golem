@@ -153,7 +153,7 @@ describe("golem init -> Claude Code smoke (T-C2)", () => {
         // compression (dedup) stage has genuine repeated content to elide.
         const bigToolResult = `${"x".repeat(600)} repeated tool output ${"y".repeat(600)}`;
         const requestBody = JSON.stringify({
-          model: "claude-opus-4-8",
+          model: { name: "claude-opus-4-8" },
           max_tokens: 256,
           messages: [
             { role: "user", content: [{ type: "tool_result", content: bigToolResult }] },

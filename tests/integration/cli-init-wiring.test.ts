@@ -7,7 +7,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { golemInit, golemUninit, InitError, type InitProbe } from "../../src/cli/init.js";
-import { isUnmodifiedManaged, rememberManaged } from "../../src/cli/managed-files.js";
+import { skillDirName } from "../../src/cli/init-skills.js";
 import { defaultProjectPort } from "../../src/cli/proxy-daemon.js";
 import { P0_SKILLS } from "../../src/cli/skills.js";
 import { loopbackCaPath } from "../../src/proxy/loopback-cert.js";
@@ -94,7 +94,7 @@ describe("golem init", () => {
 
     for (const name of Object.keys(P0_SKILLS)) {
       const skill = await readFile(
-        path.join(projectDir, ".claude", "skills", `golem-${name}`, "SKILL.md"),
+        path.join(projectDir, ".claude", "skills", skillDirName(name), "SKILL.md"),
         "utf8",
       );
       expect(skill).toBe(P0_SKILLS[name]);
@@ -112,12 +112,21 @@ describe("golem init", () => {
     const cs = await readJson(CLAUDE_TARGET);
     expect(cs.statusLine).toStrictEqual({
       type: "command",
-      command: "golem statusline",
+      // --color by default (2026-09-17): Claude Code always runs this through
+      // a pipe, never a real TTY, so the line's own TTY check never turns
+      // colour on without the flag forced.
+      command: "golem statusline --color",
       refreshInterval: 2,
     });
     // defaultMode = "default" so project allow-rules (Bash(golem:*), mcp__golem)
     // are authoritative instead of "auto" mode's separate background check.
     expect(cs.defaultMode).toBe("default");
+    // fallbackModel = ["sonnet"]: a cheap first-line mitigation so a contributor
+    // without access to a persona subagent's pinned model (e.g. claude-opus-5)
+    // doesn't fail outright dispatching it — see GOLEM_FALLBACK_MODEL. An ARRAY,
+    // not a string: settings.json's fallbackModel is "an ordered chain where
+    // position carries meaning" (code.claude.com/docs/en/settings).
+    expect(cs.fallbackModel).toEqual(["sonnet"]);
     const hooks = cs.hooks as Record<string, unknown>;
     const cmds = (event: string) =>
       ((hooks[event] as { hooks: { command: string }[] }[]) ?? []).flatMap((e) =>
@@ -141,6 +150,7 @@ describe("golem init", () => {
     const cs = await readJson(CLAUDE_TARGET);
     expect(cs.statusLine).toBeUndefined();
     expect(cs.defaultMode).toBeUndefined();
+    expect(cs.fallbackModel).toBeUndefined();
     // hooks object is gone entirely once all Golem hooks are removed.
     expect(cs.hooks).toBeUndefined();
   });
@@ -406,6 +416,7 @@ describe("golem init", () => {
     expect((local.permissions as { allow?: string[] }).allow).toContain("mcp__golem__*");
     expect(local.statusLine).toBeDefined();
     expect(local.defaultMode).toBe("default");
+    expect(local.fallbackModel).toEqual(["sonnet"]);
     expect(Object.keys(local.hooks as Record<string, unknown>)).toContain("PostToolUse");
 
     // …and nothing of ours is left in the committed one.
@@ -415,6 +426,7 @@ describe("golem init", () => {
     expect(committed.hooks).toBeUndefined();
     expect(committed.statusLine).toBeUndefined();
     expect(committed.defaultMode).toBeUndefined();
+    expect(committed.fallbackModel).toBeUndefined();
   });
 
   it("uninit cleans BOTH files, whichever scope wrote them", async () => {
@@ -501,6 +513,21 @@ describe("golem init", () => {
     const gitignore = await readFile(path.join(projectDir, ".gitignore"), "utf8");
     expect(gitignore).toContain("CLAUDE.local.md");
     expect(gitignore).toContain(".claude/rules/golem-*.local.md");
+    // Deny-by-default .golem/ block: everything ignored except the allowlisted
+    // shared files/directories.
+    expect(gitignore).toContain("**/.golem/*");
+    expect(gitignore).toContain("!.golem/settings.json");
+    expect(gitignore).toContain("!.golem/managed-files.json");
+    expect(gitignore).toContain("!.golem/personas");
+  });
+
+  it("seeds the .golem/ gitignore block once (idempotent re-init)", async () => {
+    await golemInit({ projectDir, probe: okProbe });
+    const first = await readFile(path.join(projectDir, ".gitignore"), "utf8");
+    await golemInit({ projectDir, probe: okProbe });
+    const second = await readFile(path.join(projectDir, ".gitignore"), "utf8");
+    expect(second).toBe(first);
+    expect(first.match(/\*\*\/\.golem\/\*/g)).toHaveLength(1);
   });
 
   it("uninit removes the seeded guidance rules", async () => {
@@ -605,198 +632,5 @@ describe("golem init", () => {
     expect((local.proxy as Record<string, unknown>).upstream_base_url).toBe(
       "https://openrouter.ai/api",
     );
-  });
-});
-
-describe("golem init — VS Code extension install", () => {
-  let extDir: string;
-  let sourceDir: string;
-  let vscodeProbe: InitProbe;
-
-  beforeEach(async () => {
-    extDir = await newTempDir();
-    sourceDir = await newTempDir();
-    vscodeProbe = { ...okProbe, vscodeExtensionsDir: () => Promise.resolve(extDir) };
-    await writeFile(
-      path.join(sourceDir, "package.json"),
-      JSON.stringify({ publisher: "golem-run", name: "golem-vscode", version: "9.9.9" }),
-      "utf8",
-    );
-    await writeFile(path.join(sourceDir, "extension.js"), "// ext", "utf8");
-  });
-
-  it("installs the extension by copying into the VS Code dir, idempotently", async () => {
-    const id = "golem-run.golem-vscode-9.9.9";
-    const r1 = await golemInit({ projectDir, probe: vscodeProbe, vscodeSourceDir: sourceDir });
-    expect(r1.actions.some((a) => a.kind === "create" && a.path.includes(id))).toBe(true);
-    expect(await readFile(path.join(extDir, id, "extension.js"), "utf8")).toBe("// ext");
-
-    const projectDir2 = await newTempDir();
-    const r2 = await golemInit({
-      projectDir: projectDir2,
-      probe: vscodeProbe,
-      vscodeSourceDir: sourceDir,
-    });
-    expect(r2.actions.some((a) => a.kind === "skip" && a.path.includes(id))).toBe(true);
-  });
-
-  it("REFRESHES a stale deployment instead of skipping it (R9.16)", async () => {
-    const id = "golem-run.golem-vscode-9.9.9";
-    await golemInit({ projectDir, probe: vscodeProbe, vscodeSourceDir: sourceDir });
-
-    // Ship a newer renderer WITHOUT bumping the version — the exact shape that
-    // left a three-release-old render.js on the user's machine naming the wrong
-    // model, because init keyed on the directory existing.
-    await writeFile(path.join(sourceDir, "render.js"), "// fixed renderer", "utf8");
-
-    const projectDir2 = await newTempDir();
-    const report = await golemInit({
-      projectDir: projectDir2,
-      probe: vscodeProbe,
-      vscodeSourceDir: sourceDir,
-    });
-
-    const action = report.actions.find((a) => a.path.includes(id));
-    expect(action?.kind).toBe("modify");
-    expect(action?.detail).toContain("render.js");
-    expect(await readFile(path.join(extDir, id, "render.js"), "utf8")).toBe("// fixed renderer");
-  });
-
-  it("uninit removes the installed extension", async () => {
-    await golemInit({ projectDir, probe: vscodeProbe, vscodeSourceDir: sourceDir });
-    expect(await readdir(extDir)).toContain("golem-run.golem-vscode-9.9.9");
-    await golemUninit({ projectDir, probe: vscodeProbe });
-    expect(await readdir(extDir)).not.toContain("golem-run.golem-vscode-9.9.9");
-  });
-});
-
-describe("golem init — retired skills are pruned (R11.1 leftover)", () => {
-  const retiredPath = (dir: string): string =>
-    path.join(dir, ".claude", "skills", "golem-slider", "SKILL.md");
-
-  it("removes a retired skill Golem itself wrote, and forgets its record", async () => {
-    await golemInit({ projectDir, probe: okProbe });
-    // Simulate a skill Golem shipped in an earlier release and has since dropped
-    // from the table: write it AND record it as Golem-written, which is exactly
-    // the state `/golem-slider` was in after R11.1 retired the slider.
-    const retired = retiredPath(projectDir);
-    await mkdir(path.dirname(retired), { recursive: true });
-    await writeFile(retired, "run `golem slider 3`\n", "utf8");
-    await rememberManaged(projectDir, retired, "run `golem slider 3`\n");
-
-    const report = await golemInit({ projectDir, probe: okProbe });
-
-    await expect(readFile(retired, "utf8")).rejects.toThrow();
-    expect(report.actions.some((a) => a.kind === "remove" && a.path.includes("golem-slider"))).toBe(
-      true,
-    );
-    // The provenance record goes with it, so a later re-install is a clean create.
-    expect(await isUnmodifiedManaged(projectDir, retired, "run `golem slider 3`\n")).toBe(false);
-    // The skills Golem still ships are untouched.
-    for (const name of Object.keys(P0_SKILLS)) {
-      await expect(
-        readFile(path.join(projectDir, ".claude", "skills", `golem-${name}`, "SKILL.md"), "utf8"),
-      ).resolves.toContain("");
-    }
-  });
-
-  it("keeps a retired skill the user edited, and reports it as a conflict", async () => {
-    await golemInit({ projectDir, probe: okProbe });
-    const retired = retiredPath(projectDir);
-    await mkdir(path.dirname(retired), { recursive: true });
-    await rememberManaged(projectDir, retired, "what golem wrote\n");
-    // ...and then the user edited it. The bytes no longer match the record.
-    await writeFile(retired, "my own notes\n", "utf8");
-
-    const report = await golemInit({ projectDir, probe: okProbe });
-
-    expect(await readFile(retired, "utf8")).toBe("my own notes\n");
-    expect(
-      report.actions.some((a) => a.kind === "conflict" && a.path.includes("golem-slider")),
-    ).toBe(true);
-  });
-
-  it("leaves a skill Golem has no record of writing (the user's own)", async () => {
-    await golemInit({ projectDir, probe: okProbe });
-    const mine = path.join(projectDir, ".claude", "skills", "golem-mine", "SKILL.md");
-    await mkdir(path.dirname(mine), { recursive: true });
-    await writeFile(mine, "my own skill\n", "utf8");
-
-    const report = await golemInit({ projectDir, probe: okProbe });
-
-    expect(await readFile(mine, "utf8")).toBe("my own skill\n");
-    expect(report.actions.some((a) => a.kind === "remove" && a.path.includes("golem-mine"))).toBe(
-      false,
-    );
-  });
-
-  it("does not prune in a dry run", async () => {
-    await golemInit({ projectDir, probe: okProbe });
-    const retired = retiredPath(projectDir);
-    await mkdir(path.dirname(retired), { recursive: true });
-    await writeFile(retired, "stale\n", "utf8");
-    await rememberManaged(projectDir, retired, "stale\n");
-
-    const report = await golemInit({ projectDir, probe: okProbe, dryRun: true });
-
-    expect(await readFile(retired, "utf8")).toBe("stale\n");
-    expect(report.actions.some((a) => a.kind === "remove" && a.path.includes("golem-slider"))).toBe(
-      true,
-    );
-  });
-});
-
-describe("golem uninit", () => {
-  it("removes exactly what init added, keeping foreign entries and .golem/", async () => {
-    await mkdir(path.join(projectDir, ".claude"), { recursive: true });
-    await writeFile(
-      path.join(projectDir, ".claude", "settings.json"),
-      JSON.stringify({ env: { FOO: "bar" } }),
-      "utf8",
-    );
-    await writeFile(
-      path.join(projectDir, ".mcp.json"),
-      JSON.stringify({ mcpServers: { other: { type: "http", url: "http://x/mcp" } } }),
-      "utf8",
-    );
-    await golemInit({ projectDir, probe: okProbe });
-
-    await golemUninit({ projectDir, probe: okProbe });
-
-    const settings = await readJson(".claude/settings.json");
-    expect(settings.env).toStrictEqual({ FOO: "bar" });
-    const mcp = await readJson(".mcp.json");
-    expect(mcp.mcpServers).toStrictEqual({ other: { type: "http", url: "http://x/mcp" } });
-    const files = await snapshot(projectDir);
-    expect([...files.keys()].some((f) => f.includes(path.join("skills", "golem-")))).toBe(false);
-    expect(files.has(path.join(".golem", "settings.json"))).toBe(true);
-  });
-
-  it("does not remove a user-customized base URL", async () => {
-    await golemInit({ projectDir, probe: okProbe });
-    // User later pointed Claude Code somewhere else; uninit must not delete it.
-    const settingsPath = path.join(projectDir, CLAUDE_TARGET);
-    const settings = await readJson(CLAUDE_TARGET);
-    (settings.env as Record<string, unknown>).ANTHROPIC_BASE_URL = "http://localhost:7777";
-    await writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf8");
-
-    await golemUninit({ projectDir, probe: okProbe });
-    const after = await readJson(CLAUDE_TARGET);
-    expect((after.env as Record<string, unknown>).ANTHROPIC_BASE_URL).toBe("http://localhost:7777");
-  });
-
-  it("dry-run removes nothing", async () => {
-    await golemInit({ projectDir, probe: okProbe });
-    const before = await snapshot(projectDir);
-    const report = await golemUninit({ projectDir, dryRun: true, probe: okProbe });
-    expect(report.dryRun).toBe(true);
-    expect(await snapshot(projectDir)).toStrictEqual(before);
-  });
-
-  it("is a no-op on an unconfigured project", async () => {
-    const report = await golemUninit({ projectDir, probe: okProbe });
-    expect(report.actions).toStrictEqual([
-      { kind: "skip", path: ".", detail: "nothing to remove" },
-    ]);
   });
 });

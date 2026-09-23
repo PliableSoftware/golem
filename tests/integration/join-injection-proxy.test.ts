@@ -138,7 +138,7 @@ function device(
 
 /** The "second harness": any client that speaks the Messages API. */
 const TURN_1 = {
-  model: "claude-opus-5",
+  model: { name: "claude-opus-5" },
   system: "You are a helpful assistant.",
   messages: [{ role: "user", content: "start the migration" }],
 };

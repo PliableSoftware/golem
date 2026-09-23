@@ -19,11 +19,20 @@ import { useTempDirs } from "../../helpers/tmp.js";
 
 const LEVEL_1 = policyFor(1);
 
-/** Poll until a predicate holds, for asserting on a fire-and-forget write. */
+/**
+ * Poll until a predicate holds, for asserting on a fire-and-forget write.
+ *
+ * 5s total budget (250 × 20ms), not the 500ms this started at: the write
+ * itself has no artificial delay (a single serialized `appendFile`), but a
+ * saturated CI runner — macOS's shared runners especially — can occasionally
+ * make even that take longer than 500ms, which read as a real failure
+ * ("waitFor: predicate never became true") rather than the load flake it was.
+ * Comfortably inside vitest's 20s default `testTimeout`.
+ */
 async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
-  for (let i = 0; i < 50; i += 1) {
+  for (let i = 0; i < 250; i += 1) {
     if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("waitFor: predicate never became true");
 }

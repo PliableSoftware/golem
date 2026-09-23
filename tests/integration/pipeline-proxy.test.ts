@@ -49,7 +49,7 @@ describe("pipeline through the proxy", () => {
     const proxy = await startProxy({ upstreamBaseUrl: upstream.origin, pipeline: pipelineFor(1) });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [{ role: "user", content: `my key is ${AWS_SECRET}` }],
       });
       await rawRequest(proxy.origin, "/v1/messages", {
@@ -80,7 +80,7 @@ describe("pipeline through the proxy", () => {
       // the dedup stage will store one as a CCR original.
       const big = `${"x".repeat(600)} ${AWS_SECRET} ${"y".repeat(600)}`;
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [
           { role: "user", content: [{ type: "tool_result", content: big }] },
           { role: "user", content: [{ type: "tool_result", content: big }] },
@@ -105,7 +105,7 @@ describe("pipeline through the proxy", () => {
     const proxy = await startProxy({ upstreamBaseUrl: upstream.origin, pipeline: pipelineFor(1) });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [{ role: "user", content: `my key is ${AWS_SECRET}` }],
       });
       await rawRequest(proxy.origin, "/v1/messages", {
@@ -130,7 +130,7 @@ describe("pipeline through the proxy", () => {
     });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [{ role: "user", content: "hello world" }],
       });
       await rawRequest(proxy.origin, "/v1/messages", {
@@ -172,7 +172,7 @@ describe("pipeline through the proxy", () => {
     const proxy = await startProxy({ upstreamBaseUrl: upstream.origin, pipeline: pipelineFor(1) });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [{ role: "user", content: `key ${AWS_SECRET}` }],
       });
       await rawRequest(proxy.origin, "/anthropic/v1/messages", {
@@ -206,7 +206,7 @@ describe("pipeline through the proxy", () => {
     });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [{ role: "user", content: "keep me intact" }],
       });
       const res = await rawRequest(proxy.origin, "/v1/messages", {

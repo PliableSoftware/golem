@@ -21,7 +21,8 @@ import { probeCredential } from "../../credentials/probe.js";
 import { PromptCancelled, promptSecret } from "../../credentials/prompt.js";
 import { accountsReferencedByTargets } from "../../providers/index.js";
 import { InitError } from "../init.js";
-import { appendAudit, DEFAULT_STORE_ID, defaultGatewayId, type GatewayTarget } from "./registry.js";
+import type { GatewayTarget } from "./registry.js";
+import { appendAudit, DEFAULT_STORE_ID, defaultGatewayId } from "./registry.js";
 
 /**
  * Resolve the (provider, base_url, model, auth_scheme, store id) for an account
@@ -57,19 +58,24 @@ async function resolveGatewayTarget(
     const ids = (p.gateways ?? []).map((g) => g.id).join(", ") || "(none configured)";
     throw new InitError(`unknown gateway "${id}"; configured gateways: ${ids}`);
   }
+  let model: string | undefined;
+  if (found.models && found.models.length > 0) {
+    const firstModel = found.models[0];
+    if (firstModel !== undefined && firstModel !== null) {
+      model = firstModel.name;
+    }
+  }
+  const account: GatewayTarget = {
+    id: found.id,
+    provider: found.provider,
+    base_url: found.base_url,
+    auth_scheme: found.auth_scheme ?? "inherit",
+    ...(model !== undefined ? { model } : {}),
+  };
   return {
     storeId: found.id,
     isDefault: false,
-    account: {
-      id: found.id,
-      provider: found.provider,
-      base_url: found.base_url,
-      // R9.23: gateways carry `models[]`, not a single `model`. For
-      // account-level credential operations the first model is the display
-      // default; pass `undefined` when none exists.
-      ...(found.models !== undefined && found.models.length > 0 ? { model: found.models[0] } : {}),
-      auth_scheme: found.auth_scheme ?? "inherit",
-    },
+    account,
   };
 }
 
@@ -232,7 +238,7 @@ export async function credentialEnvForProxy(
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<Record<string, string>> {
   const { settings } = await loadConfig({ projectDir, env });
-  const selected = settings.inference.default_target ?? null;
+  const selected = settings.inference.model ?? null;
   const defaultId = defaultGatewayId(settings.proxy.upstream_provider);
   // The default top-level config is in force when nothing is selected or the
   // selection names the default id; its credential rides the plain var.

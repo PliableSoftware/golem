@@ -1,71 +1,91 @@
-/**
- * WS-A: Anthropic-compatible proxy — HTTP + byte-faithful SSE passthrough
- * (owned by agent-proxy).
- */
+export { ContextGuard } from "./context-guard.js";
+export { ContextMonitor } from "./context-monitor.js";
 
+import type { GatewayEntry, LegacyUpstream, UpstreamProvider } from "../providers/index.js";
+
+export type { GatewayEntry, LegacyUpstream, UpstreamProvider };
+
+import {
+  perGatewayEnvVar,
+  type ResolvedUpstream,
+  type ResolveResult,
+  resolveActiveUpstream,
+  resolveUpstreamDisplay,
+  type UpstreamDisplay,
+  type UpstreamDisplaySettings,
+} from "../providers/index.js";
+
+export { createGeminiToAnthropicSSE, GeminiSSETranslator } from "../providers/gemini-stream.js";
 export {
-  type CacheBustComponent,
-  type CachePrefixFingerprint,
-  type CachePrefixObservation,
-  CachePrefixObserver,
-  type CachePrefixVerdict,
-  cachePrefixFingerprint,
-  classifyPrefixChange,
-} from "./cache-prefix.js";
+  anthropicToGemini,
+  type GeminiRequest,
+  geminiPath,
+  geminiToAnthropic,
+  mapGeminiFinish,
+} from "../providers/gemini-translate.js";
+export { sniffRequestModel, stripVendorPrefix } from "../providers/model-display.js";
+export { createOpenAIToAnthropicSSE, OpenAIChatSSETranslator } from "../providers/openai-stream.js";
 export {
-  buildContextLedger,
-  type ContextBucket,
-  type ContextLargestBlock,
-  type ContextLedger,
-  type ContextLedgerCore,
-  type ContextPerTool,
-  type ContextToolDef,
-  type ContextToolsBlock,
-  contextLedgerPath,
-  contextLedgerSchema,
-  readContextLedger,
-  TOOL_ORIGINS,
-  type ToolOrigin,
-  toolOrigin,
-  writeContextLedger,
-} from "./context-ledger.js";
-export { mapUpstreamError, PROXY_ERROR_HEADER } from "./errors.js";
+  type AnthropicMessageResponse,
+  anthropicToOpenAIChat,
+  countAnthropicInputTokens,
+  countTokensResponse,
+  EmptyCompletionError,
+  emptyAnswerNotice,
+  mapStopReason,
+  type OpenAIChatMessage,
+  type OpenAIChatRequest,
+  openAIChatToAnthropic,
+  SYNTHESIZED_THINKING_LABEL,
+  UpstreamErrorResponse,
+} from "../providers/openai-translate.js";
+export { withDefaultTarget } from "../providers/target-settings.js";
 export {
-  forwardableRequestHeaders,
-  forwardableResponseHeaders,
-  isBypassRequest,
-} from "./headers.js";
-export {
-  type LimitPrediction,
-  type LimitWindow,
-  limitStatePath,
-  parseLimitPrediction,
-  readLimitState,
-  writeLimitState,
-} from "./limit-prediction.js";
+  accountsReferencedByTargets,
+  defaultTargetId,
+  defaultTrustFor,
+  listTargets,
+  resolveModel,
+  targetWarnings,
+} from "../providers/targets.js";
+export { buildContextLedger, readContextLedger, writeContextLedger } from "./context-ledger.js";
+export { parseLimitPrediction, readLimitState, writeLimitState } from "./limit-prediction.js";
 export {
   clearServedModel,
   readServedModel,
-  type ServedModel,
-  servedModelFor,
-  servedModelPath,
-  type TargetServedModel,
   writeServedModel,
   writeServedModelForTarget,
 } from "./served-model.js";
-export { GolemProxy } from "./server.js";
+export type { UpstreamDisplay, UpstreamDisplaySettings };
 export {
-  BYPASS_HEADER,
-  DEFAULT_UPSTREAM_BASE_URL,
-  identityPipeline,
-  type ProxyConfig,
-  type ProxyRequest,
-  type ProxyRoute,
-  type ProxyServerOptions,
-  type RequestPipeline,
-  type ResponseUsage,
-  type RouteResolver,
-  resolveProxyConfig,
-  type UpstreamTranslator,
+  perGatewayEnvVar,
+  type ResolvedUpstream,
+  type ResolveResult,
+  resolveActiveUpstream,
+  resolveUpstreamDisplay,
+};
+
+import type {
+  ContextBucket,
+  ContextLedger,
+  ContextToolsBlock,
+  ToolOrigin,
+} from "./context-ledger.js";
+
+export type { ContextBucket, ContextLedger, ContextToolsBlock, ToolOrigin };
+
+import type { LimitPrediction } from "./limit-prediction.js";
+
+export { getContextGuard } from "./context-guard.js";
+export { getContextMonitor, parseModelDescriptor } from "./context-monitor.js";
+export { GolemProxy } from "./server.js";
+export type {
+  ProxyRequest,
+  ProxyRoute,
+  ProxyServerOptions,
+  RequestPipeline,
+  ResponseUsage,
+  RouteResolver,
+  UpstreamTranslator,
 } from "./types.js";
-export { UsageSniffer } from "./usage-sniffer.js";
+export type { LimitPrediction };

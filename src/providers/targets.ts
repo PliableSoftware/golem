@@ -30,7 +30,10 @@
  * for, which is the one failure mode a target registry must not have.
  */
 
-import type { GatewayEntry } from "./gateways.js";
+import type { GatewayEntry, ModelDescriptor } from "./gateways.js";
+
+export type { ModelDescriptor };
+
 import {
   doubledVersionSegment,
   isTranslatingProvider,
@@ -66,8 +69,8 @@ export interface TargetEntry {
    * may share one gateway (one key backing several model ids).
    */
   readonly gateway: string;
-  /** Model id to send. Omit on a byte-faithful target to forward the client's own id. */
-  readonly model?: string;
+  /** Model id to send, optionally with context size suffix. Omit on a byte-faithful target to forward the client's own id. */
+  readonly model?: ModelDescriptor;
   /** Omit to take {@link defaultTrustFor}, which errs toward MORE redaction. */
   readonly trust?: TargetTrust;
   /**
@@ -102,6 +105,8 @@ export interface ResolvedTarget {
   readonly provider: UpstreamProvider;
   readonly baseUrl: string;
   readonly model: string | undefined;
+  /** Optional context size in tokens (e.g., 262144). */
+  readonly contextSize?: number;
   readonly authScheme: UpstreamAuthScheme;
   readonly trust: TargetTrust;
   /**
@@ -125,7 +130,7 @@ export interface TargetRegistrySettings {
   /** R9.23: renamed from `accounts`. */
   readonly gateways?: readonly GatewayEntry[];
   readonly targets?: readonly TargetEntry[];
-  readonly default_target?: string;
+  readonly model?: string;
 }
 
 /** Loopback hosts — the test for "this context never leaves the machine". */
@@ -160,6 +165,7 @@ export function defaultTrustFor(provider: UpstreamProvider, baseUrl: string): Ta
     return host !== undefined && LOOPBACK_HOSTS.has(host) ? "local" : "lan";
   }
   if (provider === "anthropic") return "vendor";
+  // NVIDIA NIM is a multi-vendor gateway (third-party aggregator)
   return "third-party";
 }
 
@@ -210,7 +216,7 @@ function toResolved(
     id,
     provider: gateway.provider,
     baseUrl: gateway.base_url,
-    model: model ?? gateway.models?.[0],
+    model: model ?? gateway.models?.[0]?.name,
     authScheme: resolveAuthScheme(gateway.provider, gateway.auth_scheme ?? "inherit"),
     trust: trust ?? defaultTrustFor(gateway.provider, gateway.base_url),
     accountId: gateway.id,
@@ -258,7 +264,9 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
   for (const gateway of settings.gateways ?? []) {
     if (gateway.models !== undefined && gateway.models.length > 0) {
       for (const model of gateway.models) {
-        rows.push(toResolved(`${gateway.id}:${model}`, gateway, model, undefined, "gateway"));
+        rows.push(
+          toResolved(`${gateway.id}:${model.name}`, gateway, model.name, undefined, "gateway"),
+        );
       }
     } else {
       // No explicit models — derive a single target from the gateway itself
@@ -273,7 +281,7 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
       // Unknown gateway reference — skip; the CLI warns at startup
       continue;
     }
-    const resolved = toResolved(entry.id, gw, entry.model, entry.trust, "target");
+    const resolved = toResolved(entry.id, gw, entry.model?.name, entry.trust, "target");
     const existing = rows.findIndex((r) => r.id === entry.id);
     if (existing >= 0) rows[existing] = resolved;
     else rows.push(resolved);
@@ -289,7 +297,7 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
  * entry in `src/config/migrations.ts`, applied by the loader — so this reads one
  * key and the rename is handled in exactly one place.
  *
- * R9.23: `default_target` may reference a gateway id (e.g. `"openrouter"`) rather
+ * R9.23: `model` may reference a gateway id (e.g. `"openrouter"`) rather
  * than a full compound target id (e.g. `"openrouter:qwen/qwen3-14b"`). It may
  * also be a bare model name (e.g. `"qwen3"`) which is resolved via
  * {@link resolveModel}. When the selector does not match any target id directly,
@@ -297,11 +305,11 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
  * backward compatibility for settings files that name a gateway.
  */
 export function resolveDefaultTargetId(settings: TargetRegistrySettings): string {
-  const raw = settings.default_target ?? defaultTargetId(settings.upstream_provider);
+  const raw = settings.model ?? defaultTargetId(settings.upstream_provider);
   // Try the raw value as a target id first (fast path for compound ids).
   // This does NOT call listTargets unconditionally to avoid an extra list pass
   // when no resolution is needed.
-  if (settings.default_target !== undefined && settings.gateways !== undefined) {
+  if (settings.model !== undefined && settings.gateways !== undefined) {
     const targets = listTargets(settings);
     if (!targets.some((t) => t.id === raw)) {
       // Raw value is not a target id — check if it's a gateway id

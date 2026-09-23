@@ -106,6 +106,12 @@ describe("proxy OpenAI-schema translation seam (R6.1 case b, b1)", () => {
     proxy = await startProxy({
       upstreamBaseUrl: `${upstream.origin}/v1`,
       translateUpstream: ollamaTranslator("/v1/chat/completions", "m"),
+      // R14.5: every response here is 429 with no retry-after, so the proxy's
+      // own rate-limit retry loop would otherwise spend real exponential
+      // backoff (1s+2s+4s) proving what this test already covers elsewhere —
+      // that the loop eventually gives up and forwards the still-429
+      // response unchanged (see proxy-routing.test.ts's retry tests).
+      rateLimitSleep: () => Promise.resolve(),
     });
     const response = await rawRequest(proxy.origin, "/v1/messages", {
       method: "POST",

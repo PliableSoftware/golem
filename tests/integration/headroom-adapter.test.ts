@@ -191,7 +191,7 @@ describe("HeadroomSidecar config passthrough (Decision 53)", () => {
 
   it("forwards a key Golem has never heard of, as long as the worker accepts it", async () => {
     // `kompress_model` is deliberately NOT referenced anywhere in Golem's TS.
-    const sc = configuredSidecar({ kompress_model: "some-model" });
+    const sc = configuredSidecar({ kompress_model: { name: "some-model" } });
     expect(await sc.start()).toBe(true);
     const result = await sc.compress(MESSAGES, "stale_turns");
     expect(result).not.toBeNull();

@@ -20,12 +20,17 @@ const legacy = {
 };
 
 const gateways: GatewayEntry[] = [
-  { id: "work", provider: "openai", base_url: "https://api.openai.com/v1", models: ["gpt-5.2"] },
+  {
+    id: "work",
+    provider: "openai",
+    base_url: "https://api.openai.com/v1",
+    models: [{ name: "gpt-5.2" }],
+  },
   {
     id: "local",
     provider: "ollama",
     base_url: "http://gpubox.lan:11434/v1",
-    models: ["qwen2.5-coder:7b"],
+    models: [{ name: "qwen2.5-coder:7b" }],
   },
 ];
 
@@ -109,7 +114,7 @@ describe("resolveUpstreamDisplay", () => {
   });
 
   it("reflects the ACTIVE gateway's provider/base/model (never a secret)", () => {
-    const d = resolveUpstreamDisplay({ ...base, default_target: "work" });
+    const d = resolveUpstreamDisplay({ ...base, model: "work" });
     expect(d).toEqual({
       accountId: "work",
       provider: "openai",
@@ -134,7 +139,7 @@ describe("resolveUpstreamDisplay", () => {
   });
 
   it("falls back to legacy + a warning for a selector in neither registry (fail-closed)", () => {
-    const d = resolveUpstreamDisplay({ ...base, default_target: "ghost" });
+    const d = resolveUpstreamDisplay({ ...base, model: "ghost" });
     expect(d.accountId).toBeNull();
     expect(d.provider).toBe("anthropic");
     expect(d.warning).toMatch(/in neither proxy\.gateways nor proxy\.targets/);

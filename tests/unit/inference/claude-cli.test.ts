@@ -54,14 +54,14 @@ const CLI_TARGET: TargetRegistrySettings = {
       id: "subscription",
       provider: "claude-cli",
       base_url: "https://api.anthropic.com",
-      models: ["claude-sonnet-5"],
+      models: [{ name: "claude-sonnet-5" }],
     },
   ],
   targets: [
     {
       id: "subscription",
       gateway: "subscription",
-      model: "claude-sonnet-5",
+      model: { name: "claude-sonnet-5" },
       trust: "vendor",
     },
   ],
