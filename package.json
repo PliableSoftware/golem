@@ -1,6 +1,6 @@
 {
   "name": "@pliable/golem",
-  "version": "0.54.2",
+  "version": "0.54.3",
   "description": "Golem — local-first proxy + unified MCP server that cuts Claude token spend and gives Claude local tools",
   "license": "Apache-2.0",
   "author": "Golem <golem@pliable.software>",
