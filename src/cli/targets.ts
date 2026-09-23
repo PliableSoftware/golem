@@ -256,7 +256,7 @@ export async function addTarget(
   const entry: TargetEntry = {
     id: input.id,
     gateway: input.gateway,
-    ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(input.model !== undefined ? { model: { name: input.model } } : {}),
     ...(input.trust !== undefined ? { trust: input.trust } : {}),
   };
   // writeSetting validates the WHOLE array against the targets leaf schema.

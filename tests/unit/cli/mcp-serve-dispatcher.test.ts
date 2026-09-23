@@ -73,7 +73,7 @@ function settingsWith(overrides: {
           id: "openrouter",
           provider: "openrouter",
           base_url: "https://openrouter.ai/api/v1",
-          models: ["openai/gpt-oss-20b:free"],
+          models: [{ name: "openai/gpt-oss-20b:free" }],
         },
       ],
     },

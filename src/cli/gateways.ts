@@ -25,6 +25,7 @@ import {
   isSpawnProvider,
   isTranslatingProvider,
   listTargets,
+  type ModelDescriptor,
 } from "../providers/index.js";
 import { clearServedModel } from "../proxy/index.js";
 import { logoutGateway } from "./gateways/credentials.js";
@@ -158,7 +159,7 @@ export interface NewGateway {
   readonly id: string;
   readonly provider: RegistryGateway["provider"];
   readonly base_url: string;
-  readonly models?: readonly string[];
+  readonly models?: readonly ModelDescriptor[];
   readonly auth_scheme?: RegistryGateway["auth_scheme"];
 }
 

@@ -90,7 +90,7 @@ describe("proxy request outcomes (R11.7)", () => {
     const response = await rawRequest(proxy.origin, "/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-fixture": fixture },
-      body: JSON.stringify({ model: "claude-opus-5", messages: [] }),
+      body: JSON.stringify({ model: { name: "claude-opus-5" }, messages: [] }),
     });
     return response.body;
   };

@@ -55,7 +55,7 @@ describe("local-answer sub-mode through the proxy (R2.3)", () => {
     });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [{ role: "user", content: "how do I deploy this?" }],
       });
       const res = await rawRequest(proxy.origin, "/v1/messages", {
@@ -90,7 +90,7 @@ describe("local-answer sub-mode through the proxy (R2.3)", () => {
     });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         stream: true,
         messages: [{ role: "user", content: "how do I deploy this?" }],
       });
@@ -131,7 +131,7 @@ describe("local-answer sub-mode through the proxy (R2.3)", () => {
     });
     try {
       const body = JSON.stringify({
-        model: "claude-x",
+        model: { name: "claude-x" },
         messages: [
           { role: "user", content: "how do I deploy this?" },
           { role: "assistant", content: "which environment?" },

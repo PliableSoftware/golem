@@ -30,7 +30,10 @@
  * for, which is the one failure mode a target registry must not have.
  */
 
-import type { GatewayEntry } from "./gateways.js";
+import type { GatewayEntry, ModelDescriptor } from "./gateways.js";
+
+export type { ModelDescriptor };
+
 import {
   doubledVersionSegment,
   isTranslatingProvider,
@@ -66,8 +69,8 @@ export interface TargetEntry {
    * may share one gateway (one key backing several model ids).
    */
   readonly gateway: string;
-  /** Model id to send. Omit on a byte-faithful target to forward the client's own id. */
-  readonly model?: string;
+  /** Model id to send, optionally with context size suffix. Omit on a byte-faithful target to forward the client's own id. */
+  readonly model?: ModelDescriptor;
   /** Omit to take {@link defaultTrustFor}, which errs toward MORE redaction. */
   readonly trust?: TargetTrust;
   /**
@@ -102,6 +105,8 @@ export interface ResolvedTarget {
   readonly provider: UpstreamProvider;
   readonly baseUrl: string;
   readonly model: string | undefined;
+  /** Optional context size in tokens (e.g., 262144). */
+  readonly contextSize?: number;
   readonly authScheme: UpstreamAuthScheme;
   readonly trust: TargetTrust;
   /**
@@ -211,7 +216,7 @@ function toResolved(
     id,
     provider: gateway.provider,
     baseUrl: gateway.base_url,
-    model: model ?? gateway.models?.[0],
+    model: model ?? gateway.models?.[0]?.name,
     authScheme: resolveAuthScheme(gateway.provider, gateway.auth_scheme ?? "inherit"),
     trust: trust ?? defaultTrustFor(gateway.provider, gateway.base_url),
     accountId: gateway.id,
@@ -259,7 +264,9 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
   for (const gateway of settings.gateways ?? []) {
     if (gateway.models !== undefined && gateway.models.length > 0) {
       for (const model of gateway.models) {
-        rows.push(toResolved(`${gateway.id}:${model}`, gateway, model, undefined, "gateway"));
+        rows.push(
+          toResolved(`${gateway.id}:${model.name}`, gateway, model.name, undefined, "gateway"),
+        );
       }
     } else {
       // No explicit models — derive a single target from the gateway itself
@@ -274,7 +281,7 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
       // Unknown gateway reference — skip; the CLI warns at startup
       continue;
     }
-    const resolved = toResolved(entry.id, gw, entry.model, entry.trust, "target");
+    const resolved = toResolved(entry.id, gw, entry.model?.name, entry.trust, "target");
     const existing = rows.findIndex((r) => r.id === entry.id);
     if (existing >= 0) rows[existing] = resolved;
     else rows.push(resolved);

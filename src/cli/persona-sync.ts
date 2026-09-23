@@ -27,7 +27,7 @@ import { loadConfig } from "../config/index.js";
 import { resolveCoderPrompt } from "../inference/coder-prompt.js";
 import { resolvePersonaLane } from "../inference/persona-lane.js";
 import { effectivePersonas, resolvePersonaPrompt } from "../inference/personas.js";
-import { withDefaultTarget } from "../providers/index.js";
+import { withDefaultTarget } from "../providers/target-settings.js";
 import type { InitAction } from "./init.js";
 import { type DesiredAgent, installPersonaAgents, personaAgentPath } from "./init-personas.js";
 import { rel } from "./json-file.js";

@@ -63,7 +63,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("writes the rule once at least one persona resolves to the agent lane", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     const report = await golemInit({ projectDir, probe: okProbe });
 
     const content = await readRule();
@@ -99,7 +101,11 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
     await writeGolemSettings({
       inference: {
         personas: {
-          coder: { model: "claude-sonnet-5", discipline: "code", description: "Writes code." },
+          coder: {
+            model: "claude-sonnet-5",
+            discipline: "code",
+            description: "Writes code.",
+          },
         },
       },
     });
@@ -131,11 +137,16 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
             id: "openrouter",
             provider: "openrouter",
             base_url: "https://openrouter.ai/api/v1",
-            models: ["qwen/qwen3.7-flash"],
+            models: [{ name: "qwen/qwen3.7-flash" }],
           },
         ],
         targets: [
-          { id: "cheap", gateway: "openrouter", model: "qwen/qwen3.7-flash", trust: "third-party" },
+          {
+            id: "cheap",
+            gateway: "openrouter",
+            model: { name: "qwen/qwen3.7-flash" },
+            trust: "third-party",
+          },
         ],
       },
       inference: {
@@ -155,7 +166,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("updates content when the staffed set changes", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     await golemInit({ projectDir, probe: okProbe });
     expect(await readRule()).not.toContain("golem-scribe");
 
@@ -173,7 +186,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("is deterministic — a second init reports `skip`, not a rewrite", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     await golemInit({ projectDir, probe: okProbe });
     const first = await readRule();
 
@@ -183,7 +198,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("removes the rule when the set of agent-lane personas becomes empty", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     await golemInit({ projectDir, probe: okProbe });
     expect(await readRule()).not.toBeNull();
 
@@ -194,7 +211,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("KEEPS a user-edited rule and reports a conflict (R9.5 provenance)", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     await golemInit({ projectDir, probe: okProbe });
 
     const edited = `${await readRule()}\n\nMy own house rule.\n`;
@@ -215,7 +234,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("does NOT delete a user-edited rule when the roster becomes empty either", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     await golemInit({ projectDir, probe: okProbe });
     const edited = `${await readRule()}\n\nEdited.\n`;
     await writeFile(path.join(projectDir, RULE_REL), edited, "utf8");
@@ -228,7 +249,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("dry-run makes no filesystem changes", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     const report = await golemInit({ projectDir, probe: okProbe, dryRun: true });
 
     expect(await readRule()).toBeNull();
@@ -236,7 +259,9 @@ describe("golem init — the golem-prefer-persona-agents rule", () => {
   });
 
   it("uninit removes it", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     await golemInit({ projectDir, probe: okProbe });
     expect(await readRule()).not.toBeNull();
 

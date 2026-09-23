@@ -20,12 +20,17 @@ const legacy = {
 };
 
 const gateways: GatewayEntry[] = [
-  { id: "work", provider: "openai", base_url: "https://api.openai.com/v1", models: ["gpt-5.2"] },
+  {
+    id: "work",
+    provider: "openai",
+    base_url: "https://api.openai.com/v1",
+    models: [{ name: "gpt-5.2" }],
+  },
   {
     id: "local",
     provider: "ollama",
     base_url: "http://gpubox.lan:11434/v1",
-    models: ["qwen2.5-coder:7b"],
+    models: [{ name: "qwen2.5-coder:7b" }],
   },
 ];
 

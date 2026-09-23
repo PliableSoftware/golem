@@ -1,10 +1,14 @@
 {
-  "name": "golem-run",
+  "name": "@pliable/golem",
   "version": "0.54.2",
-  "description": "Golem (golem.run) — local-first proxy + unified MCP server that cuts Claude token spend and gives Claude local tools",
+  "description": "Golem — local-first proxy + unified MCP server that cuts Claude token spend and gives Claude local tools",
   "license": "Apache-2.0",
-  "author": "Golem <paul.clarke@golem.run>",
+  "author": "Golem <golem@pliable.software>",
   "homepage": "https://golem.run",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PliableSoftware/golem.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"

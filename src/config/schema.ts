@@ -180,7 +180,35 @@ export const SETTINGS_LEAVES = {
           id: z.string().min(1),
           provider: z.enum(UPSTREAM_PROVIDERS),
           base_url: z.string().url(),
-          models: z.array(z.string().min(1)).optional(),
+          models: z
+            .array(
+              z.union([
+                z.string(),
+                z.object({
+                  name: z.string().min(1),
+                  contextSize: z.number().int().positive().optional(),
+                }),
+              ]),
+            )
+            .transform((arr) =>
+              arr.map((m) => {
+                if (typeof m === "string") {
+                  // Parse string like "model[262k]" or "model"
+                  const match = m.match(/^(.+?)(?:\[(\d+)\])?$/);
+                  if (!match) {
+                    // If parsing fails, treat as name only
+                    return { name: m };
+                  }
+                  const [, name, contextSizeStr] = match;
+                  return {
+                    name,
+                    contextSize: contextSizeStr ? parseInt(contextSizeStr, 10) : undefined,
+                  };
+                }
+                return m;
+              }),
+            )
+            .optional(),
           auth_scheme: z.enum(UPSTREAM_AUTH_SCHEMES).optional(),
           /** Additional headers to include when forwarding to this gateway (e.g. Accept for NVIDIA NIM streaming). */
           extra_headers: z.array(z.tuple([z.string().min(1), z.string()])).optional(),
@@ -219,7 +247,12 @@ export const SETTINGS_LEAVES = {
         z.object({
           id: z.string().min(1),
           gateway: z.string().min(1),
-          model: z.string().min(1).optional(),
+          model: z
+            .object({
+              name: z.string().min(1),
+              contextSize: z.number().int().positive().optional(),
+            })
+            .optional(),
           trust: z.enum(TARGET_TRUST_LEVELS).optional(),
           agent_selectable: z.boolean().optional(),
         }),

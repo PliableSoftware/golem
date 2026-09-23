@@ -105,7 +105,9 @@ describe("startPersonaWatcher e2e smoke", () => {
   it("notices a real settings.json edit, regenerates golem-coder.md, and stops cleanly on close()", async () => {
     // 1. A real project, with the coder persona staffed — same shape
     // tests/integration/cli-init-coder-agent.test.ts already establishes.
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     await golemInit({ projectDir, probe: fakeProbe });
     expect(await readAgent()).toContain("model: claude-sonnet-5");
 
@@ -126,7 +128,9 @@ describe("startPersonaWatcher e2e smoke", () => {
       // "claude-sonnet-5" so the mtimeMs:size change signal moves even under
       // coarse filesystem mtime resolution (same reasoning the unit test's
       // own header comment gives for picking distinct-length values).
-      await writeGolemSettings({ inference: { personas: { coder: { model: "claude-opus-5" } } } });
+      await writeGolemSettings({
+        inference: { personas: { coder: { model: "claude-opus-5" } } },
+      });
 
       // 4. Poll the actual artifact, not a fixed sleep, for the new model to
       // land — this is the real end-to-end assertion.

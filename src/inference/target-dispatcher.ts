@@ -771,16 +771,18 @@ export function selectTarget(
     return { id: request.targetId, route: "explicit" };
   }
   // First check deprecated worker_targets, then personas[worker].model
-  const fromWorker =
+  const fromWorkerRaw =
     request.worker !== undefined
       ? workerTarget(options.workerTargets, request.worker, options.personas)
       : undefined;
+  const fromWorker = fromWorkerRaw === "" ? undefined : fromWorkerRaw;
   if (fromWorker !== undefined) return { id: fromWorker, route: "worker" };
 
-  const fromPersonaWorker =
+  const fromPersonaWorkerRaw =
     request.worker !== undefined
       ? workerTargetFromPersona(options.personas ?? {}, request.worker)
       : undefined;
+  const fromPersonaWorker = fromPersonaWorkerRaw === "" ? undefined : fromPersonaWorkerRaw;
   if (fromPersonaWorker !== undefined) return { id: fromPersonaWorker, route: "persona_worker" };
 
   const configured = options.settings.model;

@@ -116,7 +116,11 @@ describe("per-persona-id merging", () => {
     await writeJson(projectFile(), {
       inference: {
         personas: {
-          reviewer: { discipline: "review", description: "reads code as code", model: "opus" },
+          reviewer: {
+            discipline: "review",
+            description: "reads code as code",
+            model: "opus",
+          },
         },
       },
     });

@@ -209,6 +209,23 @@ export class GolemProxy {
       return;
     }
 
+    // Statusline endpoint — returns Golem state as JSON for the CLI statusline tool
+    if (req.url === "/__golem/statusline" && req.method === "GET") {
+      try {
+        // Import collectGolemState from the statusline module
+        // Note: We use dynamic import to avoid circular deps at bundle time
+        const { collectGolemState } = await import("../cli/statusline.js");
+        const state = await collectGolemState(process.cwd());
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(state));
+      } catch (_err) {
+        // On error, return minimal state to avoid breaking the statusline
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({}));
+      }
+      return;
+    }
+
     // Low-latency streaming: disable Nagle on the client socket.
     res.socket?.setNoDelay(true);
 

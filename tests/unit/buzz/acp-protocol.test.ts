@@ -54,7 +54,9 @@ function workerLaneSettings(): Record<string, unknown> {
       gateways: [
         { id: "vendorgw", provider: "anthropic", base_url: "https://api.example.invalid" },
       ],
-      targets: [{ id: "cheap", gateway: "vendorgw", model: "cheap-sonnet", trust: "vendor" }],
+      targets: [
+        { id: "cheap", gateway: "vendorgw", model: { name: "cheap-sonnet" }, trust: "vendor" },
+      ],
     },
     inference: { personas: { echo: { model: "cheap" } } },
   };

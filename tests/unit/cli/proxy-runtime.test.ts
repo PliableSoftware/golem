@@ -115,7 +115,7 @@ describe("buildProxyFromSettings — resolved-upstream reporting", () => {
               id: "openrouter-laguna",
               provider: "openrouter",
               base_url: "https://openrouter.ai/api/v1",
-              models: ["poolside/laguna-s-2.1:free"],
+              models: [{ name: "poolside/laguna-s-2.1:free" }],
               auth_scheme: "bearer",
             },
           ],
