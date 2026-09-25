@@ -1,7 +1,7 @@
 ---
 task: DUST1.6
 title: "Dust audit — inference, personas and local models: classify every documented claim against the code"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: review
@@ -10,7 +10,7 @@ gate: "`docs/plan/audit/dust-1/DUST1.6.md` exists on branch `dust/DUST1.6` and c
 depends_on: []
 touches: [docs/plan/audit/dust-1]
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-25T23:34:55.302Z
 ---
 
 ## Why this exists
@@ -73,3 +73,7 @@ Do not open a PR; DUST1.12 collects the branches.
 - Any edit to code, tests, wiki, spec, ADRs, ROADMAP or other task docs
 - Writing new task docs for gaps (Phase 2 does that from this note)
 - Fixing drift you find, however small
+
+## Outcome
+
+audit complete, see docs/plan/audit/dust-1/SUMMARY.md

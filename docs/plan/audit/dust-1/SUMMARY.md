@@ -42,6 +42,8 @@ not filled in:
 | DUST1.2, 1.3, 1.4, 1.9, 1.10, 1.11 | Ran no tests, because their worktrees had no `node_modules`. The "test evidence" cells mean the test was read, not that it passed. DUST1.6 ran a targeted suite (22 files, 292 tests, exit 0). DUST1.1, 1.5, 1.7 and 1.8 probed specific behaviour with scratch scripts |
 | DUST1.7, DUST1.8 | Both note that the main checkout (`D:\Personal\Repos\Golem`) holds **uncommitted** edits that flip `snooze.enforce` and `snooze.spawn_gate` to default `false` (`src/config/schema.ts`, `src/hooks/guidance.ts` and two regenerated rules). They were still uncommitted when this summary was written. DUST1.7 classified against both states, and DUST1.8 against the committed one |
 | DUST1.10 | Did not read the portal repo. Portal-side claims are in its Unverifiable section |
+| DUST1.11 | Line 209 (WIKI.md index integrity, the unlisted-pages list) contains a literal `[REDACTED:high-entropy:N].md` where the auditor copied a page name that its session's redaction had replaced. The page is `syntheses/r6-multi-provider-batch.md`. Row 66 on disk carries the real name. The note is left as written |
+| DUST1.1 | Line 125 quotes a placeholder (`[REDACTED:k:1]`) on purpose, as example output. Not an artifact |
 | all but 1.6, 1.8 | **14 audit commits carry a literal `[REDACTED:email:N]` in their `Co-Authored-By` trailer.** The session's redaction replaced the attribution address before the agents saw it (DUST1.1 recorded this). By branch: 1.1 ×3, 1.2 ×2, 1.4 ×2, 1.5 ×2, and 1.3, 1.7, 1.9, 1.10, 1.11 ×1 each. Cosmetic, but it is in history once merged |
 
 ## Counts
@@ -748,8 +750,8 @@ These are not table rows. DUST1.11 (and DUST1.4 and DUST1.7) reported them separ
 
 - **WIKI.md index.** Six pages are unlisted: `concepts/Context Ledger.md`,
   `concepts/Hosted-multi-turn-claude-CLI-spike.md`, `concepts/Plan Tasks.md`,
-  `questions/wiki-write-autonomy.md`, `syntheses/le2-grounded-refined-coder-quality.md`, and one
-  `syntheses/r6-multi-provider…` page. Ten descriptions are stale, including `:132`, which calls
+  `questions/wiki-write-autonomy.md`, `syntheses/le2-grounded-refined-coder-quality.md`, and
+  `syntheses/r6-multi-provider-batch.md`. Ten descriptions are stale, including `:132`, which calls
   ADR-0003 PROPOSED and omits ADR-0004–0008. `golem wiki check` flags only unlisted debriefs, so
   none of this fails lint (DUST1.11).
 - **Dangling `sources:`.** The Wiki-First page cites `docs/plan/proposals/wiki-knowledge-pivot.md`.
