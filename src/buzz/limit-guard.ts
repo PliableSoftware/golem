@@ -33,19 +33,13 @@
 import { decideSnoozeNudge, type SnoozeNudgeState } from "../hooks/snooze-nudge.js";
 import type { RateLimitedError } from "../inference/target-dispatcher.js";
 import type { LimitPrediction } from "../proxy/limit-prediction.js";
+import { decideRetry, MAX_RETRY_ATTEMPTS, RETRY_BUDGET_MS } from "../proxy/rate-limit-retry.js";
 
-/**
- * A short wait is worth holding the turn open for; a long one is not.
- *
- * 60s is comfortably inside `BUZZ_ACP_IDLE_TIMEOUT`'s 620s default (so a
- * streamed keepalive chunk before/after the wait is plenty to avoid the idle
- * cancel) and is the goose-shaped behaviour for ordinary per-minute
- * throttling (`block/goose` defaults to 3 tries / 1s / ×2). Above it, a turn
- * cannot outlive the wait — Anthropic's 5h window is nowhere close to
- * `BUZZ_ACP_MAX_TURN_DURATION` (7200s) — so deferring is the only honest
- * option.
- */
-export const RETRY_BUDGET_MS = 60_000;
+// R14.5: the retry-vs-give-up MATH (budget, backoff, attempt cap) moved to
+// `../proxy/rate-limit-retry.js` so the proxy's own retry loop shares it
+// instead of reimplementing it. Re-exported here so this module's existing
+// importers (this file's own tests included) see no change.
+export { MAX_RETRY_ATTEMPTS, RETRY_BUDGET_MS };
 
 /** Proceed with dispatch — the only verdict that ends without a caller reaction. */
 export type ProceedVerdict = { readonly kind: "proceed" };
@@ -71,9 +65,6 @@ export type DeferVerdict = {
  * produce.
  */
 export type LimitVerdict = ProceedVerdict | RetryVerdict | DeferVerdict;
-
-/** Bound the number of in-turn retries even when every wait reports as short. */
-export const MAX_RETRY_ATTEMPTS = 3;
 
 /**
  * Pre-flight: read before dispatch starts. Wraps `decideSnoozeNudge` — see its
@@ -127,17 +118,11 @@ export function decideInFlight(
   attempt: number,
   nowMs: number,
 ): RetryVerdict | DeferVerdict {
-  if (attempt > MAX_RETRY_ATTEMPTS) {
-    return deferFrom(err, nowMs, `exhausted ${MAX_RETRY_ATTEMPTS} in-turn retries`);
+  const decision = decideRetry(err, attempt);
+  if (decision.kind === "retry") {
+    return { kind: "retry", afterMs: decision.afterMs, attempt };
   }
-
-  const afterMs =
-    err.retryAfterSeconds !== null ? err.retryAfterSeconds * 1000 : 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s, ... when the server gave no hint
-
-  if (afterMs <= RETRY_BUDGET_MS) {
-    return { kind: "retry", afterMs, attempt };
-  }
-  return deferFrom(err, nowMs, `retry-after ${Math.round(afterMs / 1000)}s exceeds the budget`);
+  return deferFrom(err, nowMs, decision.reason);
 }
 
 /** A conservative fallback used only when neither the response nor the prediction gives a reset. */

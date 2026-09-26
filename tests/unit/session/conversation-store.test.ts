@@ -45,7 +45,7 @@ describe("LocalConversationStore — redaction before write", () => {
     await store.appendTurn("conv-1", {
       role: "user",
       content: `here is my token: ${secret}`,
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: "2026-09-20T00:00:00.000Z",
     });
 
     const record = await store.readConversation("conv-1");
@@ -61,12 +61,12 @@ describe("LocalConversationStore — redaction before write", () => {
     await store.appendTurn("conv-2", {
       role: "user",
       content: "hello",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: "2026-09-20T00:00:00.000Z",
     });
     await store.appendTurn("conv-2", {
       role: "assistant",
       content: `token: ${secret}`,
-      timestamp: "2026-08-22T00:01:00.000Z",
+      timestamp: "2026-09-20T00:01:00.000Z",
     });
 
     const record = await store.readConversation("conv-2");
@@ -82,12 +82,12 @@ describe("LocalConversationStore — restart round-trip (the seam, not just the 
     await first.appendTurn("conv-3", {
       role: "user",
       content: "what does this repo do?",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: "2026-09-20T00:00:00.000Z",
     });
     await first.appendTurn("conv-3", {
       role: "assistant",
       content: "it is a local-first pre-LLM processing layer.",
-      timestamp: "2026-08-22T00:01:00.000Z",
+      timestamp: "2026-09-20T00:01:00.000Z",
     });
 
     // A restart is a brand-new process: nothing but the on-disk files
@@ -111,7 +111,7 @@ describe("LocalConversationStore — bounded by count", () => {
       await store.appendTurn(ids[i] as string, {
         role: "user",
         content: `turn ${i}`,
-        timestamp: `2026-08-22T00:0${i}:00.000Z`,
+        timestamp: `2026-09-20T00:0${i}:00.000Z`,
       });
     }
 
@@ -162,12 +162,12 @@ describe("LocalConversationStore — forget", () => {
     await store.appendTurn("keep", {
       role: "user",
       content: "hi",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: "2026-09-20T00:00:00.000Z",
     });
     await store.appendTurn("drop", {
       role: "user",
       content: "bye",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: "2026-09-20T00:00:00.000Z",
     });
 
     expect(await store.forget("drop")).toBe(true);
@@ -181,12 +181,12 @@ describe("LocalConversationStore — forget", () => {
     await store.appendTurn("one", {
       role: "user",
       content: "a",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: "2026-09-20T00:00:00.000Z",
     });
     await store.appendTurn("two", {
       role: "user",
       content: "b",
-      timestamp: "2026-08-22T00:00:00.000Z",
+      timestamp: "2026-09-20T00:00:00.000Z",
     });
 
     await store.forgetAll();

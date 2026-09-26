@@ -68,12 +68,17 @@ function settings(): TargetRegistrySettings & { map_reasoning_to_thinking: boole
     upstream_auth_scheme: "inherit",
     map_reasoning_to_thinking: true,
     gateways: [
-      { id: "alpha", provider: "anthropic", base_url: alpha.url, models: ["claude-alpha"] },
-      { id: "beta", provider: "anthropic", base_url: beta.url, models: ["claude-beta"] },
+      {
+        id: "alpha",
+        provider: "anthropic",
+        base_url: alpha.url,
+        models: [{ name: "claude-alpha" }],
+      },
+      { id: "beta", provider: "anthropic", base_url: beta.url, models: [{ name: "claude-beta" }] },
     ],
     targets: [
-      { id: "alpha", gateway: "alpha", model: "claude-alpha" },
-      { id: "beta", gateway: "beta", model: "claude-beta" },
+      { id: "alpha", gateway: "alpha", model: { name: "claude-alpha" } },
+      { id: "beta", gateway: "beta", model: { name: "claude-beta" } },
     ],
     model: "alpha",
   };
@@ -175,11 +180,16 @@ describe("multi-target proxy routing (R9.2)", () => {
     // `golem/modelless` is exactly the failure the rewrite exists to prevent.
     const { base } = await startProxy({
       gateways: [
-        { id: "alpha", provider: "anthropic", base_url: alpha.url, models: ["claude-alpha"] },
+        {
+          id: "alpha",
+          provider: "anthropic",
+          base_url: alpha.url,
+          models: [{ name: "claude-alpha" }],
+        },
         { id: "modelless", provider: "anthropic", base_url: beta.url },
       ],
       targets: [
-        { id: "alpha", gateway: "alpha", model: "claude-alpha" },
+        { id: "alpha", gateway: "alpha", model: { name: "claude-alpha" } },
         { id: "modelless", gateway: "modelless" },
       ],
     });

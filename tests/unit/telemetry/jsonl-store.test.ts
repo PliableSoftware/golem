@@ -4,7 +4,7 @@
  */
 
 import { appendFile, readFile, stat, writeFile } from "node:fs/promises";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEvent } from "../../../src/telemetry/index.js";
 import {
   JsonlTelemetryStore,
@@ -18,6 +18,51 @@ import {
   telemetryStatsSource,
 } from "../../../src/telemetry/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
+
+/**
+ * R14.6's regression test injects a write at a precise point in whichever
+ * mechanism reads the current telemetry file — the only way to force a
+ * microseconds-wide TOCTOU race deterministically instead of hoping enough
+ * concurrent runs happen to land in it. Two hooks, because the bug's fix
+ * changed which one that is: the OLD, buggy `#fullReparseAggregate` read via
+ * plain `readFile` and stat'd the file AFTERWARD (landing a write right
+ * after that read is exactly the gap it fell into); the FIX stats FIRST and
+ * reads the current file via a bounded `createReadStream` instead, so its
+ * own read no longer goes through `readFile` at all. Hooking only one of the
+ * two would make this test blind to whichever code shape isn't using it.
+ * `vi.spyOn` can't touch a live ESM binding, so both go through `vi.mock`,
+ * each defaulting to a no-op passthrough for every other test in this file.
+ */
+// May return a promise to await. The `readFile` wrapper (async already) awaits
+// it, so the OLD code's very next line — a `stat()` call it trusts to reflect
+// reality — reliably sees the injected write. `createReadStream` cannot await
+// (it must return synchronously); the NEW code's bounded read does not need
+// to, since its correctness does not depend on exactly when the write lands —
+// the test itself awaits the returned promise before checking further.
+let readHook: ((path: unknown) => Promise<void> | void) | undefined;
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      const result = await actual.readFile(...args);
+      await readHook?.(args[0]);
+      return result;
+    },
+  };
+});
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    createReadStream: (path: Parameters<typeof actual.createReadStream>[0], ...rest: unknown[]) => {
+      readHook?.(path);
+      return (
+        actual.createReadStream as (...a: unknown[]) => ReturnType<typeof actual.createReadStream>
+      )(path, ...rest);
+    },
+  };
+});
 
 let dir: string;
 
@@ -728,5 +773,78 @@ describe("aggregate() rollup cache + rotation", () => {
     expect(second.requests).toBe(1);
     expect(second.ccrRefsStored).toBe(9);
     await store.close();
+  });
+
+  it("a full reparse's checkpoint never claims more than it actually folded, even racing a concurrent append (R14.6)", async () => {
+    // Regression for a real bug, not a hypothetical: #fullReparseAggregate used
+    // to stat() the file AFTER reading it and checkpoint THAT (later, possibly
+    // larger) size against totals computed from the EARLIER read. A write
+    // landing in that gap produced a checkpoint like {offset: <full size>,
+    // totals: <missing the new write>} — and because the incremental path
+    // trusts `entry.offset` as its next read-from watermark, that event was
+    // never re-read: aggregate() reported the stale total FOREVER, not just
+    // briefly. Confirmed against a real repro (60 concurrent project dirs,
+    // each doing exactly a record/record/aggregate sequence): ~3% of runs got
+    // permanently stuck one retrieval short. That race is microseconds wide
+    // and too timing-sensitive to trust as an automated regression check (it
+    // did not reproduce reliably even under 150-way concurrency here), so
+    // this test forces the EXACT interleaving deterministically instead: the
+    // `readFile` hook (see top of file) appends the second event immediately
+    // after the reparse's read of the current file resolves — reproducing
+    // the historical bug's window on unpatched code, and proving the fix
+    // (which stats BEFORE reading and bounds the read to that snapshot) is
+    // unaffected by a write landing there.
+    const store = new JsonlTelemetryStore(dir);
+    // recordRetrieval, not store.record(ev()) — mirrors the actual bug
+    // (mcp-compression.ts's fire-and-forget retrieve() writes, T1 §25).
+    await recordRetrieval(store, "projA", "2026-07-04T00:00:00.000Z");
+
+    const file = telemetryFilePath(dir);
+    let injected = false;
+    let injectPromise: Promise<void> | undefined;
+    readHook = (path) => {
+      if (injected || path !== file) return undefined;
+      injected = true;
+      // Land the second write right when the current file's read starts —
+      // exactly the gap the old (post-read stat) code could fall into, or
+      // the fix's own pre-read stat + bounded read is meant to survive.
+      injectPromise = appendFile(
+        file,
+        `${JSON.stringify({
+          ts: "2026-07-04T00:00:01.000Z",
+          projectId: "projA",
+          level: 0,
+          kind: "retrieval",
+          stageSavings: {},
+          ccrRefsStored: 0,
+          ccrRefsRetrieved: 1,
+        })}\n`,
+        "utf8",
+      );
+      return injectPromise;
+    };
+
+    try {
+      // No rollup exists yet, so this takes the full-reparse path; the hook
+      // injects the second write right as the current file's read starts.
+      const duringRace = await store.aggregate("projA");
+      // Not the assertion — a reparse racing a write may honestly see either
+      // 1 or 2 events at this exact instant, and both are legitimate.
+      expect([1, 2]).toContain(duringRace.ccrRefsRetrieved);
+      await injectPromise; // make sure the injected write actually landed
+
+      // The assertion: now that the second write is unambiguously on disk,
+      // a follow-up aggregate() must report the TRUE total. Under the bug,
+      // the racing call above could poison the rollup with a checkpoint
+      // claiming the post-write2 file size against pre-write2 totals — and
+      // the incremental path, trusting that offset as its next read-from
+      // watermark, would then read PAST write2 (already "accounted for")
+      // and stay stuck at 1 forever.
+      const after = await store.aggregate("projA");
+      expect(after.ccrRefsRetrieved).toBe(2);
+    } finally {
+      readHook = undefined;
+      await store.close();
+    }
   });
 });

@@ -79,19 +79,29 @@ describe("resolveDesiredAgents", () => {
   it("excludes a WORKER-lane persona — Golem dispatches that itself, no definition", async () => {
     await writeSettings({
       proxy: {
+        upstream_provider: "anthropic",
+        upstream_base_url: "https://api.anthropic.com",
+        upstream_auth_scheme: "inherit",
         gateways: [
           {
             id: "openrouter",
             provider: "openrouter",
             base_url: "https://openrouter.ai/api/v1",
-            models: ["qwen/qwen3.7-flash"],
+            models: [{ name: "qwen/qwen3.7-flash" }],
           },
         ],
         targets: [
-          { id: "cheap", gateway: "openrouter", model: "qwen/qwen3.7-flash", trust: "third-party" },
+          {
+            id: "cheap",
+            gateway: "openrouter",
+            model: { name: "qwen/qwen3.7-flash" },
+            trust: "third-party",
+          },
         ],
       },
-      inference: { personas: { triage: { model: "cheap" } } },
+      inference: {
+        personas: { triage: { model: "cheap" } },
+      },
     });
     const { desired, problems } = await resolveDesiredAgents(projectDir);
     expect(desired).toEqual([]);

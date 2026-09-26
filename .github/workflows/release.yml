@@ -17,8 +17,8 @@ name: Release
 #   3. binaries      — cross-compile all standalone targets with Bun (one host)
 #   4. assets        — npm tarball + config-schema.json (portable, no machine state)
 #   5. release       — create the tag and the GitHub Release, attach everything
-#   6. notify-portal — OIDC-authenticated webhook; inert without PORTAL_WEBHOOK_URL
-#   7. npm-publish   — OPTIONAL, skipped unless the NPM_TOKEN secret is set
+#   6. notify-portal — OIDC-authenticated webhook; PAUSED — see that job's own comment
+#   7. npm-publish   — always runs; publishes via npm's OIDC Trusted Publisher flow
 #   8. vscode-publish— OPTIONAL, skipped unless the VSCE_PAT secret is set
 #
 # Every asset here is load-bearing for golem.run: the portal redirects
@@ -305,6 +305,14 @@ jobs:
   # repository VARIABLE now, not a secret. A URL is not a secret, and storing it
   # as one makes it invisible in the log exactly when you want to read it.
   # Contract (portal side): docs/wiki/concepts/Portal Install Contract.md.
+  #
+  # PAUSED as of the PliableSoftware/golem move (v0.54.3): the portal's OIDC
+  # check still hardcodes `repository must be cloudcatalyst/golem`, so every
+  # call 401s from the portal's side — this workflow's own OIDC claims are
+  # correct (`workflow_ref` tracks `github.repository` dynamically, see the
+  # step below). Paused by clearing the `PORTAL_WEBHOOK_URL` repo variable
+  # (the job is inert without it, by design — nothing here was edited to pause
+  # it). Re-set that variable once the portal accepts the new repo slug.
   notify-portal:
     name: Notify the portal (optional)
     needs: [resolve, release]
@@ -452,33 +460,26 @@ jobs:
           echo "::error::portal did not accept the release webhook after 3 attempts — the release IS published; the portal may be serving a stale schema."
           exit 1
 
-  # Publishing requires an explicit OPT-IN, not merely a secret that exists.
-  #
-  # This job used to fire whenever `NPM_TOKEN` was non-empty, which treated "a
-  # secret is configured" as a proxy for "we intend to publish". Those came
-  # apart immediately: a token was present but did not authenticate, so v0.50.0
-  # and v0.51.0 both published a complete, correct release and then reported
-  # FAILURE on this job. A run that is expected to be red is not a signal, it is
-  # training — and the same predicate-as-proxy mistake R13.11 recorded for
-  # `inherit` auth.
-  #
-  # So the gate is now a repository VARIABLE (not a secret, because it is not
-  # one): publishing happens when `vars.NPM_PUBLISH == 'true'` AND a token is
-  # present. Set the variable when the token is real. Until then the step skips,
-  # the job succeeds, and the release is still complete — the tarball is
-  # attached to the Release either way, so nothing is lost by not publishing.
-  #
-  # Deliberately NOT `continue-on-error`: that would hide a genuine publish
-  # failure in the one workflow whose whole job is to be trustworthy.
+  # No longer optional — every release publishes to npm. This used to gate on
+  # `vars.NPM_PUBLISH` plus an `NPM_TOKEN` secret, which had already gone wrong
+  # once: a token was present but did not authenticate, so v0.50.0 and v0.51.0
+  # both published a complete, correct release and then reported FAILURE on
+  # this job. Folded in from the standalone `publish.yml` (deleted — a second
+  # workflow publishing the same package was the drift risk, not a safety net),
+  # which used npm's OIDC Trusted Publisher flow instead of a static token:
+  # `id-token: write` mints a short-lived OIDC token npm exchanges for a publish
+  # grant, scoped to this exact repo + workflow, so there is no npm secret to
+  # rotate or leak. `--provenance` attaches the same attestation npm's own
+  # provenance UI shows. No separate `npm test` here — this job only runs after
+  # `ci` (shared with every PR) has already passed, so re-running the suite
+  # would just spend the same result twice.
   npm-publish:
-    name: Publish to npm (opt-in)
+    name: Publish to npm
     needs: [resolve, release]
     runs-on: ubuntu-latest
-    # Job-level env so the step `if` below can read it (a step can't reliably
-    # read its own env, and secrets aren't visible in `if`).
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
+    permissions:
+      contents: read
+      id-token: write # mints the OIDC token npm's Trusted Publisher flow exchanges
     steps:
       - uses: actions/checkout@v4
 
@@ -494,21 +495,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Report what this job will do
-        run: |
-          if [ "${NPM_PUBLISH:-}" = "true" ] && [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "publishing: vars.NPM_PUBLISH is true and a token is present"
-          elif [ "${NPM_PUBLISH:-}" = "true" ]; then
-            echo "::error::vars.NPM_PUBLISH is true but NPM_TOKEN is empty — set the secret or unset the variable"
-            exit 1
-          else
-            echo "NOT publishing: vars.NPM_PUBLISH is not 'true'. The release is complete regardless —"
-            echo "golem-run-<version>.tgz is attached to the GitHub Release."
-          fi
-
-      - name: Publish (only when vars.NPM_PUBLISH is 'true')
-        if: ${{ env.NPM_PUBLISH == 'true' && env.NODE_AUTH_TOKEN != '' }}
-        run: npm publish --access public
+      - name: Publish
+        run: npm publish --access public --provenance
 
   vscode-publish:
     name: Publish VS Code extension (optional)

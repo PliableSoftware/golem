@@ -100,7 +100,7 @@ async function postThrough(
 const secret = () => `sk-ant-${"a1b2c3d4".repeat(6)}`;
 
 const messageWith = (text: string) => ({
-  model: "claude-opus-5",
+  model: { name: "claude-opus-5" },
   max_tokens: 16,
   messages: [{ role: "user", content: text }],
 });

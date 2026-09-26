@@ -183,7 +183,8 @@ export default function register(program: Command): void {
                     models: opts.models
                       .split(",")
                       .map((m) => m.trim())
-                      .filter((m) => m !== ""),
+                      .filter((m) => m !== "")
+                      .map((name) => ({ name })),
                   }
                 : {}),
               ...(authScheme !== undefined ? { auth_scheme: authScheme } : {}),

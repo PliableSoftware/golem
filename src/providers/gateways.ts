@@ -38,9 +38,19 @@ export interface GatewayEntry {
    * R9.23: the models this gateway serves. A target is derived from each entry
    * here. Omitted or empty means no model is reachable via this gateway without
    * an explicit proxy.targets entry.
+   * Each model string may optionally include a context size suffix in brackets,
+   * e.g. "model[262k]" to indicate a 262,000-token context window.
    */
-  readonly models?: readonly string[];
+  readonly models?: readonly ModelDescriptor[];
   readonly auth_scheme?: UpstreamAuthScheme;
+}
+
+/** Descriptor for a model served by a gateway, optionally including context size. */
+export interface ModelDescriptor {
+  /** The model id (e.g. "nvidia/nemotron-3-super-120b-a12b:free"). */
+  readonly name: string;
+  /** Optional context size in tokens (e.g. 262144). */
+  readonly contextSize?: number;
 }
 
 /** The legacy single-account config (top-level `proxy.*`). */
@@ -119,7 +129,7 @@ export function resolveActiveUpstream(
     resolved: {
       provider: gateway.provider,
       baseUrl: gateway.base_url,
-      model: gateway.models?.[0],
+      model: gateway.models?.[0]?.name,
       authScheme: resolveAuthScheme(gateway.provider, gateway.auth_scheme ?? "inherit"),
       apiKey: env[perGatewayEnvVar(gateway.id)],
       accountId: gateway.id,

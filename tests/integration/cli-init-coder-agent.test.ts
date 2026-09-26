@@ -60,7 +60,9 @@ describe("golem init — the golem-coder subagent", () => {
   });
 
   it("writes the agent when the coder persona names a MODEL", async () => {
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-sonnet-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-sonnet-5" } } },
+    });
     const report = await golemInit({ projectDir, probe: okProbe });
 
     const content = await readAgent();
@@ -94,7 +96,7 @@ describe("golem init — the golem-coder subagent", () => {
             id: "openrouter",
             provider: "openrouter",
             base_url: "https://openrouter.ai/api/v1",
-            models: ["qwen/qwen3.7-flash"],
+            models: [{ name: "qwen/qwen3.7-flash" }],
           },
         ],
       },
@@ -137,7 +139,9 @@ describe("golem init — the golem-coder subagent", () => {
     await golemInit({ projectDir, probe: okProbe });
     expect(await readAgent()).toContain("model: sonnet");
 
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-opus-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-opus-5" } } },
+    });
     await golemInit({ projectDir, probe: okProbe });
     expect(await readAgent()).toContain("model: claude-opus-5");
   });
@@ -169,7 +173,9 @@ describe("golem init — the golem-coder subagent", () => {
     const edited = `${await readAgent()}\n\nMy own house rule: never touch generated files.\n`;
     await writeFile(path.join(projectDir, AGENT_REL), edited, "utf8");
 
-    await writeGolemSettings({ inference: { personas: { coder: { model: "claude-opus-5" } } } });
+    await writeGolemSettings({
+      inference: { personas: { coder: { model: "claude-opus-5" } } },
+    });
     const report = await golemInit({ projectDir, probe: okProbe });
 
     expect(await readAgent()).toBe(edited); // untouched

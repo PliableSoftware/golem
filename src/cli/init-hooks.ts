@@ -101,14 +101,18 @@ const PERSONAL_INSTRUCTIONS_FILENAME = "CLAUDE.local.md";
  * else; the normal `git add`/`.gitignore` workflow decides what actually gets
  * committed, rather than a blanket rule deciding it structurally. A
  * contributor who wants a personal, uncommitted prompt tweak can still
- * gitignore their own copy manually. Mirrors this repo's own `.gitignore`,
- * reviewed 2026-09-17.
+ * gitignore their own copy manually. `.golem/buzz/` (the R14.2 identity
+ * manifest) is allowlisted for the same reason — its committed pubkeys are
+ * ordinary project content a PR must be able to show; the secret keys never
+ * land there (they go to the credential store). Mirrors this repo's own
+ * `.gitignore`, reviewed 2026-09-17.
  */
 const GOLEM_DIR_GITIGNORE_BLOCK: readonly string[] = [
   "**/.golem/*",
   "!.golem/settings.json",
   "!.golem/managed-files.json",
   "!.golem/personas",
+  "!.golem/buzz",
 ];
 
 /**

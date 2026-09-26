@@ -20,7 +20,7 @@ import {
   createCredentialStore,
   DEFAULT_GATEWAY_ID,
 } from "../../credentials/index.js";
-import { listTargets } from "../../providers/index.js";
+import { listTargets, type ModelDescriptor } from "../../providers/index.js";
 
 /**
  * A non-secret gateway descriptor: either a named `proxy.gateways` entry or the
@@ -60,7 +60,7 @@ export interface GatewayRow {
    * gateway with a qwen and a deepseek entry rendered only the first, on every
    * surface, however the user had switched.
    */
-  readonly models: readonly string[];
+  readonly models: readonly ModelDescriptor[];
   /**
    * True for the synthetic DEFAULT account — the top-level upstream config the
    * proxy falls back to when no named account is active. It is not a
@@ -165,7 +165,7 @@ export async function collectGateways(
         model:
           selectedTarget?.accountId === g.id
             ? (selectedTarget.model ?? null)
-            : ((g.models ?? [])[0] ?? null),
+            : ((g.models ?? [])[0]?.name ?? null),
         models: g.models ?? [],
         key_set: st.present,
         ...(st.location !== undefined ? { key_location: st.location.label } : {}),

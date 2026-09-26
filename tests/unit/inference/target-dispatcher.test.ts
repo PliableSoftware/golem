@@ -105,7 +105,7 @@ const REMOTE: TargetRegistrySettings = {
     {
       id: "cheap",
       gateway: "openrouter",
-      model: "openai/gpt-oss-20b:free",
+      model: { name: "openai/gpt-oss-20b:free" },
       trust: "third-party",
     },
   ],
@@ -212,14 +212,14 @@ describe("the local path is unchanged", () => {
             id: "localgw",
             provider: "ollama",
             base_url: "http://localhost:11434/v1",
-            models: ["qwen2.5-coder:7b"],
+            models: [{ name: "qwen2.5-coder:7b" }],
           },
         ],
         targets: [
           {
             id: "local",
             gateway: "localgw",
-            model: "qwen2.5-coder:7b",
+            model: { name: "qwen2.5-coder:7b" },
             trust: "local",
           },
         ],
@@ -256,14 +256,14 @@ describe("the local path is unchanged", () => {
             id: "notreallygw",
             provider: "openai",
             base_url: "https://api.openai.com/v1",
-            models: ["gpt-5.2"],
+            models: [{ name: "gpt-5.2" }],
           },
         ],
         targets: [
           {
             id: "notreallylocal",
             gateway: "notreallygw",
-            model: "gpt-5.2",
+            model: { name: "gpt-5.2" },
             trust: "local",
           },
         ],
@@ -329,7 +329,7 @@ describe("inference.coder_target — the default coder target (R9.4)", () => {
             id: "vendorgw",
             provider: "anthropic",
             base_url: "https://api.anthropic.com",
-            models: ["claude-opus-5"],
+            models: [{ name: "claude-opus-5" }],
           },
         ],
         targets: [
@@ -337,7 +337,7 @@ describe("inference.coder_target — the default coder target (R9.4)", () => {
           {
             id: "vendor",
             gateway: "vendorgw",
-            model: "claude-opus-5",
+            model: { name: "claude-opus-5" },
           },
         ],
       },
@@ -427,7 +427,7 @@ describe("R10.8 — the resolution chain", () => {
         id: "openrouter",
         provider: "openrouter",
         base_url: "https://openrouter.ai/api/v1",
-        models: ["openai/gpt-oss-20b:free"],
+        models: [{ name: "openai/gpt-oss-20b:free" }],
       },
       { id: "vendorgw", provider: "anthropic", base_url: "https://api.anthropic.com" },
     ],
@@ -435,11 +435,16 @@ describe("R10.8 — the resolution chain", () => {
       {
         id: "cheap",
         gateway: "openrouter",
-        model: "openai/gpt-oss-20b:free",
+        model: { name: "openai/gpt-oss-20b:free" },
         trust: "third-party",
       },
-      { id: "fallback", gateway: "openrouter", model: "openai/gpt-oss-120b", trust: "third-party" },
-      { id: "vendor", gateway: "vendorgw", model: "claude-opus-5", trust: "vendor" },
+      {
+        id: "fallback",
+        gateway: "openrouter",
+        model: { name: "openai/gpt-oss-120b" },
+        trust: "third-party",
+      },
+      { id: "vendor", gateway: "vendorgw", model: { name: "claude-opus-5" }, trust: "vendor" },
     ],
   };
 
@@ -482,7 +487,10 @@ describe("R10.8 — the resolution chain", () => {
   });
 
   it("step 2 — worker_targets beats model", async () => {
-    const { fetchImpl } = captureFetch({ model: "m", content: [{ type: "text", text: "k" }] });
+    const { fetchImpl } = captureFetch({
+      model: "m",
+      content: [{ type: "text", text: "k" }],
+    });
     const dispatcher = createTargetDispatcher({
       inference: stubInference(),
       settings: { ...CHAIN, model: "fallback" },
@@ -621,7 +629,10 @@ describe("R10.8 — the resolution chain", () => {
 
   it("resolves a model that names a GATEWAY to that gateway's first target", async () => {
     // R9.23 behaviour, reached through the new step rather than reimplemented.
-    const { fetchImpl } = captureFetch({ model: "m", choices: [{ message: { content: "k" } }] });
+    const { fetchImpl } = captureFetch({
+      model: "m",
+      choices: [{ message: { content: "k" } }],
+    });
     const dispatcher = createTargetDispatcher({
       inference: stubInference(),
       settings: { ...CHAIN, model: "openrouter" },
@@ -741,7 +752,7 @@ describe("R10.8 — the resolution chain", () => {
             id: "localgw",
             provider: "ollama",
             base_url: "http://localhost:11434/v1",
-            models: ["qwen2.5-coder:7b"],
+            models: [{ name: "qwen2.5-coder:7b" }],
           },
         ],
         model: "localgw:qwen2.5-coder:7b",
@@ -765,7 +776,10 @@ describe("R10.8 — the resolution chain", () => {
 
   it("audits WHICH step chose the target, not just which target", async () => {
     const events: { route?: string; reason?: string }[] = [];
-    const { fetchImpl } = captureFetch({ model: "m", content: [{ type: "text", text: "k" }] });
+    const { fetchImpl } = captureFetch({
+      model: "m",
+      content: [{ type: "text", text: "k" }],
+    });
     const dispatcher = createTargetDispatcher({
       inference: stubInference(),
       settings: CHAIN,
@@ -795,9 +809,14 @@ describe("R10.8 — llamacpp targets", () => {
     return {
       ...REMOTE,
       gateways: [
-        { id: "llama", provider: "llamacpp", base_url: baseUrl, models: ["qwen3-coder-30b"] },
+        {
+          id: "llama",
+          provider: "llamacpp",
+          base_url: baseUrl,
+          models: [{ name: "qwen3-coder-30b" }],
+        },
       ],
-      targets: [{ id: "llama-local", gateway: "llama", model: "qwen3-coder-30b" }],
+      targets: [{ id: "llama-local", gateway: "llama", model: { name: "qwen3-coder-30b" } }],
     };
   }
 
@@ -859,9 +878,14 @@ describe("R10.8 — llamacpp targets", () => {
       settings: {
         ...REMOTE,
         gateways: [
-          { id: "olla", provider: "ollama", base_url: "http://127.0.0.1:11434", models: ["q"] },
+          {
+            id: "olla",
+            provider: "ollama",
+            base_url: "http://127.0.0.1:11434",
+            models: [{ name: "q" }],
+          },
         ],
-        targets: [{ id: "olla-local", gateway: "olla", model: "q" }],
+        targets: [{ id: "olla-local", gateway: "olla", model: { name: "q" } }],
       },
       localServiceBaseUrl: "http://127.0.0.1:11434",
       fetchImpl,
@@ -895,9 +919,14 @@ describe("R10.8 — llamacpp targets", () => {
       settings: {
         ...REMOTE,
         gateways: [
-          { id: "olla2", provider: "ollama", base_url: "http://127.0.0.1:11435", models: ["q"] },
+          {
+            id: "olla2",
+            provider: "ollama",
+            base_url: "http://127.0.0.1:11435",
+            models: [{ name: "q" }],
+          },
         ],
-        targets: [{ id: "olla2-local", gateway: "olla2", model: "q" }],
+        targets: [{ id: "olla2-local", gateway: "olla2", model: { name: "q" } }],
       },
       localServiceBaseUrl: "http://127.0.0.1:11434",
       fetchImpl,
@@ -932,10 +961,10 @@ describe("R10.8 — llamacpp targets", () => {
             id: "shim",
             provider: "openai",
             base_url: "http://127.0.0.1:9099/v1",
-            models: ["gpt-x"],
+            models: [{ name: "gpt-x" }],
           },
         ],
-        targets: [{ id: "shim-local", gateway: "shim", model: "gpt-x" }],
+        targets: [{ id: "shim-local", gateway: "shim", model: { name: "gpt-x" } }],
       },
       fetchImpl,
       env: {},
@@ -1033,14 +1062,14 @@ describe("fail-closed selection", () => {
           id: "expensivegw",
           provider: "anthropic",
           base_url: "https://api.anthropic.com",
-          models: ["claude-opus-5"],
+          models: [{ name: "claude-opus-5" }],
         },
       ],
       targets: [
         {
           id: "expensive",
           gateway: "expensivegw",
-          model: "claude-opus-5",
+          model: { name: "claude-opus-5" },
           agent_selectable: false,
         },
       ],
@@ -1127,14 +1156,14 @@ describe("transport and audit", () => {
             id: "vendorgw2",
             provider: "anthropic",
             base_url: "https://api.anthropic.com",
-            models: ["claude-opus-5"],
+            models: [{ name: "claude-opus-5" }],
           },
         ],
         targets: [
           {
             id: "vendor",
             gateway: "vendorgw2",
-            model: "claude-opus-5",
+            model: { name: "claude-opus-5" },
           },
         ],
       },
@@ -1155,7 +1184,10 @@ describe("transport and audit", () => {
 
   it("audits every dispatch with the resolved target and reason, and no secret", async () => {
     const events: unknown[] = [];
-    const { fetchImpl } = captureFetch({ model: "m", choices: [{ message: { content: "ok" } }] });
+    const { fetchImpl } = captureFetch({
+      model: "m",
+      choices: [{ message: { content: "ok" } }],
+    });
     const dispatcher = createTargetDispatcher({
       inference: stubInference(),
       settings: REMOTE,
@@ -1281,10 +1313,17 @@ describe("credential resolution without the environment", () => {
         id: "inheritsgw",
         provider: "anthropic",
         base_url: "https://api.anthropic.com",
-        models: ["claude-sonnet-5"],
+        models: [{ name: "claude-sonnet-5" }],
       },
     ],
-    targets: [{ id: "inherits", gateway: "inheritsgw", model: "claude-sonnet-5", trust: "vendor" }],
+    targets: [
+      {
+        id: "inherits",
+        gateway: "inheritsgw",
+        model: { name: "claude-sonnet-5" },
+        trust: "vendor",
+      },
+    ],
   };
 
   it("REFUSES an inherit-scheme Anthropic target with no credential (R13.11)", async () => {
@@ -1532,11 +1571,16 @@ describe("R14.3 — DispatchRequest.model override", () => {
           id: "inheritsgw",
           provider: "anthropic",
           base_url: "https://api.anthropic.com",
-          models: ["claude-sonnet-5"],
+          models: [{ name: "claude-sonnet-5" }],
         },
       ],
       targets: [
-        { id: "inherits", gateway: "inheritsgw", model: "claude-sonnet-5", trust: "vendor" },
+        {
+          id: "inherits",
+          gateway: "inheritsgw",
+          model: { name: "claude-sonnet-5" },
+          trust: "vendor",
+        },
       ],
     };
     const { fetchImpl, sent } = captureFetch({ content: [{ type: "text", text: "ok" }] });
@@ -1623,7 +1667,12 @@ describe("R14.3 — RateLimitedError classification (429/529)", () => {
         { id: "inheritsgw", provider: "anthropic", base_url: "https://api.anthropic.com" },
       ],
       targets: [
-        { id: "inherits", gateway: "inheritsgw", model: "claude-sonnet-5", trust: "vendor" },
+        {
+          id: "inherits",
+          gateway: "inheritsgw",
+          model: { name: "claude-sonnet-5" },
+          trust: "vendor",
+        },
       ],
     };
     const fetchImpl = rateLimitedFetch({

@@ -65,11 +65,16 @@ const REGISTRY = {
       id: "openrouter",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["qwen/qwen3.7-flash"],
+      models: [{ name: "qwen/qwen3.7-flash" }],
     },
   ],
   targets: [
-    { id: "cheap", gateway: "openrouter", model: "qwen/qwen3.7-flash", trust: "third-party" },
+    {
+      id: "cheap",
+      gateway: "openrouter",
+      model: { name: "qwen/qwen3.7-flash" },
+      trust: "third-party",
+    },
   ],
 };
 
@@ -156,7 +161,10 @@ describe("de-generation — config stops calling for a definition", () => {
   async function staffThenChange(next: Record<string, unknown>): Promise<void> {
     await writeGolemSettings({
       inference: {
-        personas: { coder: { model: "claude-sonnet-5" }, scribe: { model: "claude-haiku-4-5" } },
+        personas: {
+          coder: { model: "claude-sonnet-5" },
+          scribe: { model: "claude-haiku-4-5" },
+        },
       },
     });
     await golemInit({ projectDir, probe: okProbe });
@@ -185,7 +193,12 @@ describe("de-generation — config stops calling for a definition", () => {
     // should cease to exist.
     await staffThenChange({
       proxy: REGISTRY,
-      inference: { personas: { coder: { model: "claude-sonnet-5" }, scribe: { model: "cheap" } } },
+      inference: {
+        personas: {
+          coder: { model: "claude-sonnet-5" },
+          scribe: { model: "cheap" },
+        },
+      },
     });
     expect(await readAgent("scribe")).toBeNull();
   });

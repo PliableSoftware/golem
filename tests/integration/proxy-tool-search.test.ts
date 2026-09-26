@@ -67,7 +67,7 @@ function pipelineFor(level: CompressionLevel) {
  */
 function toolSearchBody(): string {
   return JSON.stringify({
-    model: "claude-opus-5",
+    model: { name: "claude-opus-5" },
     max_tokens: 2048,
     messages: [{ role: "user", content: "What is the weather in San Francisco?" }],
     tools: [
@@ -183,7 +183,7 @@ describe("tool search request fidelity through the proxy", () => {
       id: "msg_01",
       type: "message",
       role: "assistant",
-      model: "claude-opus-5",
+      model: { name: "claude-opus-5" },
       content: [
         {
           type: "server_tool_use",

@@ -63,6 +63,7 @@ export {
   defaultTargetId,
   defaultTrustFor,
   listTargets,
+  type ModelDescriptor,
   type ResolvedTarget,
   resolveDefaultTargetId,
   resolveTarget,

@@ -17,7 +17,7 @@ const _FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", 
 
 /** A minimal /v1/messages body with the given messages array. */
 function req(messages: unknown[]): Record<string, unknown> {
-  return { model: "claude-sonnet-5-20260501", max_tokens: 1024, messages };
+  return { model: { name: "claude-sonnet-5-20260501" }, max_tokens: 1024, messages };
 }
 
 /** A user text message. */

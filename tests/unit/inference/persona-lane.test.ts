@@ -28,11 +28,16 @@ const SETTINGS: TargetRegistrySettings = {
       id: "openrouter",
       provider: "openrouter",
       base_url: "https://openrouter.ai/api/v1",
-      models: ["qwen/qwen3.7-flash"],
+      models: [{ name: "qwen/qwen3.7-flash" }],
     },
   ],
   targets: [
-    { id: "cheap", gateway: "openrouter", model: "qwen/qwen3.7-flash", trust: "third-party" },
+    {
+      id: "cheap",
+      gateway: "openrouter",
+      model: { name: "qwen/qwen3.7-flash" },
+      trust: "third-party",
+    },
   ],
 };
 
