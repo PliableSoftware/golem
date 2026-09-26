@@ -36,6 +36,14 @@
  * a symlink or worktree cannot widen it) decides which project roots a
  * device may start a NEW conversation in. Read from policy, never
  * hard-coded — see `src/config/schema.ts`.
+ *
+ * Known limitation, stated rather than assumed: `resumeConversation` looks
+ * a conversation up only in THIS server's own `options.projectDir` registry
+ * (`host-registry.ts` is itself per-root). A conversation legitimately
+ * started in a different, allowlisted root can be resumed only while this
+ * process still holds it `live` (its actual root is used correctly then);
+ * across a restart of `session host serve` it is not found, and is refused
+ * with a plain 404 rather than misread from the wrong root's store.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -163,6 +171,14 @@ export interface DeviceSessionsOptions {
    */
   readonly serverUrl: { value: string };
   readonly permissionMode?: string;
+  /**
+   * Test seam, mirroring `HostedSessionOptions`' own: overrides the spawned
+   * binary/args for every `HostedSession` this handler starts or resumes, so
+   * tests can point at a fake runner instead of the real `claude` CLI.
+   * Production never sets these.
+   */
+  readonly runnerBin?: string;
+  readonly runnerArgsOverride?: readonly string[];
 }
 
 interface LiveEntry {
@@ -262,6 +278,10 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
       proxyBaseUrl: options.proxyBaseUrl,
       settingsJson: hostSettingsArg({ sessionId: id }),
       ...(options.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
+      ...(options.runnerBin !== undefined ? { runnerBin: options.runnerBin } : {}),
+      ...(options.runnerArgsOverride !== undefined
+        ? { runnerArgsOverride: options.runnerArgsOverride }
+        : {}),
     });
     const bus = new SessionBus(id);
     wireHostedSession(hosted, bus, LocalConversationStore.forProjectDir(root), id);
@@ -356,6 +376,10 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
       settingsJson: hostSettingsArg({ sessionId: id }),
       resumeSessionId: record.runnerSessionId,
       ...(options.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
+      ...(options.runnerBin !== undefined ? { runnerBin: options.runnerBin } : {}),
+      ...(options.runnerArgsOverride !== undefined
+        ? { runnerArgsOverride: options.runnerArgsOverride }
+        : {}),
     });
     wireHostedSession(hosted, bus, store, id);
     hosted.on("exit", (info: { code: number | null; error?: string }) => {
@@ -480,7 +504,15 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
         return true;
       }
       const id = decodeURIComponent(messagesMatch[1] ?? "");
-      const record = await store.readConversation(id);
+      // Read from the conversation's OWN root when it is (or was, this
+      // process) live — it may differ from `options.projectDir` (item 2).
+      // Falling back to this handler's own project is the best a NEW process
+      // can do for a conversation it never saw live; a cross-root id that was
+      // only ever live in a prior process is a stated limitation, refused
+      // honestly by the 404 below rather than silently misread.
+      const conversationRoot = live.get(id)?.projectDir ?? options.projectDir;
+      const record =
+        await LocalConversationStore.forProjectDir(conversationRoot).readConversation(id);
       if (record === null) {
         json(res, 404, {
           error:
@@ -513,15 +545,31 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
   function lookup(sessionId: string): TransportSession | null {
     const entry = live.get(sessionId);
     if (entry === undefined) return null;
+    // Scoped to the CONVERSATION's own root, which may differ from this
+    // handler's `options.projectDir` when it was started via `root` (item 2) —
+    // using the wrong store here would silently write, or read, nothing.
+    const conversationStore = LocalConversationStore.forProjectDir(entry.projectDir);
     return {
       bus: entry.bus,
       projectDir: entry.projectDir,
       deliver: async (text: string) => {
+        // Every device message after the first turn arrives here (the first
+        // is appended by `startConversation` before the process even starts).
+        // Invariant 4: attribution before delivery — `handleMessage` in
+        // `transport.ts` already wrote the audit-log line before calling this;
+        // this is the conversation-store half, without which scrollback would
+        // show only the opening turn and every assistant reply, never what the
+        // device sent after it (task item 4).
+        await conversationStore.appendTurn(sessionId, {
+          role: "user",
+          content: text,
+          timestamp: new Date().toISOString(),
+        });
         entry.hosted.send(text);
       },
       kind: "hosted",
       history: async () => {
-        const record = await store.readConversation(sessionId);
+        const record = await conversationStore.readConversation(sessionId);
         return (record?.turns ?? []).map((t) => ({
           role: t.role,
           content: typeof t.content === "string" ? t.content : JSON.stringify(t.content),
