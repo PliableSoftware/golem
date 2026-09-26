@@ -43,8 +43,8 @@ import path from "node:path";
 import type { GolemSettings } from "../config/schema.js";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
 import { conversationIdFor, LocalConversationStore } from "./conversation-store.js";
+import { HostedSession } from "./host.js";
 import { appendHostLog } from "./host-log.js";
-import { hostSettingsArg } from "./host-settings.js";
 import {
   findHostSession,
   type HostSessionRecord,
@@ -52,12 +52,12 @@ import {
   registerHostSession,
   updateHostSession,
 } from "./host-registry.js";
-import { HostedSession } from "./host.js";
+import { hostSettingsArg } from "./host-settings.js";
 import {
   checkReachability,
+  type KnownProjectStatus,
   listKnownProjects,
   recordKnownProject,
-  type KnownProjectStatus,
 } from "./known-projects.js";
 import { SessionBus } from "./session-bus.js";
 import { MAX_MESSAGE_CHARS, type TransportSession } from "./transport.js";
@@ -236,13 +236,17 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
     };
   }
 
-  async function startConversation(root: string, text: string, deviceId: string): Promise<
+  async function startConversation(
+    root: string,
+    text: string,
+    deviceId: string,
+  ): Promise<
     | { readonly ok: true; readonly id: string }
     | { readonly ok: false; readonly status: number; readonly error: string }
   > {
     const id = conversationIdFor({ messages: [{ role: "user", content: text }] });
     const already = await findHostSession(root, id);
-    if (already !== null && already.alive) {
+    if (already?.alive === true) {
       return {
         ok: false,
         status: 409,
@@ -265,7 +269,9 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
       live.delete(id);
       void updateHostSession(root, id, {
         stoppedAt: new Date().toISOString(),
-        ...(hosted.runnerSessionId !== undefined ? { runnerSessionId: hosted.runnerSessionId } : {}),
+        ...(hosted.runnerSessionId !== undefined
+          ? { runnerSessionId: hosted.runnerSessionId }
+          : {}),
         ...(info.error !== undefined ? { lastError: info.error } : {}),
       });
     });
@@ -426,7 +432,11 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
         return true;
       }
       if (text.length > MAX_MESSAGE_CHARS) {
-        json(res, 413, { error: "message too long", limit: MAX_MESSAGE_CHARS, received: text.length });
+        json(res, 413, {
+          error: "message too long",
+          limit: MAX_MESSAGE_CHARS,
+          received: text.length,
+        });
         return true;
       }
       const rootReq = typeof parsed.root === "string" ? parsed.root : undefined;
@@ -526,7 +536,10 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
     readonly injectionEnabled: boolean;
   }> {
     return {
-      hosted: [...live.entries()].map(([sessionId, e]) => ({ sessionId, projectDir: e.projectDir })),
+      hosted: [...live.entries()].map(([sessionId, e]) => ({
+        sessionId,
+        projectDir: e.projectDir,
+      })),
       joined: [],
       injectionEnabled: false,
     };
