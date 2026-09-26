@@ -116,4 +116,4 @@ tool call in a session Golem is answerable for.
 ## Related
 
 [[Autonomy Gate]] · [[Device Authentication]] · [[Conversation Store]] ·
-[[Usage Limit Park]] · [[Blocked State Read Model]]
+[[Device Conversations]] · [[Usage Limit Park]] · [[Blocked State Read Model]]
