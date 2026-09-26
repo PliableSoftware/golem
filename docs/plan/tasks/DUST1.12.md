@@ -1,7 +1,7 @@
 ---
 task: DUST1.12
 title: "Dust Phase 1 close-out — merge the eleven audit notes into one classified baseline and the Phase 2/3 input lists"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: review
@@ -10,7 +10,7 @@ gate: "Branch `dust/phase-1` carries all eleven notes plus `docs/plan/audit/dust
 depends_on: [DUST1.1, DUST1.2, DUST1.3, DUST1.4, DUST1.5, DUST1.6, DUST1.7, DUST1.8, DUST1.9, DUST1.10, DUST1.11]
 touches: [docs/plan/audit/dust-1, docs/plan/tasks, docs/plan/ROADMAP.md]
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-25T23:37:16.184Z
 ---
 
 ## Why this exists
@@ -46,3 +46,7 @@ re-reading all of them, and Phase 3 needs one dead-code list it can trust.
 - Reclassifying a partition's finding on your own judgement — disagreements go to
   **Contradictions for the human**
 - Writing Phase 2 task docs, editing wiki/spec, or deleting code
+
+## Outcome
+
+audit complete, see docs/plan/audit/dust-1/SUMMARY.md

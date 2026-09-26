@@ -1,7 +1,7 @@
 ---
 task: DUST1.8
 title: "Dust audit — config, init, install, release and vibe: classify every documented claim against the code"
-state: queued
+state: done
 owner: agent
 size: L
 discipline: review
@@ -10,7 +10,7 @@ gate: "`docs/plan/audit/dust-1/DUST1.8.md` exists on branch `dust/DUST1.8` and c
 depends_on: []
 touches: [docs/plan/audit/dust-1]
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-25T23:34:59.160Z
 ---
 
 ## Why this exists
@@ -80,3 +80,7 @@ Do not open a PR; DUST1.12 collects the branches.
 - Any edit to code, tests, wiki, spec, ADRs, ROADMAP or other task docs
 - Writing new task docs for gaps (Phase 2 does that from this note)
 - Fixing drift you find, however small
+
+## Outcome
+
+audit complete, see docs/plan/audit/dust-1/SUMMARY.md

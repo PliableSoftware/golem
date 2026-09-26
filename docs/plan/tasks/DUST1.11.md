@@ -1,7 +1,7 @@
 ---
 task: DUST1.11
 title: "Dust audit — cross-cutting: vision, roadmap and positioning claims, wiki index integrity, and the unowned-code sweep"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: review
@@ -10,7 +10,7 @@ gate: "`docs/plan/audit/dust-1/DUST1.11.md` exists on branch `dust/DUST1.11` and
 depends_on: []
 touches: [docs/plan/audit/dust-1]
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-25T23:35:03.901Z
 ---
 
 ## Why this exists
@@ -74,3 +74,7 @@ the findings note early and as it grows. Do not open a PR; DUST1.12 collects the
 - Any edit to code, tests, wiki, spec, ADRs, ROADMAP or other task docs
 - Re-auditing a subsystem another brief owns — a cross-partition observation goes under a
   **For DUST1.n** heading and nothing more
+
+## Outcome
+
+audit complete, see docs/plan/audit/dust-1/SUMMARY.md
