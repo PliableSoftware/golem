@@ -643,6 +643,16 @@ export const SETTINGS_LEAVES = {
      * hosts.
      */
     join_injection: z.boolean(),
+    /**
+     * R13.8 — gate-map item 2 (origination scope): which project roots a
+     * paired device may START a new hosted conversation in. Empty (the
+     * default) means "all known roots", matching ADR-0007 §3d's shipped
+     * default; a non-empty list is an allowlist of absolute paths, checked
+     * after the root is resolved (so a symlink or worktree cannot widen it).
+     * This is read from policy rather than hard-coded — a device that asks
+     * to originate in a root outside the list is refused, naming the root.
+     */
+    origination_roots: z.array(z.string()),
   },
   telemetry: {
     /** Master toggle for local telemetry collection (savings attribution). */
@@ -1126,6 +1136,8 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     // A message from a phone landing in the session you are typing into is an
     // opt-in, never a default.
     join_injection: false,
+    // Empty — all known roots, per ADR-0007 §3d item 2's shipped default.
+    origination_roots: [],
   },
   telemetry: {
     enabled: true,

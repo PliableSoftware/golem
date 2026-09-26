@@ -230,6 +230,10 @@ export class HostedSession extends EventEmitter {
   lastError: string | undefined;
   /** The runner's own session id, learned from the first `system/init`. */
   runnerSessionId: string | undefined;
+  /** The PID of the child process, if available. */
+  get pid(): number | undefined {
+    return this.child?.pid;
+  }
 
   constructor(private readonly options: HostedSessionOptions) {
     super();

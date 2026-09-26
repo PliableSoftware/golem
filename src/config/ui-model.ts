@@ -582,6 +582,13 @@ export const SETTING_META = {
     detail: "An unrevoked lost device still stops working when its certificate expires.",
     advanced: true,
   },
+  "security.origination_roots": {
+    label: "Project roots a device may start a session in",
+    summary: "Gate-map item 2 - empty means all known roots",
+    detail:
+      "Empty (the default) means a paired device may originate a new hosted conversation in any project root Golem knows. A non-empty list is an allowlist of absolute paths, checked after the requested root is resolved - a symlink or a worktree cannot widen it. A request for a root outside the list is refused, naming the root.",
+    advanced: true,
+  },
   "telemetry.dashboard_port": {
     label: "Dashboard port",
     summary: "Port for the local savings dashboard",
