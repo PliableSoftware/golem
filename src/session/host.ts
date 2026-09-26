@@ -37,8 +37,20 @@ export const RUNNER_BIN = "claude";
  * would see only a final result — no visible tool calls, which ADR-0007 §2
  * promises.
  */
-export function runnerArgs(settingsJson: string, permissionMode = "default"): string[] {
-  return [
+/**
+ * R13.8 item 3 — `resumeSessionId`, when given, adds `--resume <id>` so the
+ * runner loads ITS OWN on-disk transcript for that session before the first
+ * turn is sent. Verified mechanism (verification-notes §65, re-confirmed
+ * ~§7554-7565): the resumed process actually has the earlier turns as
+ * context, not merely a screen that shows them — which is what "continue"
+ * has to mean here. Modelled on `src/tasks/resume.ts`'s `buildResumeArgv`.
+ */
+export function runnerArgs(
+  settingsJson: string,
+  permissionMode = "default",
+  resumeSessionId?: string,
+): string[] {
+  const args = [
     "-p",
     "--input-format",
     "stream-json",
@@ -47,9 +59,10 @@ export function runnerArgs(settingsJson: string, permissionMode = "default"): st
     "--verbose",
     "--permission-mode",
     permissionMode,
-    "--settings",
-    settingsJson,
   ];
+  if (resumeSessionId !== undefined) args.push("--resume", resumeSessionId);
+  args.push("--settings", settingsJson);
+  return args;
 }
 
 /** One line of the runner's stdout, normalised. */
@@ -199,6 +212,12 @@ export interface HostedSessionOptions {
   readonly proxyBaseUrl: string;
   readonly settingsJson: string;
   readonly permissionMode?: string;
+  /**
+   * R13.8 item 3 — the runner's OWN session id to resume (`hosted.runnerSessionId`
+   * from a prior run of this same conversation). Passed straight to `runnerArgs`
+   * as `--resume`; absent, this is a fresh session exactly as before.
+   */
+  readonly resumeSessionId?: string;
   /** Override the binary (tests point this at a fake runner). */
   readonly runnerBin?: string;
   /**
@@ -230,6 +249,10 @@ export class HostedSession extends EventEmitter {
   lastError: string | undefined;
   /** The runner's own session id, learned from the first `system/init`. */
   runnerSessionId: string | undefined;
+  /** The PID of the child process, if available. */
+  get pid(): number | undefined {
+    return this.child?.pid;
+  }
 
   constructor(private readonly options: HostedSessionOptions) {
     super();
@@ -239,7 +262,11 @@ export class HostedSession extends EventEmitter {
     if (this.child !== undefined) throw new Error("session already started");
     const args = [
       ...(this.options.runnerArgsOverride ??
-        runnerArgs(this.options.settingsJson, this.options.permissionMode)),
+        runnerArgs(
+          this.options.settingsJson,
+          this.options.permissionMode,
+          this.options.resumeSessionId,
+        )),
     ];
     this.child = spawn(this.options.runnerBin ?? RUNNER_BIN, args, {
       cwd: this.options.projectDir,

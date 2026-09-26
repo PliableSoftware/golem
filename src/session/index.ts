@@ -13,6 +13,13 @@ export {
   LocalConversationStore,
 } from "./conversation-store.js";
 export {
+  createDeviceSessionsHandler,
+  type DeviceSessionsOptions,
+  PROJECTS_PATH,
+  START_CONVERSATION_PATH,
+  wireHostedSession,
+} from "./device-sessions.js";
+export {
   type HostEvent,
   HostedSession,
   type HostedSessionOptions,
@@ -81,6 +88,16 @@ export {
   type JoinedTransport,
   type JoinedTransportOptions,
 } from "./joined-sessions.js";
+export {
+  checkReachability,
+  forgetKnownProject,
+  type KnownProjectRecord,
+  type KnownProjectStatus,
+  knownProjectsPath,
+  listKnownProjects,
+  type ProjectReachability,
+  recordKnownProject,
+} from "./known-projects.js";
 export {
   IDLE_AFTER_MS,
   LiveConversationRegistry,

@@ -100,6 +100,7 @@ turn, read a conversation, list conversations, forget one — a frozen contract
 the session host (R13.3), the transport (R13.5), and continue/start flows
 (R13.8).
 
-See [[Architecture]] for where this sits in the whole request path, and
+See [[Architecture]] for where this sits in the whole request path,
 [[Redaction Stage]] for the redaction floor every storage path in Golem
-shares.
+shares, and [[Device Conversations]] (R13.8) for the two consumers that
+motivated it — start/resume and paged scrollback.
