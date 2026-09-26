@@ -19,7 +19,7 @@ Real-time protection is **on** (confirmed 2026-08-29: `RealTimeProtectionEnabled
 - `golemInit` writes ~20 files, and one file alone makes 36 `golemInit` calls
 - the ledger tests drive real `git` through many subprocess spawns
 - every temp tree is created and deleted under `%TEMP%`
-  (`C:\Users\paulc\AppData\Local\Temp`)
+  (`C:\Users\<you>\AppData\Local\Temp`)
 
 Every one of those is a scanner event. Two committed comments already blame it:
 
@@ -39,7 +39,7 @@ In an **elevated** PowerShell:
 ```powershell
 Get-MpPreference | Select-Object -ExpandProperty ExclusionPath     # record what's there first
 Add-MpPreference -ExclusionPath 'D:\Personar\Source\repos\golem'
-Add-MpPreference -ExclusionPath 'C:\Users\paulc\AppData\Local\Temp'
+Add-MpPreference -ExclusionPath $env:TEMP
 Add-MpPreference -ExclusionProcess 'node.exe'
 Add-MpPreference -ExclusionProcess 'git.exe'
 ```
