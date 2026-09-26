@@ -24,12 +24,19 @@ import type { HookSettingsOptions } from "./settings-writer.js";
 export const NOTIFICATION_COMMAND = "golem hook notification";
 export const PROMPT_SUBMIT_COMMAND = "golem hook prompt-submit";
 /**
- * The tool whose RESULT means a human answered a question. Matched on
- * `PostToolUse`, because that event is the only one that fires after the choice
- * is made — see {@link runQuestionAnsweredHook} for why `UserPromptSubmit` alone
- * left the "waiting" indicator stuck.
+ * ANY tool's result means the block is resolved — a permission prompt was
+ * answered (approve/deny), or `AskUserQuestion` was answered. Matched on
+ * `PostToolUse`, because that event is the only one that fires after the
+ * choice is made — see {@link runQuestionAnsweredHook} for why
+ * `UserPromptSubmit` alone left the "waiting" indicator stuck.
+ *
+ * Narrowed to `AskUserQuestion` alone until this stayed stuck reading
+ * `⏸ waiting (permission)` for up to `BLOCKED_STALE_MS` after a Bash/Edit/…
+ * permission prompt was approved: nothing cleared it until the human's next
+ * message or the 10-minute staleness downgrade. Any tool result is the same
+ * honest signal `runQuestionAnsweredHook` already relies on.
  */
-export const ASK_USER_QUESTION_MATCHER = "AskUserQuestion";
+export const ASK_USER_QUESTION_MATCHER = ".*";
 export const QUESTION_ANSWERED_COMMAND = "golem hook question-answered";
 /**
  * `--color` by default (added 2026-09-17): Claude Code always runs this

@@ -231,9 +231,9 @@ export async function wireHooks(
   // PermissionRequest: the same gate, one event earlier, where a decision can
   // actually resolve the request instead of deferring it (R12.12).
   actions.push(await addEventHook(options, "PermissionRequest", PERMISSION_REQUEST_HOOK_COMMAND));
-  // PostToolUse on AskUserQuestion: the answer clears the blocked flag.
-  // UserPromptSubmit alone left it stuck for the rest of the turn, because
-  // answering a question is not submitting a prompt.
+  // PostToolUse on any tool: the result clears the blocked flag. UserPromptSubmit
+  // alone left it stuck for the rest of the turn — answering a question, or
+  // approving a permission prompt on any other tool, is not submitting a prompt.
   actions.push(
     await addMatcherHook(options, {
       event: "PostToolUse",
