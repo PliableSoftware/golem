@@ -742,12 +742,12 @@ export const SETTINGS_LEAVES = {
   snooze: {
     /**
      * Enforce the document-and-hold park at the usage limit (spec Decision 45).
-     * **Default true (USER decision).** When true it is ENFORCING — while the
+     * **Default false (USER decision, 2026-09-25).** When true it is ENFORCING — while the
      * session (5h) window is at/above the threshold on a FRESH reading, every
      * tool call outside `PARK_EXEMPT_TOOLS` (`src/hooks/pre-tool-use.ts` —
      * `mcp__golem__snooze` plus the `ToolSearch`/`expand` pair needed to reach it,
-     * R9.23) is denied until the agent parks or the window resets. Set false for ADVISORY — a
-     * single one-shot redirect to `snooze` per window that the agent can work
+     * R9.23) is denied until the agent parks or the window resets. Default false is
+     * ADVISORY — a single one-shot redirect to `snooze` per window that the agent can work
      * past. Only ever fires on a fresh prediction — a stale/cold feed never hard-blocks
      * (it still just warns once). NOTE: a PreToolUse deny cannot stop the model
      * from spending tokens reacting to it — enforcement funnels the model to
@@ -756,14 +756,14 @@ export const SETTINGS_LEAVES = {
     enforce: z.boolean(),
     /**
      * Task `subagent-park`: refuse to START a subagent when the session window
-     * cannot pay for it. **Default true.** The park (`enforce`) is a tool-call
+     * cannot pay for it. **Default false (USER decision, 2026-09-25) — the gate
+     * is OFF unless turned back on.** The park (`enforce`) is a tool-call
      * gate and a subagent never reaches it — a child hits the limit on a MODEL
      * request and dies before it can propose a call to deny, taking uncommitted
      * work with it (observed 2026-08-22, two of three dispatched agents). The
      * spawn, however, IS a tool call the parent makes, so that is where the
-     * decision belongs. Refusal states what it measured, because a refusal that
-     * does not will be worked around. Fails to ON: a config-read failure cannot
-     * deadlock a session here, since the gate touches exactly one tool.
+     * decision belongs, when this is turned on. Refusal states what it measured,
+     * because a refusal that does not will be worked around.
      */
     spawn_gate: z.boolean(),
     /**
@@ -1182,8 +1182,8 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     context_warn_fraction: 0.8,
   },
   snooze: {
-    enforce: true,
-    spawn_gate: true,
+    enforce: false,
+    spawn_gate: false,
     // ~171k–186k tokens per subagent, measured 2026-08-22 (task `subagent-park`).
     spawn_cost_fraction: 0.18,
   },
