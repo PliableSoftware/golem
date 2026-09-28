@@ -289,8 +289,26 @@ export async function removeStatusLine(options: HookSettingsOptions): Promise<In
 }
 
 /**
- * Set `defaultMode` to "default", unless a FOREIGN mode is already set. Only
- * ever touches an unset `defaultMode` — a user who has deliberately chosen
+ * Claude Code reads the permission mode from `permissions.defaultMode`; a
+ * top-level `defaultMode` is ignored. Older inits wrote it there, so a root
+ * value is still read as the user's stated mode, but never written.
+ */
+function modeOf(settings: JsonObject | null | undefined): unknown {
+  const perms = settings?.permissions;
+  const nested = isRecord(perms) ? perms.defaultMode : undefined;
+  return nested ?? settings?.defaultMode;
+}
+
+/** Drop a root-level `defaultMode` that older inits wrote — it was always ours and always inert. */
+function dropLegacyMode(settings: JsonObject): boolean {
+  if (settings.defaultMode !== GOLEM_DEFAULT_MODE) return false;
+  delete settings.defaultMode;
+  return true;
+}
+
+/**
+ * Set `permissions.defaultMode` to "default", unless a FOREIGN mode is already
+ * set. Only ever touches an unset mode — a user who has deliberately chosen
  * "auto"/"acceptEdits"/"bypassPermissions" keeps that choice.
  */
 export async function writeDefaultMode(options: HookSettingsOptions): Promise<InitAction> {
@@ -301,7 +319,7 @@ export async function writeDefaultMode(options: HookSettingsOptions): Promise<In
 
   // A deliberate mode in the OTHER file is still the user's choice — writing
   // ours into the file that outranks it would end that choice silently.
-  const otherMode = (await readJsonObject(other).catch(() => null))?.defaultMode;
+  const otherMode = modeOf(await readJsonObject(other).catch(() => null));
   if (typeof otherMode === "string" && otherMode !== GOLEM_DEFAULT_MODE) {
     return {
       kind: "skip",
@@ -310,38 +328,58 @@ export async function writeDefaultMode(options: HookSettingsOptions): Promise<In
     };
   }
 
-  const current = settings.defaultMode;
-  if (current === GOLEM_DEFAULT_MODE) {
-    return { kind: "skip", path: rel(projectDir, file), detail: "defaultMode already set" };
-  }
-  if (typeof current === "string") {
+  const perms = settings.permissions;
+  if (perms !== undefined && !isRecord(perms)) {
     return {
       kind: "skip",
+      path: rel(projectDir, file),
+      detail: "permissions is not an object; left as is",
+    };
+  }
+  const nested = perms?.defaultMode;
+  const legacy = settings.defaultMode;
+  const current = nested ?? (legacy === GOLEM_DEFAULT_MODE ? undefined : legacy);
+  if (typeof current === "string" && current !== GOLEM_DEFAULT_MODE) {
+    const migrated = dropLegacyMode(settings);
+    if (migrated && options.dryRun !== true) await writeJsonObject(file, settings);
+    return {
+      kind: migrated ? "modify" : "skip",
       path: rel(projectDir, file),
       detail: `defaultMode set to "${current}"; left as is`,
     };
   }
 
-  settings.defaultMode = GOLEM_DEFAULT_MODE;
+  const migrated = dropLegacyMode(settings);
+  if (current === GOLEM_DEFAULT_MODE && !migrated) {
+    return { kind: "skip", path: rel(projectDir, file), detail: "defaultMode already set" };
+  }
+
+  settings.permissions = { ...(perms ?? {}), defaultMode: GOLEM_DEFAULT_MODE };
   if (options.dryRun !== true) await writeJsonObject(file, settings);
   return {
     kind: existing === null ? "create" : "modify",
     path: rel(projectDir, file),
-    detail: `defaultMode = ${GOLEM_DEFAULT_MODE}`,
+    detail: migrated
+      ? `defaultMode moved under permissions (= ${GOLEM_DEFAULT_MODE})`
+      : `defaultMode = ${GOLEM_DEFAULT_MODE}`,
   };
 }
 
-/** Remove the `defaultMode` override only if it is ours. */
+/** Remove the `defaultMode` override only if it is ours — in either location. */
 export async function removeDefaultMode(options: HookSettingsOptions): Promise<InitAction> {
   const { projectDir } = options;
   const file = await settingsPath(options);
   const relPath = rel(projectDir, file);
   const settings = await readJsonObject(file);
-  const current = settings?.defaultMode;
-  if (settings === null || current !== GOLEM_DEFAULT_MODE) {
-    return { kind: "skip", path: relPath, detail: "defaultMode not ours" };
+  if (settings === null) return { kind: "skip", path: relPath, detail: "defaultMode not ours" };
+  let changed = dropLegacyMode(settings);
+  const perms = settings.permissions;
+  if (isRecord(perms) && perms.defaultMode === GOLEM_DEFAULT_MODE) {
+    delete perms.defaultMode;
+    if (Object.keys(perms).length === 0) delete settings.permissions;
+    changed = true;
   }
-  delete settings.defaultMode;
+  if (!changed) return { kind: "skip", path: relPath, detail: "defaultMode not ours" };
   if (options.dryRun !== true) await writeJsonObject(file, settings);
   return { kind: "modify", path: relPath, detail: "removed Golem defaultMode override" };
 }
