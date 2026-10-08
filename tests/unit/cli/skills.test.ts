@@ -300,6 +300,23 @@ describe("dust skill (DUST4.1)", () => {
     expect(skill).toContain(marker);
   });
 
+  it("ends with a debrief template whose headings are pinned (DUST4.3)", () => {
+    if (skill === undefined) throw new Error("expected a dust skill");
+    const at = skill.indexOf("## Debrief template");
+    expect(at).toBeGreaterThan(skill.indexOf("## Standing rules"));
+    const template = skill.slice(at);
+    for (const heading of [
+      "Outcome",
+      "Default rules applied and where",
+      "Open exceptions",
+      "What review caught",
+      "Lessons",
+      "Follow-ups filed",
+    ]) {
+      expect(template).toContain(`**${heading}**`);
+    }
+  });
+
   it("names neither a literal redaction marker nor the bypass-off command", () => {
     expect(skill).not.toContain(`[${"RE"}DACTED`);
     expect(skill).not.toMatch(/bypass_all/);
