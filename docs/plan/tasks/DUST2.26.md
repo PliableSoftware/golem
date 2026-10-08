@@ -1,7 +1,7 @@
 ---
 task: DUST2.26
 title: "Dust Phase 2 close-out — merge the rebaseline branches, regenerate the index, SHIPPED row, debrief"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: review
@@ -10,6 +10,7 @@ gate: "All of DUST2.1–DUST2.10 merged into one Phase 2 branch with no lost edi
 depends_on: [DUST2.1, DUST2.2, DUST2.3, DUST2.4, DUST2.5, DUST2.6, DUST2.7, DUST2.8, DUST2.9, DUST2.10]
 touches: [docs/plan, docs/wiki/debriefs, docs/plan/SHIPPED.md, docs/plan/ROADMAP.md]
 created: 2026-10-08
+updated: 2026-10-08T12:20:36.354Z
 ---
 
 ## The work
@@ -31,3 +32,7 @@ Follow CLAUDE.md "Batch close-out" in order:
 - DUST2.11–DUST2.25 are roadmap items, not part of this batch; they stay queued.
 - Writing Phase 3/4/5 task docs.
 - Pushing/merging to development (the orchestrator does that); `gh pr checks` must show CI gate green before merge.
+
+## Outcome
+
+shipped in this PR

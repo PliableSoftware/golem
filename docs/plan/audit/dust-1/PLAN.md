@@ -60,15 +60,12 @@ doesn't touch code or wiki structure.
 
 ---
 
-## Status (as of 2026-10-08)
+## Status (as of 2026-10-08, evening)
 
-**Phase 1: done and merged to `development`.** DUST1.1-DUST1.12 notes and
-`SUMMARY.md` are in `docs/plan/audit/dust-1/`.
+**Phase 1: done and merged.** DUST1.1-DUST1.12 notes and `SUMMARY.md`.
 
-**Phase 2: task docs written, work not started.** `DUST2.1`-`DUST2.26` (doc
-rebaseline and gap tasks), `DUSTSEC.1`-`DUSTSEC.16` (security and decision
-code fixes, to land before Phase 3) and `npm-claim-golem-run` (owner: user)
-are in `docs/plan/tasks/`. USER decisions are recorded in
-`docs/plan/audit/dust-1/DECISIONS.md`.
+**Security batch: done.** `DUSTSEC.1`-`DUSTSEC.18` shipped and independently reviewed twice. `DUSTSEC.10` (R8, no relay-connected signal at the hook) is open for a USER decision, and `npm-claim-golem-run` is open for the user.
 
-**Phase 3-5: not started.** Gated on Phase 2 merged.
+**Phase 2: done and merged.** `DUST2.1`-`DUST2.10` and `DUST2.24`. `DUST2.11`-`DUST2.23` are roadmap items and stay queued; `DUST2.25` is blocked on a USER decision. Open contradictions G3, M2, H2, P3, P4 are listed in spec section 10.
+
+**Phase 3: unblocked, task docs not yet written.** **Phase 4-5: not started.**

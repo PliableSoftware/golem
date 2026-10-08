@@ -1,7 +1,7 @@
 ---
 task: DUST2.24
 title: "Contract suites for frozen session interfaces and recorded-shape tests for lossless/prefix-stable level ≤ 1"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "tests/contract/ holds suites for ConversationStore (redact before disk), 
 depends_on: [DUST2.1]
 touches: [tests/contract, tests/integration, src/interfaces]
 created: 2026-10-08
+updated: 2026-10-08T12:19:13.244Z
 ---
 
 ## What this is
@@ -26,3 +27,7 @@ rows 106-108). r098: any redaction or level-1 dedup re-serialises the whole body
 ## Out of scope
 
 - Fixing S9/S10 (Phase 3).
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

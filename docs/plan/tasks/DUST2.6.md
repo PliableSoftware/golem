@@ -1,7 +1,7 @@
 ---
 task: DUST2.6
 title: "Wiki rebaseline: configuration, team, portal, device auth and release pages"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "Every row listed below is fixed with code evidence; decided-but-unlanded 
 depends_on: [DUST2.1, DUSTSEC.16]
 touches: [docs/wiki/concepts]
 created: 2026-10-08
+updated: 2026-10-08T12:19:10.571Z
 ---
 
 ## Rows
@@ -33,3 +34,7 @@ Also P6: document both edited-team-skill policies (portal removal keeps it, `unl
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

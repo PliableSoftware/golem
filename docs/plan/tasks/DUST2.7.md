@@ -1,7 +1,7 @@
 ---
 task: DUST2.7
 title: "Wiki rebaseline: hosted sessions, transport, Buzz, personas, hooks, snooze and vibe pages"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "Every row listed below is fixed with code evidence; docs/wiki/concepts/Us
 depends_on: [DUST2.1]
 touches: [docs/wiki/concepts]
 created: 2026-10-08
+updated: 2026-10-08T12:19:11.117Z
 ---
 
 ## Rows
@@ -34,3 +35,7 @@ created: 2026-10-08
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

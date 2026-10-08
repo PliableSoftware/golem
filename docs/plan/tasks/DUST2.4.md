@@ -1,7 +1,7 @@
 ---
 task: DUST2.4
 title: "Wiki rebaseline: proxy, redaction and compression pages"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "Every SUMMARY drift row listed below is fixed on its page with the code f
 depends_on: [DUST2.1]
 touches: [docs/wiki/concepts]
 created: 2026-10-08
+updated: 2026-10-08T12:19:09.510Z
 ---
 
 ## What this is
@@ -43,3 +44,7 @@ Headroom-config check as it behaves).
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

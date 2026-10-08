@@ -1,7 +1,7 @@
 ---
 task: DUST2.2
 title: "Rebaseline docs/golem-spec.md from the verified state — decisions, contracts and ADR references"
-state: queued
+state: done
 owner: agent
 size: L
 discipline: write
@@ -10,6 +10,7 @@ gate: "docs/golem-spec.md is rewritten so that every spec drift row in SUMMARY.m
 depends_on: [DUST2.1, DUSTSEC.16]
 touches: [docs/golem-spec.md]
 created: 2026-10-08
+updated: 2026-10-08T12:19:08.452Z
 ---
 
 ## What this is
@@ -66,3 +67,7 @@ inline (e.g. `<!-- dust2: default rule, DECISIONS.md A9 -->` or a visible "(doc 
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit early and often on your own branch (this is long).
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240
