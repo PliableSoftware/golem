@@ -105,6 +105,7 @@ Settings section — all three render from one surface, `golem config schema --j
 - **Live-doc findings:** [docs/plan/verification-notes.md](docs/plan/verification-notes.md)
 - **Agent guidance:** [CLAUDE.md](CLAUDE.md)
 - **Project wiki:** [docs/wiki/](docs/wiki/) (knowledge base — see [WIKI.md](docs/wiki/WIKI.md))
+- **Docs drifted from the code?** `/golem-dust` runs the audit, rebaseline and refactor shake-out ([method](docs/wiki/concepts/Dust%20Method.md))
 
 ## Development
 

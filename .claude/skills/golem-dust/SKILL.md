@@ -62,3 +62,12 @@ and name them.
 - Never commit the proxy's bracketed REDACTED markers: check bytes before
   quoting anything read through the proxy.
 - No attribution trailers in committed content unless the project asks for them.
+
+## Debrief template
+Write one debrief at the end of each phase, with these headings:
+- **Outcome** (counts recounted from the tables)
+- **Default rules applied and where**
+- **Open exceptions**
+- **What review caught**
+- **Lessons**
+- **Follow-ups filed**
