@@ -15,14 +15,19 @@
  */
 
 import readline from "node:readline/promises";
-import { UnknownWikiPageError, type WikiPageType } from "../interfaces/index.js";
+import {
+  UnknownWikiPageError,
+  type WikiPageType,
+  WikiWriteConflictError,
+} from "../interfaces/index.js";
 import {
   type DraftFile,
   listDraftFiles,
   readDraftFile,
   removeDraftFile,
 } from "../knowledge/distill-store.js";
-import { FileWikiStore } from "../wiki/index.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
+import { assertSafeWikiPath, FileWikiStore, redactWikiText, safeDraftSlug } from "../wiki/index.js";
 
 /**
  * Zone directory each page type lives under (spec Decision 28 layout, amended by
@@ -46,7 +51,10 @@ const ZONE_FOR_TYPE: Readonly<Record<WikiPageType, string>> = {
 /** The wiki-relative path a draft promotes to, from its `type` (zone) + slug. */
 export function draftTargetRelPath(draft: DraftFile): string {
   const zone = ZONE_FOR_TYPE[draft.frontmatter.type];
-  return zone === "" ? `${draft.slug}.md` : `${zone}/${draft.slug}.md`;
+  // A draft file name is not trusted: a stem written before slugs were redacted, or
+  // hand-edited, may carry a token, and this path goes into the committed wiki.
+  const slug = safeDraftSlug(draft.slug);
+  return zone === "" ? `${slug}.md` : `${zone}/${slug}.md`;
 }
 
 /** Pending drafts awaiting promotion (thin alias over the draft store). */
@@ -136,6 +144,10 @@ async function defaultConfirm(question: string): Promise<boolean> {
  * user declined.
  */
 export async function runPromote(opts: PromoteOptions): Promise<PromoteOutcome> {
+  // R6 (DUSTSEC.8): this writes the COMMITTED wiki, so plugin rules apply here
+  // too. The store re-redacts title, tags, sources and body at write time, which
+  // also covers drafts written before a rule existed or edited by hand.
+  await ensurePluginRedactionRules(opts.projectDir);
   const draft = await readDraftFile(opts.projectDir, opts.slug);
   if (draft === null) {
     throw new Error(`no pending draft "${opts.slug}" (see: golem wiki promote --list)`);
@@ -147,6 +159,37 @@ export async function runPromote(opts: PromoteOptions): Promise<PromoteOutcome> 
       `"${opts.slug}" is an ADR — decisions live at docs/decisions/, outside the wiki ` +
         "(spec Decision 44). Author it there directly rather than promoting it into the wiki.",
     );
+  }
+
+  // Validate the destination BEFORE asking: a failure after the user said yes
+  // would leave them with a confirmed promotion that did nothing.
+  const relPath = draftTargetRelPath(draft);
+  assertSafeWikiPath(relPath);
+  const store = new FileWikiStore({
+    wikiDir: opts.wikiDir,
+    now: () => opts.nowIso.slice(0, 10),
+    projectDir: opts.projectDir,
+  });
+  let existedBefore = true;
+  try {
+    const existing = await store.readPage(relPath);
+    // The store compares the REDACTED title, so this does too.
+    const draftTitle = redactWikiText(draft.frontmatter.title);
+    if (existing.frontmatter.title !== draftTitle) {
+      throw new WikiWriteConflictError(
+        relPath,
+        `existing title "${existing.frontmatter.title}" != "${draftTitle}"`,
+      );
+    }
+    if (existing.frontmatter.type !== draft.frontmatter.type) {
+      throw new WikiWriteConflictError(
+        relPath,
+        `existing type "${existing.frontmatter.type}" != "${draft.frontmatter.type}"`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof UnknownWikiPageError) existedBefore = false;
+    else throw err;
   }
 
   if (!opts.yes) {
@@ -161,17 +204,6 @@ export async function runPromote(opts: PromoteOptions): Promise<PromoteOutcome> 
     const confirm = opts.confirm ?? defaultConfirm;
     const accepted = await confirm(`Promote "${opts.slug}" to ${draftTargetRelPath(draft)}?`);
     if (!accepted) return { kind: "cancelled" };
-  }
-
-  const relPath = draftTargetRelPath(draft);
-  const store = new FileWikiStore({ wikiDir: opts.wikiDir, now: () => opts.nowIso.slice(0, 10) });
-
-  let existedBefore = true;
-  try {
-    await store.readPage(relPath);
-  } catch (err) {
-    if (err instanceof UnknownWikiPageError) existedBefore = false;
-    else throw err;
   }
 
   await store.upsertPage({

@@ -3,6 +3,7 @@
  * source-note draft. Uses a fake InferenceService (no network, no Ollama).
  */
 
+import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type {
   ChatMessage,
@@ -83,6 +84,49 @@ describe("distillPage", () => {
     expect(result.slug).toBe("widget-factory-basics");
     expect(result.tags).toEqual(["widgets", "factory"]);
     expect(result.wikilinks).toEqual(["Widget Factory"]);
+  });
+
+  // The model's slug is ignored for the filename: it arrives lowercased and kebab-cased, which
+  // hides case-sensitive key shapes from the redactor. The slug comes from the REDACTED title.
+  it("ignores a model slug that carries a token and derives the slug from the title", async () => {
+    const hex = randomBytes(20).toString("hex");
+    const draft = {
+      title: "Widget Factory Basics",
+      slug: `notes-${hex}`,
+      tags: [],
+      summary: "summary text",
+      wikilinks: [],
+    };
+    const result = await distillPage(new FakeInferenceService(JSON.stringify(draft)), input);
+    expect(result.slug).toBe("widget-factory-basics");
+  });
+
+  const ALNUM = [
+    ..."abcdefghijklmnopqrstuvwxyz",
+    ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    ..."0123456789",
+  ].join("");
+  const UPPER_DIGITS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ", ..."234567"].join("");
+
+  it("derives a slug with no key fragments from a title carrying case-sensitive keys", async () => {
+    const pick = (chars: string, n: number) =>
+      Array.from(randomBytes(n), (b) => chars[b % chars.length]).join("");
+    const google = `AIza${pick(ALNUM, 35)}`;
+    const aws = `AKIA${pick(UPPER_DIGITS, 16)}`;
+    const draft = {
+      title: `Keys ${google} and ${aws}`,
+      slug: `keys-${google.toLowerCase()}-${aws.toLowerCase()}`,
+      tags: [],
+      summary: "summary text",
+      wikilinks: [],
+    };
+    const result = await distillPage(new FakeInferenceService(JSON.stringify(draft)), input);
+    for (const key of [google, aws]) {
+      for (let i = 0; i + 6 <= key.length; i += 3) {
+        expect(result.slug).not.toContain(key.slice(i, i + 6).toLowerCase());
+      }
+    }
+    expect(result.slug.startsWith("keys-")).toBe(true);
   });
 
   it("normalizes a messy model slug to kebab-case", async () => {

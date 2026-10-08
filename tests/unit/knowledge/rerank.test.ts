@@ -115,6 +115,25 @@ describe("rerankHits", () => {
     expect(result).toEqual(hits);
   });
 
+  // DUST3.8 D9: an invented id used to be skipped, so a full valid order plus one invention was accepted.
+  it("falls back to original order when the model adds an invented chunkId", async () => {
+    const hits = [hit("a", 0.9), hit("b", 0.5), hit("c", 0.7)];
+    const fake = new FakeInferenceService(JSON.stringify({ order: ["c", "zzz", "a", "b"] }));
+    expect(await rerankHits(fake, "q", hits)).toEqual(hits);
+  });
+
+  it("falls back to original order when the model swaps a real id for an invented one", async () => {
+    const hits = [hit("a", 0.9), hit("b", 0.5), hit("c", 0.7)];
+    const fake = new FakeInferenceService(JSON.stringify({ order: ["c", "a", "zzz"] }));
+    expect(await rerankHits(fake, "q", hits)).toEqual(hits);
+  });
+
+  it("falls back to original order when the model repeats a chunkId", async () => {
+    const hits = [hit("a", 0.9), hit("b", 0.5), hit("c", 0.7)];
+    const fake = new FakeInferenceService(JSON.stringify({ order: ["c", "a", "a", "b"] }));
+    expect(await rerankHits(fake, "q", hits)).toEqual(hits);
+  });
+
   it("falls back to original order when the model drops a chunkId", async () => {
     const hits = [hit("a", 0.9), hit("b", 0.5), hit("c", 0.7)];
     const fake = new FakeInferenceService(JSON.stringify({ order: ["c", "a"] }));

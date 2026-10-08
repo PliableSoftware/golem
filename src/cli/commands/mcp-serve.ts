@@ -137,6 +137,32 @@ export function createCoderDispatcher(
   });
 }
 
+/**
+ * The knowledge-related server deps. `wikiDir` is independent of the build: the
+ * coder's graph-first wiki search reads the wiki straight from disk, so a KB
+ * that failed to build must not switch it off (DUST3.8 D14).
+ */
+export function knowledgeServerDeps(
+  dir: string,
+  settings: GolemSettings,
+  knowledge: KnowledgeBase | undefined,
+): { knowledge?: KnowledgeBase; defaultProjectId?: string; wikiDir?: string } {
+  if (!settings.knowledge.enabled) return {};
+  return {
+    ...(knowledge !== undefined ? { knowledge, defaultProjectId: dir } : {}),
+    wikiDir: wikiSourcePrefix(dir, resolveWikiDir(dir, settings.knowledge.wiki_dir)),
+  };
+}
+
+/**
+ * Stop the ingest watchers a `GolemKnowledgeBase` started (DUST3.8 D13). The
+ * contract type does not carry `closeWatchers`, so look for it.
+ */
+export function closeKnowledgeWatchers(knowledge: KnowledgeBase | undefined): void {
+  const closable = knowledge as { closeWatchers?: () => void } | undefined;
+  if (typeof closable?.closeWatchers === "function") closable.closeWatchers();
+}
+
 export default function register(program: Command): void {
   const mcp = program.command("mcp").description("Golem MCP server");
   mcp
@@ -149,7 +175,10 @@ export default function register(program: Command): void {
         let knowledge: KnowledgeBase | undefined;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled
-          ? new FileWikiStore({ wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir) })
+          ? new FileWikiStore({
+              wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir),
+              projectDir: opts.dir,
+            })
           : undefined;
         if (settings.knowledge.enabled) {
           try {
@@ -269,6 +298,7 @@ export default function register(program: Command): void {
             process.stderr.write(`golem: ${message}
 `),
         });
+        process.once("exit", () => closeKnowledgeWatchers(knowledge));
         await serveStdio({
           compression: mcpCompressionService(opts.dir, telemetry),
           ...(plugins.mcpTools.length > 0 ? { pluginTools: plugins.mcpTools } : {}),
@@ -290,16 +320,7 @@ export default function register(program: Command): void {
           },
           projectRootDir: opts.dir,
           localEndpoint: settings.inference.ollama_base_url,
-          ...(knowledge !== undefined
-            ? {
-                knowledge,
-                defaultProjectId: opts.dir,
-                wikiDir: wikiSourcePrefix(
-                  opts.dir,
-                  resolveWikiDir(opts.dir, settings.knowledge.wiki_dir),
-                ),
-              }
-            : {}),
+          ...knowledgeServerDeps(opts.dir, settings, knowledge),
           ...(inference !== undefined ? { inference } : {}),
           ...(inference !== undefined ? { coder: inference } : {}),
           // R9.3: `coder` may draft on any declared target.
