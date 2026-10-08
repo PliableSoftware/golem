@@ -104,7 +104,6 @@ export default function register(program: Command): void {
         // The flag is a one-run override of the config setting; neither can be
         // set from the phone, which is the point (see `telemetry.dashboard_lan`).
         const lan = opts.lan === true || settings.telemetry.dashboard_lan;
-        const source = await statsSourceForCli(opts.dir);
         const handle = await startDashboard({
           port,
           ...(lan ? { host: LAN_HOST } : {}),
@@ -114,7 +113,9 @@ export default function register(program: Command): void {
             const { readSessionState, resolveBlock } = await import("../../hooks/session-state.js");
             const [dial, stats, session] = await Promise.all([
               getDialInfo("compression", { projectDir: opts.dir }),
-              collectStats(source),
+              // Resolved per poll: the source flips from the in-memory live one to
+              // durable telemetry once the proxy records its first request.
+              statsSourceForCli(opts.dir).then((source) => collectStats(source)),
               readSessionState(opts.dir),
             ]);
             return {
@@ -176,7 +177,9 @@ export default function register(program: Command): void {
         await runWatch({
           dir: opts.dir,
           ...(refreshMs !== undefined ? { refreshMs } : {}),
-          ...(opts.color !== undefined ? { color: opts.color } : {}),
+          // commander's `--no-color` defaults the value to true; only an explicit
+          // flag (false) overrides the runWatch TTY / NO_COLOR check.
+          ...(opts.color === false ? { color: false } : {}),
         });
         process.exit(0);
       } catch (err) {
