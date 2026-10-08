@@ -188,12 +188,15 @@ describe("pipeline through the proxy", () => {
     }
   });
 
-  it("FAIL-OPEN: a throwing pipeline forwards the original request byte-faithfully (never breaks the session)", async () => {
+  it("FAIL-SAFE: a throwing pipeline never forwards the raw body (DUSTSEC.1)", async () => {
     const up = recordingUpstream();
     const upstream = await startUpstream(up.handler);
     const errors: unknown[] = [];
-    // A pipeline that always blows up — simulates any bug in redaction/compression.
+    // A pipeline that always blows up — simulates any bug in compression/policy/telemetry.
+    // Its redaction-only entry point is the real one, as in production.
+    const real = pipelineFor(1);
     const explodingPipeline = {
+      ...real,
       name: "exploding",
       process(): Promise<never> {
         return Promise.reject(new Error("boom"));
@@ -205,20 +208,24 @@ describe("pipeline through the proxy", () => {
       onPipelineError: (err) => errors.push(err),
     });
     try {
+      // Secret assembled at runtime so the source holds no literal key.
+      const secret = `AKIA${"IOSFODNN7"}${"EXAMPLE"}`;
       const body = JSON.stringify({
         model: { name: "claude-x" },
-        messages: [{ role: "user", content: "keep me intact" }],
+        messages: [{ role: "user", content: `keep me, drop ${secret}` }],
       });
       const res = await rawRequest(proxy.origin, "/v1/messages", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
       });
-      // Client still gets the real upstream 200 — no 5xx from the proxy.
+      // The session is not broken: the client still gets the upstream 200 ...
       expect(res.status).toBe(200);
-      // Upstream received the ORIGINAL bytes, unmodified.
-      expect(up.received.body).toBe(body);
-      // The fail-open was observed, not silent.
+      // ... but upstream received the REDACTED body, never the raw secret.
+      expect(up.received.body).not.toContain(secret);
+      expect(up.received.body).toContain("[REDACTED:aws-key:1]");
+      expect(up.received.body).toContain("keep me");
+      // The failure was observed, not silent.
       expect(errors).toHaveLength(1);
     } finally {
       await proxy.close();

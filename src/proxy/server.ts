@@ -343,16 +343,33 @@ export class GolemProxy {
       }
     }
 
-    // A3 seam: redaction -> compression. FAIL-OPEN — a pipeline error must
-    // never break the session: fall back to forwarding the ORIGINAL request
-    // byte-faithfully (CLAUDE.md proxy-fidelity rule). Pipeline-disabled or
-    // bypass-header skips it (both forward the body untouched).
+    // A3 seam: redaction -> compression. FAIL-SAFE, never fail-open (DUSTSEC.1,
+    // USER decision R1/S3). A pipeline error must not break the session, but it
+    // must not forward the raw body either: any compression, policy, telemetry or
+    // CCR-write failure would otherwise send an unredacted secret upstream. So
+    // on a throw we re-run REDACTION ALONE on the original request and forward
+    // that. If redaction itself throws (or the pipeline has no redaction-only
+    // entry point to prove it), we FAIL CLOSED: a 5xx, nothing forwarded.
+    // Pipeline-disabled or bypass-header skips it (both forward the body untouched).
     if (this.#pipelineEnabled && !isBypassRequest(req.headers)) {
+      const original = forward;
       try {
-        forward = await this.config.pipeline.process(forward);
+        forward = await this.config.pipeline.process(original);
       } catch (err) {
-        this.config.onPipelineError?.(err, forward);
-        // `forward` is still the original request — leave it unchanged.
+        this.config.onPipelineError?.(err, original);
+        try {
+          const redactOnly = this.config.pipeline.redactOnly;
+          if (redactOnly === undefined) throw new Error("pipeline has no redaction-only fallback");
+          forward = redactOnly.call(this.config.pipeline, original);
+        } catch (redactErr) {
+          failProxy(
+            502,
+            "golem proxy: the request pipeline failed and redaction could not be " +
+              "re-applied, so the request was NOT forwarded (fail closed, nothing " +
+              `reached the upstream). ${String(redactErr)}`,
+          );
+          return;
+        }
       }
     }
 

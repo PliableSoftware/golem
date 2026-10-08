@@ -84,7 +84,7 @@ describe("proxy upstream error mapping", () => {
     });
   });
 
-  it("FAILS OPEN on a pipeline failure: forwards the original request to the upstream instead of erroring", async () => {
+  it("on a pipeline failure: redacts then forwards (secret-free body arrives byte-identical), instead of erroring", async () => {
     let upstreamBody: string | null = null;
     const upstream = await startUpstream((_req, res, body) => {
       upstreamBody = body.toString("utf8");
@@ -92,7 +92,9 @@ describe("proxy upstream error mapping", () => {
     });
     const failing: RequestPipeline = {
       name: "failing",
-      process: () => Promise.reject(new Error("redaction stage exploded")),
+      process: () => Promise.reject(new Error("compression stage exploded")),
+      // Redaction alone finds nothing in a secret-free body, so it hands it back as is.
+      redactOnly: (request) => request,
     };
     const errors: unknown[] = [];
     const proxy = await startProxy({
@@ -107,10 +109,10 @@ describe("proxy upstream error mapping", () => {
         headers: { "content-type": "application/json" },
         body: sent,
       });
-      // Fail-open: the client gets the real upstream 200, NOT a proxy 500.
+      // Fail-safe: the client gets the real upstream 200, NOT a proxy 500.
       expect(response.status).toBe(200);
       expect(response.headers["x-golem-error"]).toBeUndefined();
-      // The upstream saw the ORIGINAL request, byte-for-byte.
+      // Nothing to redact, so the upstream saw the original bytes.
       expect(upstreamBody).toBe(sent);
       // The fallback was observable, not silent.
       expect(errors).toHaveLength(1);

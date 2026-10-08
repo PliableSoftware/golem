@@ -374,6 +374,25 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
 
   return {
     name: "golem",
+    // DUSTSEC.1 — the proxy's error path. Stage 1 alone, on the original
+    // request: the SAME `redactRequestBody` the full pipeline runs, so the same
+    // rules in the same order, plugin rules included. Deliberately has no other
+    // stage and no policy lookup, so nothing that can throw in `process` can
+    // throw here except redaction itself.
+    redactOnly(request: ProxyRequest): ProxyRequest {
+      if (request.body === null || !isMessagesRequest(request)) return request;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(request.body.toString("utf8"));
+      } catch {
+        // Same verdict as `process`: not JSON we can rewrite.
+        return request;
+      }
+      if (!isRecord(parsed)) return request;
+      const redacted = redactRequestBody(parsed);
+      if (redacted.count === 0 || !isRecord(redacted.value)) return request;
+      return { ...request, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
+    },
     async process(request: ProxyRequest): Promise<ProxyRequest> {
       // R10.23 — every stage below runs BEFORE the request is forwarded, so
       // whatever they cost, the user is watching the client say "waiting for

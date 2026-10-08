@@ -152,6 +152,14 @@ export type RouteResolver = (
 export interface RequestPipeline {
   readonly name: string;
   process(request: ProxyRequest): Promise<ProxyRequest>;
+  /**
+   * DUSTSEC.1 — redaction alone, run by the proxy on the ORIGINAL request when
+   * `process` throws. Must be the same redaction `process` runs. Synchronous and
+   * total apart from redaction itself: if it throws, the proxy fails closed.
+   * A pipeline without it cannot be proven safe to fall back to, so a `process`
+   * error then also fails closed.
+   */
+  redactOnly?(request: ProxyRequest): ProxyRequest;
 }
 
 /** The A1 default: forwards every request byte-for-byte. */
