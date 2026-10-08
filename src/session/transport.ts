@@ -124,6 +124,9 @@ export interface TransportOptions {
   readonly nowIso?: () => string;
 }
 
+/** Message ids currently being attributed/delivered, so a concurrent twin waits for the outcome. */
+const inFlight = new Map<string, Promise<void>>();
+
 /** Per-session idempotency ledgers, kept beside the transport rather than in it. */
 const ledgers = new Map<string, MessageLedger>();
 
@@ -231,7 +234,10 @@ export function handleStream(
         write(
           sseFrame({
             type: "ended",
-            seq: session.bus.cursor + 1,
+            // The CURRENT cursor, not cursor + 1: this frame is synthetic (never in
+            // the ring), so an id past the cursor would make a Last-Event-ID
+            // reconnect skip the next real event.
+            seq: session.bus.cursor,
             reason,
           } as SessionEvent),
         );
@@ -309,6 +315,15 @@ export async function handleMessage(
   }
 
   const ledger = ledgerFor(session.bus.sessionId);
+  // Reserve the id SYNCHRONOUSLY, before any await: lookup and record are
+  // separated by the attribution write and the delivery, so two concurrent POSTs
+  // of one id would otherwise both pass the lookup and both deliver.
+  const flightKey = `${session.bus.sessionId}\u0000${messageId}`;
+  for (;;) {
+    const flight = inFlight.get(flightKey);
+    if (flight === undefined) break;
+    await flight.catch(() => undefined);
+  }
   const already = ledger.lookup(messageId);
   if (already !== undefined) {
     // A retry after a dropped connection. Do NOT deliver again — a duplicated
@@ -321,6 +336,30 @@ export async function handleMessage(
     return;
   }
 
+  let release: () => void = () => undefined;
+  inFlight.set(
+    flightKey,
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  try {
+    await deliverOnce(session, res, ledger, messageId, text, deviceId, options);
+  } finally {
+    inFlight.delete(flightKey);
+    release();
+  }
+}
+
+async function deliverOnce(
+  session: TransportSession,
+  res: ServerResponse,
+  ledger: MessageLedger,
+  messageId: string,
+  text: string,
+  deviceId: string,
+  options: TransportOptions,
+): Promise<void> {
   // Invariant 4: attribution BEFORE delivery, and awaited. A turn nobody can
   // attribute must not run, so a failure to record is a failure to send.
   const ts = options.nowIso?.() ?? new Date().toISOString();
