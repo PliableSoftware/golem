@@ -311,9 +311,10 @@ export function buildSpawnEnv(
  * A marker rather than inference: "some `GOLEM_UPSTREAM_API_KEY*` var is set"
  * cannot distinguish "the parent injected everything" from "the parent injected
  * one of three", and guessing wrong would silently start the proxy without a
- * credential it needs. The parent knows, so the parent says. An empty resolution
- * still sets it — "there was nothing to resolve" is an answer, and re-deriving it
- * costs the same as deriving it.
+ * credential it needs. The parent knows, so the parent says. An EMPTY resolution
+ * does NOT set it ({@link daemonSpawnEnv}): the caller may simply not have
+ * resolved, and a daemon told "nothing to resolve" would start with no gateway
+ * key at all, so it resolves for itself instead.
  *
  * Absent for a hand-run `golem proxy run`, which therefore resolves normally.
  */
