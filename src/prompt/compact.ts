@@ -16,7 +16,7 @@
  *     any `/caveman/i` mention. Installing theirs to compact one file would
  *     silently switch Golem's own brevity stage off — a collision the task's
  *     hard constraints name explicitly.
- *  2. Tier 2 depends on `golem ext install` (R8.14), which is not built.
+ *  2. Tier 2 depends on `golem pkg install` (R8.14, shipped).
  *  3. `src/prompt/` already does local, inspectable, shown-never-sent rewriting
  *     for R5.5, so the seam exists. Cited, nothing copied.
  *

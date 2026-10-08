@@ -54,7 +54,7 @@ export function registerPrompts(server: McpServer): void {
       promptMessages(
         `Call the stats tool${
           project_id === undefined || project_id === "" ? "" : ` with project_id "${project_id}"`
-        } and present the results concisely: current slider level, total tokens ` +
+        } and present the results concisely: current compression level, total tokens ` +
           "saved (before → after), request count, per-stage attribution if any, " +
           "and CCR store activity.",
       ),

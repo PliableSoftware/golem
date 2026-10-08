@@ -75,7 +75,7 @@ export function createGolemMcpServer(deps: import("./deps.js").GolemMcpServerDep
 }
 
 function registerTools(server: McpServer, deps: import("./deps.js").GolemMcpServerDeps): void {
-  // R9.11: built HERE rather than further down, because `expand`/`stats`/`level`
+  // R9.11: built HERE rather than further down, because `expand`/`stats`
   // (and `devices`/`snooze`) are registered above where it used to be declared and
   // were therefore the only tools recording NOTHING. That gap was not visible as a
   // gap: `stats` reported per-tool call counts for the instrumented tools and
