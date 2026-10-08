@@ -1,7 +1,7 @@
 ---
 task: DUST5.1
 title: "Keep draft marketing prose out of local answers: exclude docs/marketing/ from local-answer sources"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "A failing-first unit test shows isProseSource('docs/marketing/x.md') is t
 depends_on: []
 touches: [src/knowledge/local-answer.ts, tests/unit/knowledge, docs/golem-spec.md, docs/wiki/concepts]
 created: 2026-10-08
+updated: 2026-10-08T23:21:55.119Z
 ---
 
 ## What this is
@@ -25,3 +26,7 @@ Widen `WORKING_DOC_RE` to also match `docs/marketing/`. Keep it an explicit list
 - A configurable exclusion list.
 - Excluding `docs/marketing/` from the vector index or `search`. Being findable by search is fine; being quoted as an answer is not.
 - Any other change to local-answer confidence or scope.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

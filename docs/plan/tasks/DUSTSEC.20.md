@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.20
 title: "The redaction walker rewrites 33 and 34 character API ids (server tool, batch and container ids), and the API rejects the placeholder"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "A failing-first test per id family shows the id survives redaction unchan
 depends_on: []
 touches: [src/pipeline/redaction.ts, src/pipeline/redaction-rules.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T23:21:58.865Z
 ---
 
 ## What this is
@@ -20,3 +21,7 @@ A redaction false positive that breaks real requests. The fix must not weaken re
 
 - Exempting fields by name.
 - The gzip and byte-order-mark gap and the body size cap (DUSTSEC.21).
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

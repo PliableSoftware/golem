@@ -1,7 +1,7 @@
 ---
 task: DUST5.4
 title: "Draft the v0.54.x changelog narrative, with the DUSTSEC security fixes stated honestly as unreleased"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "docs/marketing/changelog-v0.54.md exists, marked DRAFT; each entry names 
 depends_on: [DUST5.2]
 touches: [docs/marketing]
 created: 2026-10-08
+updated: 2026-10-08T23:21:56.736Z
 ---
 
 ## What this is
@@ -36,3 +37,7 @@ Whether and how to publish a security advisory, and whether to cut a release fir
 - Cutting a release or editing `RELEASING.md`.
 - A security advisory, CVE request or GitHub Security Advisory.
 - Versions before v0.54.0.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

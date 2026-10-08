@@ -1,7 +1,7 @@
 ---
 task: DUST5.6
 title: "Independent read-only fact-check of every Phase 5 draft against the code"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: review
@@ -10,6 +10,7 @@ gate: "A reviewer that did not write the drafts checks EVERY CLAIMS.md row cited
 depends_on: [DUST5.3, DUST5.4, DUST5.5]
 touches: [docs/marketing]
 created: 2026-10-08
+updated: 2026-10-08T23:21:57.801Z
 ---
 
 ## What this is
@@ -22,3 +23,7 @@ Also check that every DUSTSEC "unreleased" statement still holds at review time 
 
 - Style or tone edits beyond what a false claim requires.
 - Publishing.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

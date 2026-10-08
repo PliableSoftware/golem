@@ -1,7 +1,7 @@
 ---
 task: DUST4.4
 title: "Dogfood /golem-dust Phase 1 on a small slice by an agent that has only the skill, and record what the skill got wrong"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "docs/plan/audit/dust-4-dogfood/ holds the audit note the run produced and
 depends_on: [DUST4.1, DUST4.2, DUST4.3]
 touches: [docs/plan/audit/dust-4-dogfood, src/cli/skills/dust.ts, .claude/skills/golem-dust, docs/plan/tasks]
 created: 2026-10-08
+updated: 2026-10-08T23:21:54.032Z
 ---
 
 ## What this is
@@ -29,3 +30,7 @@ A test of the skill, not of the code. The question is whether an agent that has 
 - Phases 2 and 3 of the method on the slice. Phase 1 only.
 - Fixing any drift the audit finds in the Change Ledger. File it as a normal task if it is real.
 - Rewriting the skill wholesale. Small wording fixes go into `dust.ts` with tests; anything larger is a follow-up task doc.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

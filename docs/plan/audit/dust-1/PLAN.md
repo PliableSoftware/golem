@@ -60,14 +60,16 @@ doesn't touch code or wiki structure.
 
 ---
 
-## Status (as of 2026-10-08, night)
+## Status (as of 2026-10-09)
 
 **Phase 1: done and merged.** DUST1.1-DUST1.12 notes and `SUMMARY.md`.
 
-**Security batch: done.** `DUSTSEC.1`-`DUSTSEC.18` shipped and independently reviewed twice. `DUSTSEC.10` (R8, no relay-connected signal at the hook) is open for a USER decision, and `npm-claim-golem-run` is open for the user.
+**Security batch: done except one decision.** `DUSTSEC.1`-`DUSTSEC.20` shipped (`DUSTSEC.19` and `DUSTSEC.20` came out of Phase 5). `DUSTSEC.10` (R8, no relay-connected signal at the hook) is open for a USER decision. `DUSTSEC.21` and `DUSTSEC.22` are filed redaction follow-ups. `npm-claim-golem-run` is open for the user.
 
-**Phase 2: done and merged.** `DUST2.1`-`DUST2.10`, `DUST2.24`, `DUST2.26`. `DUST2.11`-`DUST2.23` are roadmap items and stay queued; `DUST2.25` is blocked on a USER decision. Open contradictions G3, M2, H2, P3, P4 are listed in spec section 10.
+**Phase 2: done and merged.** `DUST2.1`-`DUST2.10`, `DUST2.24`, `DUST2.26`. `DUST2.11`-`DUST2.23` are roadmap items and stay queued; `DUST2.25` is blocked on a USER decision. Open contradictions G3, M2, H2, P3, P4 are in spec section 10.
 
-**Phase 3: done and merged.** `DUST3.1`-`DUST3.18` (PRs #242-#256). The 25 NEEDS-USER dead-code proposals in `PHASE3-INDEX.md` are not acted on and wait for the user, as does `session-dropframe-seq-and-hostlog`. Follow-ups: `vector-store-lock-and-outside-watch`, `proxy-runtime-webcache-windows-flake`, `dust3-leftovers`.
+**Phase 3: done and merged.** `DUST3.1`-`DUST3.18`. The 25 NEEDS-USER dead-code proposals in `PHASE3-INDEX.md` wait for the user, as does `session-dropframe-seq-and-hostlog`.
 
-**Phase 4-5: task docs written (DUST4.1-DUST4.5, DUST5.1-DUST5.8), not started.**
+**Phase 4: done.** `DUST4.1`-`DUST4.5`: the `golem-dust` skill, installed by default. Follow-ups: `DUST4.6`, `skill-opt-out-sticks`.
+
+**Phase 5: drafts done, NOTHING PUBLISHED.** `DUST5.1`-`DUST5.7`. `DUST5.8` (publish, and whether to cut a release and an advisory first) is the user's; no release tag contains any DUSTSEC fix.
