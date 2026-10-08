@@ -293,6 +293,10 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       for (const backend of [...(keychainB === null ? [] : [keychainB]), fileB]) {
         let had: string | null;
         try {
+          // Nothing can be stored in a backend that is not usable here (no
+          // libsecret on a headless box), so it is empty, not faulted — the read
+          // and store paths make the same call.
+          if (!(await backend.available())) continue;
           had = await backend.get(account);
         } catch (err) {
           // A backend we could not read is NOT an empty one: reporting "no stored

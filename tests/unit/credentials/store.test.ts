@@ -218,3 +218,14 @@ describe("forget() backend faults", () => {
     expect(await store.forget("never-there")).toEqual([]);
   });
 });
+
+describe("forget() with an unavailable backend", () => {
+  it("does not throw for a keychain that is unavailable (e.g. no libsecret)", async () => {
+    const unavailable: CredentialBackend = {
+      ...stubKeychain(null, "secret-tool: not found"),
+      available: async () => false,
+    };
+    const store = createCredentialStore({ userDir, platform: "linux", keychain: unavailable });
+    await expect(store.forget("headless")).resolves.toEqual([]);
+  });
+});
