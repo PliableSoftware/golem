@@ -11,13 +11,13 @@ Run on 2026-10-08 in this worktree (`git tag --sort=-v:refname`, `git tag --cont
 - `npm view @pliable/golem versions`, read-only on 2026-10-08, returned exactly one version: `0.54.2`. This read does not show `0.54.3` on the registry, and it does not show what was installed from any other channel. Whether `v0.54.3` was ever published is not established by this draft.
 - **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 commits). Every fix is on `development` only.
 
-So: **every tagged build, `v0.54.0` and `v0.54.3` alike, and the `0.54.2` build on npm (built before the fixes existed), lacks all of the DUSTSEC fixes.** Anyone running a build from this line should treat the weaknesses in the security section as present in it, with one caveat: for each item the section says which tagged builds were checked directly and which were not. No wording in this draft says that current releases are protected. <!-- B-29; git tag --contains over the fix shas; 1719982; b949fd3 -->
+So: **every tagged build, `v0.54.0` and `v0.54.3` alike, lacks all of the DUSTSEC fixes.** The `0.54.2` build on npm was not checked directly: its source commit is unknown but is `2fc7cd2` or later, and no tag contains any fix. Anyone running a build from this line should treat the weaknesses in the security section as present in it, with one caveat: for each item the section says which tagged builds were checked directly and which were not. No wording in this draft says that current releases are protected. <!-- B-29; git tag --contains over the fix shas; 1719982; b949fd3 -->
 
 ## Unreleased (on `development`, in no tag)
 
 ### Security fixes: DUSTSEC.1-9 and 11-19 merged (all unreleased), DUSTSEC.10 open
 
-These came out of Dust Phase 1, a set of eleven read-only audits by project agents (the audit is `docs/plan/audit/dust-1/SUMMARY.md`; the choices are the USER decisions in `docs/plan/audit/dust-1/DECISIONS.md`). They were then reviewed twice by independent project agents (the first review returned VERDICT: block, the second VERDICT: concerns with no High). That is review by agents inside this project, not an outside audit or certification. DUSTSEC.18 got no third review. <!-- B-27; B-28; debrief 2026-10-08-DUSTSEC-security-batch.md; merged PRs #213-#219, #221-#224, #227, #228 -->
+These came out of Dust Phase 1, a set of eleven read-only audits by project agents (the audit is `docs/plan/audit/dust-1/SUMMARY.md`; the choices are the USER decisions in `docs/plan/audit/dust-1/DECISIONS.md`). They were then reviewed twice by a separate reviewer agent in this project (the first review returned VERDICT: block, the second VERDICT: concerns with no High). That is not an outside audit, and it is not a certification. DUSTSEC.18 got no third review. <!-- B-27; B-28; debrief 2026-10-08-DUSTSEC-security-batch.md; merged PRs #213-#219, #221-#224, #227, #228 -->
 
 Severity below is the label the Phase 1 audit gave. "Reach" says what an attacker or accident needed. No step-by-step reproduction is given on purpose.
 
@@ -46,7 +46,7 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 - Was wrong: a repository could commit a team binding that named its own portal URL. The next time a member ran `golem init` (with a token present) or the team sync commands, the client sent the portal access token, as a bearer credential, to that URL. The token was looked up by issuer and was not matched to the host it was sent to. A refresh after a 401 re-sent a fresh token the same way, and neither URL had an https check.
 - Reach: a repository author. A hostile or compromised repo that a member clones and works in.
 - Fix, first pass: the token is bound to the API origin recorded at link time, https only (loopback http is exempt). It is never sent, or re-sent after refresh, to another origin. Note the deviation from the task brief: the brief asked for the issuer origin, but issuer and API are different origins in production, so the API origin is used. Tokens linked before this change need one `golem team link`.
-- Follow-ups from the reviews: the refresh path also had to be bound (DUSTSEC.17, `cb313c7`, `078b77f`, PR #221), then a committed local settings file could still supply the portal URL because git tracks it even when ignored, and redirects had to be refused (DUSTSEC.18, `dcba38a`, `8e1d5be`, `2e737ea`, PR #227). `golem team link` now refuses portal identity that a project or local settings file supplies and takes explicit `--portal-url` and `--issuer` flags. The token POST and the discovery GET refuse redirects. A remote team layer cannot set the portal identity keys (`portal.url`, `portal.issuer`, `portal.client_id`).
+- Follow-ups from the reviews: the refresh path also had to be bound (DUSTSEC.17, `cb313c7`, PR #221), and `golem team link` had to refuse a portal identity that a project settings file supplies (DUSTSEC.17, `078b77f`, PR #221); then a committed local settings file could still supply the portal URL because git tracks it even when ignored, and redirects had to be refused (DUSTSEC.18, `dcba38a`, `8e1d5be`, `2e737ea`, PR #227). `golem team link` now refuses portal identity that a project or local settings file supplies and takes explicit `--portal-url` and `--issuer` flags. The token POST and the discovery GET refuse redirects. A remote team layer cannot set the portal identity keys (`portal.url`, `portal.issuer`, `portal.client_id`).
 - Status: fixed on `development` in `6e9ca6c` (PR #213, merge `508d078`), with follow-ups in PR #221 (merge `44876b4`) and PR #227 (merge `d74cc11`). In no tag.
 - Affected released builds: present in `v0.54.3` per the audit baseline; earlier tags not traced.
 <!-- C-06; 6e9ca6c; 508d078; cb313c7; 078b77f; 44876b4; dcba38a; 8e1d5be; 2e737ea; d74cc11 -->
@@ -64,7 +64,7 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 - Reach: a third party registering the old name. No access to the user's machine needed beyond the user running the installer or `golem update`.
 - Fix: `golem update`, the installers, `ps` detection, the lockfile and the docs now use `@pliable/golem` (the canonical name, C-26). Claiming `golem-run` itself is an open task that belongs to the user.
 - Status: fixed on `development` in `8b64e0b`, `a2cd6f0`, `0486815`, PR #219 (merge `c34fd52`). In no tag.
-- Affected released builds: `v0.54.0` still names `golem-run` in `package.json`; the rename is first in `v0.54.3` (`2fc7cd2` is contained in `v0.54.3` only). So the mismatch is in `v0.54.3`, and by the registry read above `0.54.2` is the one version on npm under the new name.
+- Affected released builds: `v0.54.0` still names `golem-run` in `package.json`; the rename is first in `v0.54.3` (`2fc7cd2` is contained in `v0.54.3` only). So the mismatch is in `v0.54.3`. By the registry read above `@pliable/golem@0.54.2` is the one version on npm under the new name; its source commit is unknown but is `2fc7cd2` or later.
 <!-- C-26; B-24; 8b64e0b; a2cd6f0; 0486815; c34fd52; 2fc7cd2; 1719982 -->
 
 **DUSTSEC.6: the Buzz key parser could write the secret key as the public key** (audit S6, HIGH, rated "not currently reachable").
@@ -76,7 +76,7 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 
 #### The other security-relevant items
 
-**DUSTSEC.3: a guard against an agent turning redaction off.** A Claude Code PreToolUse hook denies the documented ways an agent's Bash or file edit would set `proxy.bypass_all`. It guards common spellings; it is not a sandbox. After review it also catches pipelines into a shell, `env -S`, a shell flag before `-c`, here-strings and edits that flip only the value, and treats heredoc bodies as data (the earlier version denied ordinary file writes). Still not caught: `cat file | sh`, process substitution, and a shell invoked through a variable. Reach: an agent with Bash. Status: `3551148`, PR #214; follow-ups `b81e0c5` (PR #223) and `6702e63` (PR #228). In no tag. <!-- C-07; 3551148; 8c3885a; b81e0c5; 508d67b; 6702e63; 1d61de5 -->
+**DUSTSEC.3: a guard against an agent turning redaction off.** A Claude Code PreToolUse hook denies the documented ways an agent's Bash or file edit would set `proxy.bypass_all`. It guards common spellings; it is not a sandbox. After review it also catches pipelines into a shell, `env -S`, a shell flag before `-c`, here-strings and edits that flip only the value, and treats heredoc bodies as data (the earlier version denied ordinary file writes). Not caught, among others: `cat file | sh`, process substitution, a shell invoked through a variable, a settings file written by other means (`echo >`, `jq`, `sed -i`, a script), base64, and a binary renamed away from `golem`. Reach: an agent with Bash. Status: `3551148`, PR #214; follow-ups `b81e0c5` (PR #223) and `6702e63` (PR #228). In no tag. <!-- C-07; 3551148; 8c3885a; b81e0c5; 508d67b; 6702e63; 1d61de5 -->
 
 **DUSTSEC.7: the built-in redaction rule table was exported mutable.** Code that imported the table could change the rules. The exported rules are now a frozen copy with their own RegExp objects (freezing the array alone was not enough, because `re.compile()` still rewrites a frozen RegExp). Reach: in-process code, which includes any plugin; a plugin has process authority anyway, so this is not a claim that a plugin cannot weaken redaction. Status: `5e4407c`, PR #215 (merge `513a5e3`). In no tag. <!-- B-30; 5e4407c; 513a5e3 -->
 
@@ -100,7 +100,7 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 - Reach: a client sending such a request through the proxy.
 - Affected released builds: all of them, by the evidence of the tags (no tag contains the fix). This draft did not trace it tag by tag.
 - Status: fixed on `development` in PR #265 (code `109f32b`, task doc `d52dbf8`, test `96d9b81`). Every JSON object or array body on any route now gets the same redaction rules, in the same order, with plugin rules, and the fail-safe path covers the same routes. Level `off` still redacts; `bypass_all` is unchanged. No tag contains it.
-- What it does NOT cover, found by the independent review of the change and tracked as separate work: a JSON body sent with a content encoding such as gzip, or one that begins with a byte-order mark, fails to parse and is forwarded unredacted; a body that is not JSON (multipart uploads, plain text) is forwarded unchanged and a test now pins that; the redaction walk is synchronous with no size cap on the request body.
+- What it does NOT cover, found by a review of the change by a separate reviewer agent in this project (not an outside audit) and tracked as separate work: a JSON body sent with a content encoding such as gzip, or one that begins with a byte-order mark, fails to parse and is forwarded unredacted; a body that is not JSON (multipart uploads, plain text) is forwarded unchanged and a test now pins that; the redaction walk is synchronous with no size cap on the request body.
 - A related defect that already existed on the main messages route, not introduced here: the redaction's long-token rule also rewrites some 33 and 34 character API ids (server tool and batch ids), which the API then rejects, and this change extends that behaviour to the token-count and batches routes. It is tracked as its own task.
 <!-- C-01; 109f32b; d52dbf8; 96d9b81; 68580a4 -->
 
@@ -119,7 +119,7 @@ Phase 3 re-checked the Phase 1 findings against current code (52 did not reprodu
 
 ### Other work on `development` (not security)
 
-- Phase 2 rebaseline of the spec, wiki and ADRs against the shipped code, and the hard-rule wording change from "byte-faithful" to "lossless and prefix-stable at level <= 1" (PR #225, `32f3b64`, merge `6a1f0d9`; Phase 2 is PRs #225 and #230-#240). Redaction and dedup rewrite the body, so the older wording was dropped. <!-- C-11; B-20; 32f3b64; 6a1f0d9 -->
+- Phase 2 rebaseline of the spec, wiki and ADRs against the shipped code, and the hard-rule wording change from the retired wording to "lossless and prefix-stable at level <= 1" (PR #225, `32f3b64`, merge `6a1f0d9`; Phase 2 is PRs #225 and #230-#240). Redaction and dedup rewrite the body, so the older wording was dropped. <!-- C-11; B-20; 32f3b64; 6a1f0d9 -->
 - Phase 3 refactor: PRs #242-#256, 12 safe dead-code deletions and 63 confirmed bugs. Tests went from 4296 to 4464 per the Phase 3 debrief. 25 dead-code proposals were left for the user. <!-- 2026-10-08-DUST3-refactor.md; a857765; 9cf5432 -->
 - Drafts under `docs/marketing/` are excluded from local answers (PR #259, `49bd546`, merge `51e6681`). <!-- C-15; 49bd546; 51e6681 -->
 - The claims ledger (PR #262, merge `f866023`). <!-- f866023 -->
@@ -136,11 +136,11 @@ Tag contains every item below; each item's own commit is named. The release comm
 
 ## v0.54.2 (release commit `43ac834`, 2026-09-20; no tag)
 
-On npm as `0.54.2` per the read above. Contained in tag `v0.54.3`. Changes since 0.54.1 include personas auto-sync (`032d20f`, PR #201, merge `3805228`) and the Buzz design docs. <!-- 43ac834; 032d20f; 3805228 -->
+`@pliable/golem@0.54.2` is on npm per the read above. Its source commit is unknown, but it is `2fc7cd2` or later, because the package was still named `golem-run` at the release commit `43ac834`. Release commit `43ac834` is contained in tag `v0.54.3`. Changes since 0.54.1 include personas auto-sync (`032d20f`, PR #201, merge `3805228`) and the Buzz design docs. <!-- 43ac834; 032d20f; 3805228 -->
 
 ## v0.54.1 (release commit `54f089a`, 2026-09-16; no tag)
 
-Not on npm per the read above. Contained in tag `v0.54.3`. Includes the fix finishing the `inference.default_target` to `inference.model` rename, which had silently discarded a target (`5647ba6`), and the retirement of `worker_targets` in favour of the worker persona's model (`b2fae4b`; DUSTSEC.13 later reversed that). <!-- 54f089a; 5647ba6; b2fae4b; 13aaf24 -->
+Contained in tag `v0.54.3`. Includes the fix finishing the `inference.default_target` to `inference.model` rename, which had silently discarded a target (`5647ba6`), and the retirement of `worker_targets` in favour of the worker persona's model (`b2fae4b`; DUSTSEC.13 later reversed that). <!-- 54f089a; 5647ba6; b2fae4b; 13aaf24 -->
 
 ## v0.54.0 (tag `v0.54.0`, `b949fd3`, 2026-09-07)
 
