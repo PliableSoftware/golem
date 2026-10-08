@@ -506,7 +506,10 @@ export default function register(program: Command): void {
     .action(async (opts: { dir: string; all: boolean; json: boolean }) => {
       try {
         const userDir = defaultUserDir();
-        const { settings, config, tokens } = await portalContext(opts.dir);
+        // Read the binding BEFORE resolving the portal: `resolvePortalConfig`
+        // throws when no portal is configured, which is every solo user, and
+        // the unlinked answer needs no portal at all (same order as `status`).
+        const { settings } = await loadConfig({ projectDir: opts.dir });
         const state = readTeamBinding(settings.team);
 
         // Decision 64(c). No team named means no portal request, no cache read
@@ -530,6 +533,7 @@ export default function register(program: Command): void {
           return;
         }
 
+        const { config, tokens } = await portalContext(opts.dir);
         const { binding } = state;
         const targets: { orgId: string; portalUrl: string }[] = [
           { orgId: binding.orgId, portalUrl: teamApiBaseUrl(binding, config.apiBaseUrl) },
