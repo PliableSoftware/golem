@@ -4,7 +4,7 @@ type: concept
 tags: [distribution, install, portal, vercel, golem.run, alignment]
 sources: [install/install.sh, install/install.ps1, docs/plan/verification-notes.md#149, docs/plan/verification-notes.md#153, docs/plan/tasks/R7.6-infra.md, docs/plan/tasks/release-portal-assets.md]
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-10-08
 ---
 
 # Portal Install Contract
@@ -73,7 +73,7 @@ Unambiguous fallbacks for when UA matching misfires, and what the docs cite:
 ### 3. `/bin/<asset>` resolves to a standalone binary
 
 Both installers default `GOLEM_INSTALL_BASE` to `https://golem.run` and fetch
-`$base/bin/$asset` (`install/install.sh:66`, `install/install.ps1:55-56`):
+`$base/bin/$asset` (`install/install.sh:67`, `install/install.ps1:55-56`):
 
 - POSIX: `golem-${os}-${arch}` — os/arch from `uname`
 - Windows: `golem-windows-$arch.exe`
@@ -86,9 +86,21 @@ any release.
 
 1. Node ≥ 22 + npm present → `npm install -g @pliable/golem` (self-updating)
 2. otherwise → download the standalone binary (no Node)
+3. **opt-in only**, `GOLEM_INSTALL_NODE=1` and Node < 22 or no npm → bootstrap Node,
+   retry rung 1 once, and fall back to rung 2 if that did not yield Node ≥ 22 + npm
+
+The numbering is the scripts' own (`install/install.sh:6-8`,
+`install/install.ps1:5-7`), and it is not the execution order: the opt-in
+rung is *tried between* 1 and 2 (`install.sh:125-141`) but only when the env var is
+set, so by default the ladder is exactly the two rungs above and an install never
+bootstraps a runtime unasked. This page used to say the ladder was "exactly two
+rungs"; the third is part of the contract.
 
 `GOLEM_VERSION` pins the npm version; `GOLEM_INSTALL_BASE` overrides the base
-URL. Both are read by both scripts and are part of the contract.
+URL; `GOLEM_INSTALL_NODE` (default 0) enables rung 3. All three are read by both
+scripts and are part of the contract. If the npm install fails because the package is
+not published yet, both scripts warn and fall back to the binary
+(`install.sh:56-61`).
 
 ## What the move off nginx cost
 
@@ -116,9 +128,11 @@ the release now stages the scripts, packs the npm tarball, renders
 `config-schema.json`, and **asserts each required asset is present** rather than
 trusting the upload.
 
-So what stands between the portal and a working front door is now only that **no
-release has been cut since**. Actions itself is healthy: the 2026-08-22 billing
-block cleared by 2026-09-02. See [[Release Pipeline]].
+That prerequisite is met: releases have been cut since (the latest release commit on
+`development` at the time of this rebaseline is `chore(release): v0.54.3`, tags
+`v0.53.0`, `v0.54.0` and `v0.54.3` exist locally). Whether the deployed portal's routes
+currently serve those assets is a live-site fact this page cannot check (UNVERIFIED);
+that is `R7.6-infra`'s gate below. See [[Release Pipeline]].
 
 ## The live gate
 
