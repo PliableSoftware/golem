@@ -95,6 +95,10 @@ export interface Keypair {
   readonly secretHex: string;
 }
 
+/** A line's label: its first word, so a curve name later in the line is not a label. */
+const LABEL_PUB_RE = /^[\s\W_]*n?pub/iu;
+const LABEL_SEC_RE = /^[\s\W_]*n?sec/iu;
+
 /**
  * Parse `buzz-admin generate-key`'s stdout.
  *
@@ -123,8 +127,10 @@ export function parseGenerateKeyOutput(stdout: string): Keypair {
   for (const line of stdout.split(/\r?\n/u)) {
     const hex = HEX64_RE.exec(line);
     if (hex === null) continue;
-    const isPub = /pub/iu.test(line);
-    const isSec = /sec/iu.test(line);
+    // The label is the line's first word (`npub`/`nsec` included), never a substring:
+    // `public key (secp256k1): …` names a curve, and must not count as a secret label.
+    const isPub = LABEL_PUB_RE.test(line);
+    const isSec = LABEL_SEC_RE.test(line);
     if (isPub === isSec) continue;
     if (isPub) {
       clash ||= pub !== null;
