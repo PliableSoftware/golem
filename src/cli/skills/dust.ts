@@ -17,14 +17,30 @@ the wiki or docs tree.
 
 ## Phase 1 — audit (read-only)
 1. **Partition by subsystem.** One note and one branch per partition, each in its
-   own \`git worktree\` (one HEAD per agent), run in parallel. Auditors write
-   notes only, never code.
-2. **Classify every documented claim** as matches, drifted, partial, not started
-   or contradicted, each with \`path:line\` evidence.
-3. **Close out.** Merge the notes and write a SUMMARY whose counts are recounted
-   mechanically from the tables, never added up from the notes' own headers.
-   List contradictions for the human; do not resolve them. Flag HIGH security
-   items for an out-of-band fix before any refactor.
+   own \`git worktree\` (one HEAD per agent), run in parallel. A slice one auditor
+   can hold is a single partition, still on its own branch. Auditors write notes
+   only, never code, and do not read earlier audit notes until their own table is
+   done.
+2. **Classify every documented claim** with \`path:line\` evidence. A claim is one
+   checkable statement in the docs in scope: list those docs at the top of the
+   note, split compound sentences, skip rationale. Classes:
+   - matches: the code does exactly this.
+   - drifted: written about this code, now false in a specific.
+   - partial: true only for some inputs, commands or conditions.
+   - not started: documented, no code.
+   - contradicted: the code does the opposite, or two docs disagree.
+
+   For a claim of absence, cite the search you ran. If code cannot settle a
+   claim, name what you relied on instead. A truncated tool read is not a read:
+   re-read the lines you cite. Write one table row per claim (id, doc:line,
+   claim, class, evidence) with the class in its own cell, so counts can be taken
+   with grep.
+3. **Close out.** Merge the notes and write a SUMMARY beside them (the project's
+   audit directory if it has one) whose counts are recounted mechanically from
+   the tables, never added up from the notes' own headers. List contradictions
+   for the human; do not resolve them. Flag HIGH security items (a redaction,
+   consent, credential or other hard-rule guarantee weaker in code than
+   documented) for an out-of-band fix before any refactor.
 
 ## Decisions record
 The human decides the listed contradictions. Everything else follows the
@@ -65,8 +81,9 @@ and name them.
 ## Standing rules for every agent in the run
 - Commit early on your own branch.
 - At a usage limit, park with a note (\`/golem-park\`) instead of stopping.
-- Never commit the proxy's bracketed REDACTED markers: check bytes before
-  quoting anything read through the proxy.
+- Never commit the proxy's bracketed REDACTED markers: what you see through the
+  proxy can differ from the file, so \`git grep\` the file and your diff for the
+  marker before quoting or committing.
 - No attribution trailers in committed content unless the project asks for them.
 
 ## Debrief template
