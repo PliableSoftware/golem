@@ -179,7 +179,7 @@ Every one of these is load-bearing for `golem.run`, which redirects to
 | `install.sh`, `install.ps1` | the bare domain, by User-Agent |
 | `golem-linux-x64`, `golem-linux-arm64`, `golem-darwin-x64`, `golem-darwin-arm64`, `golem-windows-x64.exe`, `golem-windows-arm64.exe` | `/bin/<asset>`, tier 2 of the install ladder |
 | `SHA256SUMS` | anyone verifying a binary |
-| `golem-run-<version>.tgz` | proof the package packs; an install path before npm |
+| `pliable-golem-<version>.tgz` | proof the package packs; an install path before npm |
 | `config-schema.json` | the portal, to validate team settings |
 
 The release job **asserts** every required asset is present after uploading,
@@ -207,7 +207,7 @@ Not `continue-on-error`: hiding a real publish failure in the one workflow whose
 job is to be trustworthy would be worse than the failure. The VS Code publish
 remains gated on `VSCE_PAT` alone — it has never mis-fired.
 
-`golem-run-<version>.tgz` is still attached to the Release either way, so a
+`pliable-golem-<version>.tgz` is still attached to the Release either way, so a
 publish failure never leaves the release itself incomplete.
 
 ## `config-schema.json` must not describe the build machine

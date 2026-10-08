@@ -48,7 +48,7 @@ describe("local-answer sub-mode through the proxy (R2.3)", () => {
       res.end(JSON.stringify({ ok: true }));
     });
     const answerText =
-      "**Golem** Answered locally from the project knowledge base — verify independently.\n\nRun npm run build, then golem-run init.";
+      "**Golem** Answered locally from the project knowledge base — verify independently.\n\nRun npm run build, then @pliable/golem init.";
     const proxy = await startProxy({
       upstreamBaseUrl: upstream.origin,
       pipeline: pipelineWithLocalAnswer(alwaysAnswers(answerText)),

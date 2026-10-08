@@ -71,7 +71,7 @@ process.stdout.write(
     "  1. npm run check && npm run build",
     `  2. git commit -am "chore(release): v${target}"`,
     `  3. git tag v${target}`,
-    "  4. npm publish            # golem-run (requires npm auth)",
+    "  4. npm publish            # @pliable/golem (requires npm auth)",
     "  5. (optional) build + attach standalone binaries: npm run build:binary",
     "  6. (optional) publish the VS Code extension: cd vscode-extension && npx @vscode/vsce publish",
     "",

@@ -1,6 +1,6 @@
 # Golem — a universal pre-LLM processing layer
 
-**[golem.run](https://golem.run)** · npm `golem-run` · CLI `golem`
+**[golem.run](https://golem.run)** · npm `@pliable/golem` · CLI `golem`
 
 Local-first **TypeScript** proxy + unified MCP server that sits in front of
 your LLM traffic and handles what shouldn't have to hit a model provider
@@ -56,10 +56,10 @@ curl -fsSL https://golem.run | sh
 irm https://golem.run | iex
 ```
 
-The installer is npm-first: it uses `npm i -g golem-run` when Node ≥ 22 is
+The installer is npm-first: it uses `npm i -g @pliable/golem` when Node ≥ 22 is
 present, and falls back to a self-contained binary (no Node needed) otherwise
 (spec Decision 41). Then run `golem init` in your project. Already have Node?
-`npm i -g golem-run` works directly. Keep current with `golem update` (the VS
+`npm i -g @pliable/golem` works directly. Keep current with `golem update` (the VS
 Code extension also surfaces an update prompt). Release process: [RELEASING.md](RELEASING.md).
 
 ## Settings

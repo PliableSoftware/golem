@@ -519,7 +519,7 @@ export const SETTINGS_LEAVES = {
     /**
      * OPT-IN (R3.3): syntax-aware code chunking via `web-tree-sitter` (WASM,
      * TS/JS/TSX grammars). Off by default because the runtime + grammars are
-     * a separate, user-installed opt-in — never a `golem-run` dependency
+     * a separate, user-installed opt-in — never a `@pliable/golem` dependency
      * (CLAUDE.md: no heavyweight deps in the default install; verification-
      * notes §27 rejects native tree-sitter bindings for the default). Falls
      * back to the heuristic `chunkCode` when the packages aren't installed.

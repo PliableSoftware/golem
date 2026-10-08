@@ -56,13 +56,13 @@ To publish manually instead (requires `npm login`):
 npm run verify:deps                  # exact pins + .npmrc posture (R8.10)
 npm run deps:shrinkwrap              # generate npm-shrinkwrap.json — see below
 npm publish --dry-run                # inspect the tarball contents first
-npm publish                          # publishes golem-run
+npm publish                          # publishes @pliable/golem
 ```
 
 ### Why the shrinkwrap step matters (R8.10)
 
 npm **ignores** a `package-lock.json` inside a published tarball, so without this
-step consumers of `golem-run` resolve transitive dependencies fresh at install
+step consumers of `@pliable/golem` resolve transitive dependencies fresh at install
 time and inherit none of this repo's pinning. `npm-shrinkwrap.json` is the one
 lockfile npm honours when published, so generating it means a consumer installs
 the exact tree that was tested here.
