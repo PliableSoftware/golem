@@ -10985,7 +10985,20 @@ long-token rule fires; no provider rule matches these shapes.
 - The docs show EXAMPLES, not a stated pattern or length guarantee. The exemption therefore
   follows the documented examples and nothing wider.
 
-**Decision.** Exempt only the whole token `^(srvtoolu|msgbatch)_[A-Za-z0-9]{24}$` in the entropy
+**Decision.** Exempt only the whole token `^(srvtoolu|msgbatch)_01[A-Za-z0-9]{22}$` in the entropy
 sweep (`isApiObjectId`, `src/pipeline/redaction-rules.ts`). `container_` is NOT exempt: open until
 an official source gives its format. Re-check the docs before adding it, and before widening the
 length if the API changes id sizes.
+
+**Follow-up after independent review (same day).** All 8 documented example ids (2 `msgbatch_`,
+6 `srvtoolu_`, same pages as above) begin `01` after the prefix, and all 8 match the tightened
+regex above; the exemption now requires that lead (same total length, 33). A value in the id shape
+WITHOUT `01` is redacted.
+- **Residual, shrunk but present:** a value in the exact id shape with the `01` lead is exempt even
+  after `Bearer ` or in a credential header such as `x-api-key`; no built-in rule matches those
+  values, so the sweep was their only protection. Pinned by tests as a known residual, not a feature.
+- **Scope:** the sweep is shared, so the exemption also applies to `redactStandaloneText` (tool
+  output) and `redactReversibleText` (storage). Harmless: an id-shaped token is passed through
+  unchanged there too.
+- An id embedded in a longer run (URL path, `key=` query value) is still rewritten; `.`, `:`,
+  whitespace and newline are delimiters, so the id survives beside a separately redacted secret.
