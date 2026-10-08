@@ -166,6 +166,12 @@ export function decideSpawnGate(
   }
 
   const { utilization, resetAtIso } = prediction.fiveHour;
+  // The window has already reset: the utilization describes a window that no
+  // longer exists (same check as `decideSnoozeNudge`), so never refuse on it.
+  if (resetAtIso !== null) {
+    const resetMs = Date.parse(resetAtIso);
+    if (Number.isFinite(resetMs) && resetMs <= nowMs) return { kind: "allow" };
+  }
   const inFlight = countInFlight(state, prediction.observedAtIso);
   const projected = utilization + costFraction * (inFlight + 1);
   if (projected <= 1) return { kind: "allow" };
