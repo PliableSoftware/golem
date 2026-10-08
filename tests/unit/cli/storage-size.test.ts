@@ -49,3 +49,26 @@ describe("golemStorageSizes", () => {
     expect(sizes.webcache_bytes).toBe(0);
   });
 });
+
+describe("golemStorageSizes in a linked worktree (DUST3.13 D10)", () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), "golem-wt-"));
+  });
+  afterEach(async () => {
+    await rm(root, rmTemp);
+  });
+
+  it("counts the main checkout's CCR store, where the CCR store writes", async () => {
+    const main = path.join(root, "main");
+    const linked = path.join(root, "linked");
+    const gitdir = path.join(main, ".git", "worktrees", "linked");
+    await mkdir(gitdir, { recursive: true });
+    await mkdir(linked, { recursive: true });
+    await writeFile(path.join(linked, ".git"), `gitdir: ${gitdir}\n`);
+    await writeFile(path.join(gitdir, "commondir"), "../..\n");
+    await mkdir(path.join(main, ".golem", "ccr"), { recursive: true });
+    await writeFile(path.join(main, ".golem", "ccr", "blob"), "hello world"); // 11 bytes
+    expect((await golemStorageSizes(linked)).ccr_bytes).toBe(11);
+  });
+});
