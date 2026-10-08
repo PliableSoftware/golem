@@ -14,7 +14,15 @@ created: 2026-10-08
 
 ## What this is
 
-Roadmap gap (DUST1.6 row 17).
+Roadmap gap (DUST1.6 row 17): the persona/prompt docs promise a team-wide prompt delivered
+through the `team` origin, merged per field, with the project layer outranking team. Today only
+part of that path exists; evidence in DUST1.6.
+
+## The work
+
+1. Trace how persona prompt fields are read today and which origins they consult.
+2. Add the team origin as a source, merged per field (not whole-object replace).
+3. Tests: team-only value applies; project value wins; partial team object merges.
 
 ## Out of scope
 

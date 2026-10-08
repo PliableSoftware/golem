@@ -16,6 +16,12 @@ created: 2026-10-08
 Roadmap gap (DUST1.4 rows 18, 39): graph-first matches title and wikilink but not alias; `fetch`
 cannot return full text for some hit kinds.
 
+## The work
+
+1. r018: extend the exact-match graph-first step to page aliases (frontmatter `aliases`).
+2. r039: make `getChunk` (or its successor) resolve every hit kind `search` returns, including
+   ingested trees and cached web pages.
+
 ## Out of scope
 
 - K2 title-collision precedence (doc follows code, DUST2.5).

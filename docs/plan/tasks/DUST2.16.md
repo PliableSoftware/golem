@@ -13,7 +13,16 @@ created: 2026-10-08
 
 ## What this is
 
-Roadmap gap from ADR-0008 (DUST1.8 rows 4, 10, 11).
+Roadmap gap from ADR-0008 (DUST1.8 rows 4, 10, 11). Evidence per row is in DUST1.8.
+
+## The work
+
+1. r004: `default!` is described as the floor for future non-negotiables but nothing reads it —
+   define and enforce it in the cascade resolver.
+2. r010: render a pinned control as locked, with the origin that pinned it and how to change it,
+   on the panel, `golem config`, the TUI and VS Code alike.
+3. r011: populate `ApplyResult.overridden` when a write lands below a higher-precedence origin,
+   and have each surface tell the user their write had no effect.
 
 ## Out of scope
 
