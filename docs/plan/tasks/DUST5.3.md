@@ -1,7 +1,7 @@
 ---
 task: DUST5.3
 title: "Draft the feature overview from the claims ledger"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "docs/marketing/feature-overview.md exists, marked DRAFT at the top; every
 depends_on: [DUST5.2]
 touches: [docs/marketing]
 created: 2026-10-08
+updated: 2026-10-08T23:21:56.200Z
 ---
 
 ## What this is
@@ -23,3 +24,7 @@ A claim the draft needs that the ledger lacks goes back into `CLAIMS.md` first, 
 - Publishing, or any change to a website, README or the npm description.
 - Comparisons with named competitors.
 - Screenshots or images.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

@@ -1,7 +1,7 @@
 ---
 task: DUST5.5
 title: "Draft a short blog post about the Dust method: what it found, what review caught, and what the skill packages"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: write
@@ -10,6 +10,7 @@ gate: "docs/marketing/blog-dust-method.md exists, marked DRAFT, 800-1200 words; 
 depends_on: [DUST5.2, DUST4.4]
 touches: [docs/marketing]
 created: 2026-10-08
+updated: 2026-10-08T23:21:57.267Z
 ---
 
 ## What this is
@@ -23,3 +24,7 @@ Use the debriefs' figures as figures from one project's run, dated, never as exp
 - Publishing or posting anywhere (DUST5.8).
 - Naming people, customers or other projects.
 - Security detail beyond what DUST5.4 states.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

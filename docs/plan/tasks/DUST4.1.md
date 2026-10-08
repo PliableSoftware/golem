@@ -1,7 +1,7 @@
 ---
 task: DUST4.1
 title: "Write the /golem-dust skill: audit, rebaseline and refactor as one distributable SKILL.md, registered in P0_SKILLS"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "src/cli/skills/dust.ts exports DUST_SKILLS with one key `dust`, spread in
 depends_on: []
 touches: [src/cli/skills/dust.ts, src/cli/skills.ts, tests/unit/cli/skills.test.ts]
 created: 2026-10-08
+updated: 2026-10-08T23:21:52.409Z
 ---
 
 ## What this is
@@ -59,3 +60,7 @@ Extend `tests/unit/cli/skills.test.ts`: `P0_SKILLS.dust` exists; frontmatter has
 - A per-skill opt-out toggle.
 - The debrief template section (DUST4.3 adds it).
 - Wiki, README and spec text (DUST4.3).
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

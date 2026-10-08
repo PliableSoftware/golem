@@ -1,7 +1,7 @@
 ---
 task: DUST5.2
 title: "Build the marketing claims ledger and banned-claims list that every Phase 5 draft must cite"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "docs/marketing/README.md says DRAFT, not published, not a source of truth
 depends_on: [DUST5.1]
 touches: [docs/marketing]
 created: 2026-10-08
+updated: 2026-10-08T23:21:55.660Z
 ---
 
 ## What this is
@@ -46,3 +47,7 @@ Overstatement: compression token savings on Anthropic traffic (Decision 23, near
 - Writing the drafts themselves.
 - Deciding any open item, or arguing for one.
 - Editing the spec or wiki. A spec claim that turns out wrong goes into a follow-up task doc, not a quiet fix.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

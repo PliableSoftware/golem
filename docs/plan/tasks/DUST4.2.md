@@ -1,7 +1,7 @@
 ---
 task: DUST4.2
 title: "Install /golem-dust through the existing skill lifecycle, seeded by default, and pin it with init, re-init, edit, retire and uninit tests"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "Integration tests show: a fresh `golem init` creates .claude/skills/golem
 depends_on: [DUST4.1]
 touches: [tests/integration, src/cli/init-skills.ts, .claude/skills/golem-dust]
 created: 2026-10-08
+updated: 2026-10-08T23:21:52.944Z
 ---
 
 ## What this is
@@ -40,3 +41,7 @@ Then run `golem init` in this worktree and commit the generated `.claude/skills/
 - A guidance rule for Dust.
 - Changing the skill text (DUST4.1, DUST4.3).
 - Team skills (`golem-team-*`), which follow their own path.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

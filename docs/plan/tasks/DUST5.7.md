@@ -1,7 +1,7 @@
 ---
 task: DUST5.7
 title: "Close Dust Phase 5: SHIPPED row, debrief, PLAN.md status"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: write
@@ -10,6 +10,7 @@ gate: "docs/plan/SHIPPED.md has one row for DUST5.1-DUST5.6 that says the drafts
 depends_on: [DUST5.6]
 touches: [docs/plan/SHIPPED.md, docs/wiki/debriefs, docs/wiki/WIKI.md, docs/plan/audit/dust-1/PLAN.md, docs/plan/ROADMAP.md]
 created: 2026-10-08
+updated: 2026-10-08T23:21:58.333Z
 ---
 
 ## What this is
@@ -26,3 +27,7 @@ Batch close-out for Phase 5, following CLAUDE.md 'Batch close-out' in order and 
 ## Out of scope
 
 - DUST5.8 (publishing is the user's).
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief

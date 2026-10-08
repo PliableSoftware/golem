@@ -1,7 +1,7 @@
 ---
 task: DUST4.3
 title: "Document the Dust method: wiki concept page, debrief template in the skill, README line and a spec 5.1 mention"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "docs/wiki/concepts/Dust Method.md exists with frontmatter, real [[wikilin
 depends_on: [DUST4.1]
 touches: [docs/wiki/concepts, docs/wiki/WIKI.md, README.md, docs/golem-spec.md, src/cli/skills/dust.ts, tests/unit/cli/skills.test.ts, .claude/skills/golem-dust]
 created: 2026-10-08
+updated: 2026-10-08T23:21:53.494Z
 ---
 
 ## What this is
@@ -27,3 +28,7 @@ The prose around the skill. Four pieces:
 - Marketing prose about Dust (DUST5.5).
 - Rewriting the existing Dust debriefs.
 - Restating `DECISIONS.md` in the wiki page; link it.
+
+## Outcome
+
+shipped; see the Phase 4 and 5 debrief
