@@ -24,7 +24,7 @@ import {
   isGeminiProvider,
   isTranslatingProvider,
   listTargets,
-  makeAuthMapper,
+  type makeAuthMapper,
   perGatewayEnvVar,
   type ResolvedUpstream,
   resolveActiveUpstream,
@@ -172,7 +172,6 @@ export function buildUpstreamWiring(
   const upstreamProvider = upstream.provider;
   const authScheme = upstream.authScheme;
   const upstreamApiKey = upstream.apiKey;
-  const mapUpstreamHeaders = makeAuthMapper(authScheme, upstreamApiKey);
   const accountLabel = upstream.accountId === null ? "" : ` (account "${upstream.accountId}")`;
   if (
     upstreamProvider !== "anthropic" &&
@@ -193,7 +192,7 @@ export function buildUpstreamWiring(
   // and the multi-target path cannot drift. A drifting translator does not throw
   // — it mangles a response — so sharing one construction is the only way to
   // keep them honest.
-  const { translateUpstream } = buildUpstreamTransport({
+  const { translateUpstream, mapUpstreamHeaders } = buildUpstreamTransport({
     provider: upstreamProvider,
     baseUrl: upstream.baseUrl,
     model: upstreamModel,
@@ -214,8 +213,8 @@ export function buildUpstreamWiring(
     (upstreamApiKey === undefined || upstreamApiKey === "")
   ) {
     process.stderr.write(
-      'golem proxy: upstream_provider "gemini" needs a credential (sent as the ?key= query ' +
-        `param) — set it with \`golem gateway login ${upstream.accountId ?? "gemini"}\`; ` +
+      'golem proxy: upstream_provider "gemini" needs a credential (sent as the x-goog-api-key ' +
+        `header) — set it with \`golem gateway login ${upstream.accountId ?? "gemini"}\`; ` +
         "requests will 401 until it is set.\n",
     );
   }

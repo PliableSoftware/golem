@@ -374,11 +374,13 @@ export default function register(program: Command): void {
         // desired state on the floor.
         const desired = await readProxyDesired(cwd);
         if (desired === "stopped") return;
+        // Lazy: the credential stores are only needed on this recovery path.
+        const { credentialEnvForProxy } = await import("../gateways.js");
         await startDetached(
           cwd,
           port,
           process.argv[1] ?? "",
-          {},
+          await credentialEnvForProxy(cwd),
           ...(desired === "bypass" ? [{ shim: true } as const] : []),
         );
       } catch {

@@ -29,6 +29,7 @@ import { z } from "zod";
 
 import {
   PROXY_PROVIDERS,
+  perGatewayEnvVar,
   TARGET_TRUST_LEVELS,
   UPSTREAM_AUTH_SCHEMES,
   UPSTREAM_PROVIDERS,
@@ -183,7 +184,16 @@ export const SETTINGS_LEAVES = {
           models: z
             .array(
               z.union([
-                z.string(),
+                z
+                  .string()
+                  // Only `[<digits>]` is a context suffix. Anything else in a
+                  // trailing bracket (`[262k]`) would otherwise go upstream as
+                  // part of the model name, so refuse it here.
+                  .refine((m) => !/\[[^\]]*\]$/.test(m) || /\[\d+\]$/.test(m), {
+                    message:
+                      "a model's context suffix must be digits only, e.g. model[262144] " +
+                      "(k/m shorthand is not supported)",
+                  }),
                 z.object({
                   name: z.string().min(1),
                   contextSize: z.number().int().positive().optional(),
@@ -193,7 +203,7 @@ export const SETTINGS_LEAVES = {
             .transform((arr) =>
               arr.map((m) => {
                 if (typeof m === "string") {
-                  // Parse string like "model[262k]" or "model"
+                  // Parse string like "model[262144]" or "model"
                   const match = m.match(/^(.+?)(?:\[(\d+)\])?$/);
                   if (!match) {
                     // If parsing fails, treat as name only
@@ -214,6 +224,28 @@ export const SETTINGS_LEAVES = {
           extra_headers: z.array(z.tuple([z.string().min(1), z.string()])).optional(),
         }),
       )
+      // S16: ids normalise into the credential env var name (`work-1`, `work.1`
+      // and `Work_1` are all `..__WORK_1`), so two of them would be handed one
+      // key and the second gateway would send the first one's key to its own
+      // host. Fail closed at load rather than pick a winner.
+      .superRefine((gateways, ctx) => {
+        const seen = new Map<string, string>();
+        gateways.forEach((g, index) => {
+          const envName = perGatewayEnvVar(g.id);
+          const first = seen.get(envName);
+          if (first === undefined) {
+            seen.set(envName, g.id);
+            return;
+          }
+          ctx.addIssue({
+            code: "custom",
+            path: [index, "id"],
+            message:
+              `gateway id "${g.id}" collides with "${first}": both use the credential ` +
+              `variable ${envName}, so one gateway would be sent the other's key. Rename one.`,
+          });
+        });
+      })
       .optional(),
     // R9.1 renamed `active_account` → `model`; R9.6 retired the leaf and
     // moved the fallback into src/config/migrations.ts, so an existing file

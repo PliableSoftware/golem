@@ -43,7 +43,7 @@ export interface GatewayEntry {
    * here. Omitted or empty means no model is reachable via this gateway without
    * an explicit proxy.targets entry.
    * Each model string may optionally include a context size suffix in brackets,
-   * e.g. "model[262k]" to indicate a 262,000-token context window.
+   * e.g. "model[262144]" for a 262,144-token context window (digits only).
    */
   readonly models?: readonly ModelDescriptor[];
   readonly auth_scheme?: UpstreamAuthScheme;

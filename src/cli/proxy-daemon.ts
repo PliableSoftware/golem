@@ -311,9 +311,10 @@ export function buildSpawnEnv(
  * A marker rather than inference: "some `GOLEM_UPSTREAM_API_KEY*` var is set"
  * cannot distinguish "the parent injected everything" from "the parent injected
  * one of three", and guessing wrong would silently start the proxy without a
- * credential it needs. The parent knows, so the parent says. An empty resolution
- * still sets it — "there was nothing to resolve" is an answer, and re-deriving it
- * costs the same as deriving it.
+ * credential it needs. The parent knows, so the parent says. An EMPTY resolution
+ * does NOT set it ({@link daemonSpawnEnv}): the caller may simply not have
+ * resolved, and a daemon told "nothing to resolve" would start with no gateway
+ * key at all, so it resolves for itself instead.
  *
  * Absent for a hand-run `golem proxy run`, which therefore resolves normally.
  */
@@ -431,6 +432,23 @@ async function openProxyLog(projectDir: string): Promise<FileHandle | null> {
   }
 }
 
+/**
+ * The daemon's spawn env. R9.20: the credentials-injected marker rides with the
+ * credentials it describes. DUST3.5: it is set ONLY when something was injected,
+ * so a caller that passes `{}` (nothing resolved) leaves the daemon to resolve
+ * the stored gateway keys itself instead of starting with none.
+ */
+export function daemonSpawnEnv(
+  base: Readonly<Record<string, string | undefined>>,
+  injected: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const hasCredentials = Object.keys(injected).length > 0;
+  return buildSpawnEnv(
+    base,
+    hasCredentials ? { ...injected, [CREDENTIALS_INJECTED_ENV]: "1" } : injected,
+  );
+}
+
 export async function startDetached(
   projectDir: string,
   port: number,
@@ -451,9 +469,7 @@ export async function startDetached(
     detached: true,
     stdio: log === null ? "ignore" : ["ignore", log.fd, log.fd],
     windowsHide: true,
-    // R9.20: the marker rides with the credentials it describes, so the two can
-    // never disagree — a caller cannot inject one without the other.
-    env: buildSpawnEnv(process.env, { ...env, [CREDENTIALS_INJECTED_ENV]: "1" }),
+    env: daemonSpawnEnv(process.env, env),
   });
   // The child holds its own duplicate of the descriptor; ours is done.
   if (log !== null) await log.close().catch(() => {});
