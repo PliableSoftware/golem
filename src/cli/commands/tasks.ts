@@ -352,6 +352,14 @@ export default function register(program: Command): void {
               outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
           );
         }
+        if (opts.waive !== undefined && id === undefined && !opts.all) {
+          // A waiver is the deliberate escape hatch: it must name its target, never
+          // sweep every outstanding run by omission.
+          throw new InitError(
+            `--waive needs an id or an explicit --all. ${outstanding.length} outstanding. Ids:\n` +
+              outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
+          );
+        }
         const nowIso = new Date().toISOString();
         const result =
           opts.waive !== undefined
