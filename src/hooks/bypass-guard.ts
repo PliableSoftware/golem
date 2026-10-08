@@ -129,13 +129,20 @@ const WRAPPER_VALUE_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["stdbuf", new Set(["-i", "-o", "-e"])],
   ["xargs", new Set(["-n", "-P", "-I", "-L", "-s", "-d", "-E", "-a", "-l"])],
   ["npx", new Set(["-p", "--package"])],
+  // `bash -o pipefail -c '…'`: `-o`/`-O` take a value before `-c`; `+o` is the unset form.
+  ...[...SHELLS].map((sh): [string, ReadonlySet<string>] => [
+    sh,
+    new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]),
+  ]),
 ]);
 
 interface CommandPosition {
   at: number;
   viaXargs: boolean;
-  /** The command string a shell `-c` or `eval` would run, when this segment is one. */
+  /** The command string a shell `-c`, `eval` or `env -S` would run, when this segment is one. */
   inner: string | null;
+  /** The last wrapper word seen, e.g. `bash` in `sudo bash -o pipefail`. */
+  wrapper: string | null;
 }
 
 /** Where the program a simple command runs sits, past env assignments, wrappers and their flags. */
@@ -149,7 +156,18 @@ function commandPosition(tokens: readonly string[]): CommandPosition | null {
     const tok = tokens[i] ?? "";
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) continue;
     if (tok === "export") continue;
-    if (i > 0 && tok.startsWith("-")) {
+    if (wrapper === "env" && (tok === "-S" || tok === "--split-string")) {
+      // `env -S 'cmd args'` splits its value into a command line and runs it.
+      const inner = tokens.slice(i + 1).join(" ");
+      return { at: tokens.length, viaXargs, inner, wrapper };
+    }
+    if (wrapper === "env" && /^(?:--split-string=|-S.)/.test(tok)) {
+      const value = tok.startsWith("--") ? tok.slice("--split-string=".length) : tok.slice(2);
+      const inner = [value, ...tokens.slice(i + 1)].join(" ");
+      return { at: tokens.length, viaXargs, inner, wrapper };
+    }
+    const unsetFlag = wrapper !== null && SHELLS.has(wrapper) && /^\+[A-Za-z]$/.test(tok);
+    if ((i > 0 && tok.startsWith("-")) || unsetFlag) {
       if (wrapper !== null && SHELLS.has(wrapper) && /^-[A-Za-z]*c$/.test(tok)) shellC = true;
       if (wrapper !== null && !tok.includes("=") && WRAPPER_VALUE_FLAGS.get(wrapper)?.has(tok)) {
         i += 1; // the flag's value, e.g. `nice -n 5`, `sudo -u me`
@@ -170,9 +188,109 @@ function commandPosition(tokens: readonly string[]): CommandPosition | null {
     }
     const rest = tokens.slice(i);
     const inner = shellC || isEval ? (rest.length === 1 ? (rest[0] ?? "") : rest.join(" ")) : null;
-    return { at: i, viaXargs, inner };
+    return { at: i, viaXargs, inner, wrapper };
   }
-  return null;
+  return wrapper === null ? null : { at: tokens.length, viaXargs, inner: null, wrapper };
+}
+
+/** True for a shell with no script or `-c` operand: it reads its commands from stdin. */
+function readsStdin(words: readonly string[]): boolean {
+  const pos = commandPosition(words);
+  return pos !== null && pos.wrapper !== null && SHELLS.has(pos.wrapper) && pos.at >= words.length;
+}
+
+interface Heredoc {
+  delimiter: string;
+  /** `<<-`: leading tabs are stripped from the body and the delimiter line. */
+  stripTabs: boolean;
+  /** The heredoc is stdin of a shell, so its body is a script rather than data. */
+  feedsShell: boolean;
+  /** Index just past the delimiter word on the operator's line. */
+  end: number;
+}
+
+/** Parse the `[-]DELIM` after a `<<` at `from`; `null` when no delimiter word follows. */
+function readHeredocStart(command: string, from: number, feedsShell: boolean): Heredoc | null {
+  let i = from;
+  const stripTabs = command[i] === "-";
+  if (stripTabs) i += 1;
+  while (command[i] === " " || command[i] === "\t") i += 1;
+  let delimiter = "";
+  let quote: string | null = null;
+  const start = i;
+  for (; i < command.length; i += 1) {
+    const ch = command[i] ?? "";
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      else delimiter += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (ch === "\\") {
+      // `<<\EOF` quotes the delimiter too.
+    } else if (/[\s;&|()<>]/.test(ch)) {
+      break;
+    } else {
+      delimiter += ch;
+    }
+  }
+  return i === start || delimiter === "" ? null : { delimiter, stripTabs, feedsShell, end: i };
+}
+
+/** The body lines from `from` up to the delimiter line; `end` is the start of the line after it. */
+function readHeredocBody(
+  command: string,
+  from: number,
+  doc: Heredoc,
+): { text: string; end: number } {
+  let lineStart = from;
+  while (lineStart < command.length) {
+    const nl = command.indexOf("\n", lineStart);
+    const lineEnd = nl === -1 ? command.length : nl;
+    let line = command.slice(lineStart, lineEnd);
+    if (doc.stripTabs) line = line.replace(/^\t+/, "");
+    if (line.replace(/\r$/, "") === doc.delimiter) {
+      return { text: command.slice(from, lineStart), end: nl === -1 ? command.length : nl + 1 };
+    }
+    lineStart = nl === -1 ? command.length : nl + 1;
+  }
+  return { text: command.slice(from), end: command.length };
+}
+
+/**
+ * Index of the `)` closing a `$(` whose body starts at `from`, skipping nested
+ * quotes, parentheses and heredoc bodies (a commit message body may hold a `)`).
+ */
+function findSubstEnd(command: string, from: number): number {
+  let depth = 1;
+  const pending: Heredoc[] = [];
+  for (let i = from; i < command.length; i += 1) {
+    const ch = command[i] ?? "";
+    if (ch === "\\") {
+      i += 1;
+    } else if (ch === "'") {
+      const close = command.indexOf("'", i + 1);
+      if (close === -1) return -1;
+      i = close;
+    } else if (ch === '"') {
+      let j = i + 1;
+      while (j < command.length && command[j] !== '"') j += command[j] === "\\" ? 2 : 1;
+      i = j;
+    } else if (ch === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
+      const doc = readHeredocStart(command, i + 2, false);
+      if (doc !== null) {
+        pending.push(doc);
+        i = doc.end - 1;
+      }
+    } else if (ch === "\n" && pending.length > 0) {
+      for (const doc of pending.splice(0)) i = readHeredocBody(command, i + 1, doc).end - 1;
+    } else if (ch === "(") {
+      depth += 1;
+    } else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 /**
@@ -182,26 +300,67 @@ function commandPosition(tokens: readonly string[]): CommandPosition | null {
  * `$(…)` or backtick body inside double quotes DOES run, so it is returned in
  * `nested` to be judged as a command of its own.
  */
-function splitCommand(command: string): { segments: string[][]; nested: string[] } {
+function splitCommand(command: string): {
+  segments: string[][];
+  piped: boolean[];
+  nested: string[];
+} {
   const segments: string[][] = [];
+  /** Parallel to `segments`: true when the segment's stdin is the previous one's stdout. */
+  const piped: boolean[] = [];
   const nested: string[] = [];
   let words: string[] = [];
   let cur = "";
   let inWord = false;
   let quote: "'" | '"' | null = null;
+  let pipeNext = false;
+  let hereString = false;
+  const heredocs: Heredoc[] = [];
   const endWord = () => {
-    if (inWord) words.push(cur);
+    if (inWord) {
+      // `bash <<< 'golem off'`: the here-string is the command line a shell would run.
+      if (hereString && readsStdin(words)) nested.push(cur);
+      hereString = false;
+      words.push(cur);
+    }
     cur = "";
     inWord = false;
   };
   const endSegment = () => {
     endWord();
-    if (words.length > 0) segments.push(words);
+    if (words.length > 0) {
+      segments.push(words);
+      piped.push(pipeNext);
+      pipeNext = false;
+    }
     words = [];
   };
   for (let i = 0; i < command.length; i += 1) {
     const c = command[i] ?? "";
     const next = command[i + 1] ?? "";
+    if (quote === null && c === "<" && next === "<") {
+      endWord();
+      if (command[i + 2] === "<") {
+        hereString = true;
+        i += 2;
+        continue;
+      }
+      const doc = readHeredocStart(command, i + 2, readsStdin(words));
+      if (doc !== null) {
+        heredocs.push(doc);
+        i = doc.end - 1;
+        continue;
+      }
+    }
+    if (quote === null && c === "\n" && heredocs.length > 0) {
+      endSegment();
+      for (const doc of heredocs.splice(0)) {
+        const body = readHeredocBody(command, i + 1, doc);
+        if (doc.feedsShell) nested.push(body.text);
+        i = body.end - 1;
+      }
+      continue;
+    }
     if (quote === "'") {
       if (c === "'") quote = null;
       else cur += c;
@@ -216,7 +375,7 @@ function splitCommand(command: string): { segments: string[][]; nested: string[]
       } else if (c === "`" || (c === "$" && next === "(")) {
         const close = c === "`" ? "`" : ")";
         const start = i + (c === "`" ? 1 : 2);
-        const end = command.indexOf(close, start);
+        const end = c === "`" ? command.indexOf(close, start) : findSubstEnd(command, start);
         const stop = end === -1 ? command.length : end;
         nested.push(command.slice(start, stop));
         cur += command.slice(i, stop);
@@ -241,6 +400,9 @@ function splitCommand(command: string): { segments: string[][]; nested: string[]
       endWord();
     } else if (/[;&|\n\r(){}`]/.test(c)) {
       endSegment();
+      // `a | b` pipes; `a || b` does not.
+      if (c === "|" && next === "|") i += 1;
+      else if (c === "|") pipeNext = true;
     } else if (c === "$" && next === "(") {
       endSegment();
       i += 1;
@@ -250,13 +412,25 @@ function splitCommand(command: string): { segments: string[][]; nested: string[]
     }
   }
   endSegment();
-  return { segments, nested };
+  return { segments, piped, nested };
 }
 
 function bashDenied(command: string): boolean {
-  const { segments, nested } = splitCommand(command);
+  const { segments, piped, nested } = splitCommand(command);
   if (nested.some(bashDenied)) return true;
-  for (const tokens of segments) {
+  for (const [index, tokens] of segments.entries()) {
+    // `echo golem off | sh`: the previous stage's text is what the shell runs.
+    const feeder = segments[index - 1];
+    if (piped[index] === true && feeder !== undefined && readsStdin(tokens)) {
+      for (let from = 0; from < feeder.length; from += 1) {
+        // `printf` turns a literal `\n` into the newline the shell then splits on.
+        const text = feeder
+          .slice(from)
+          .join(" ")
+          .replace(/\\[nt]/g, "\n");
+        if (bashDenied(text)) return true;
+      }
+    }
     for (const tok of tokens) {
       const env = /^(?:export\s+)?GOLEM_PROXY_BYPASS_ALL=(.*)$/i.exec(tok);
       if (env !== null && TRUTHY.has((env[1] ?? "").toLowerCase())) return true;
@@ -280,8 +454,29 @@ function bashDenied(command: string): boolean {
   return false;
 }
 
-/** Whether `text` writes `bypass_all` with anything other than literal `false`. */
+/** True when a parsed JSON value holds a `bypass_all` key (at any depth) that is not `false`. */
+function jsonSetsBypass(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(jsonSetsBypass);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, v]) => {
+    if (key.toLowerCase() === "bypass_all") {
+      return !(v === false || (typeof v === "string" && v.toLowerCase() === "false"));
+    }
+    return jsonSetsBypass(v);
+  });
+}
+
+/**
+ * Whether `text` writes `bypass_all` with anything other than literal `false`.
+ * Valid JSON is judged as the loader reads it (an escaped key `bypass_all`
+ * is the same key); anything else falls back to the raw-text check.
+ */
 function textSetsBypass(text: string): boolean {
+  try {
+    return jsonSetsBypass(JSON.parse(text));
+  } catch {
+    // not JSON: judge the raw text
+  }
   const mentions = text.match(/bypass_all/gi);
   if (mentions === null) return false;
   const pattern = /bypass_all["']?\s*[:=]\s*["']?([^\s,}"']*)/gi;
