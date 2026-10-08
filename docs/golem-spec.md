@@ -600,6 +600,106 @@ Mechanism: **flat** skills `.claude/skills/golem-<cmd>/SKILL.md` → `/golem-<cm
 ### To verify against live docs before P0 — ✅ RESOLVED 2026-07-03 (task T0.1)
 All four items verified; dated findings with URLs live in `verification-notes.md`. Summary:
 - Claude Code hook events/schema and `claude mcp add` syntax: captured (notes §8–§9). PostToolUse **can** replace tool output via `updatedToolOutput` — Decision 10 confirmed feasible.
-- `headroom wrap claude`: launches Headroom's own proxy — **conflicts with the EOL-owned proxy; mutually exclusive.** `eol init` must detect and refuse (notes §5).
-- Headroom config surface: per-stage typed config objects (`SmartCrusherConfig`, `CacheAlignerConfig`, `RollingWindowConfig`, `IntelligentContextConfig`, …) — the slider mapping target (notes §3).
+- `headroom wrap claude`: launches Headroom's own proxy — **conflicts with Golem's own proxy; mutually exclusive.** `golem init` detects and refuses (`src/cli/init.ts:364-369`; notes §5; wording corrected 2026-10-08, the point-in-time entry used the old name).
+- Headroom config surface: per-stage typed config objects (`SmartCrusherConfig`, `CacheAlignerConfig`, `RollingWindowConfig`, `IntelligentContextConfig`, …) — the target of the sidecar's config passthrough (`compression.headroom_config`, Decision 53; notes §3). A static check of that config is documented as it behaves; its false warning is a Phase 3 bug (DECISIONS.md C6).
 - Prompt caching: byte-identical prefix, tools→system→messages hierarchy, 4 breakpoints, workspace-scoped. Binding rule: re-compression of previously-sent turns must be byte-stable (notes §14).
+
+---
+
+## 10. Open contradictions (left for the user)
+
+Not decided in this rebaseline, per `docs/plan/audit/dust-1/DECISIONS.md` (security, hard-rule or recorded-decision exceptions). The spec describes current behaviour neutrally.
+
+| id | question | where it bites |
+|---|---|---|
+| G3 | Where must *enforced* team policy apply? `golem status` loads the team layer; `golem config`, the panel, VS Code, hooks, MCP and the hot-reload do not. | Decision 62 note |
+| M2 | Keep the frozen `slider` MCP prompt and rewrite it, or remove it? | §5.1 |
+| H2 | Is `blocked` a task state (code, README) or metadata (D55(d), wiki)? | Decision 55 note |
+| P3 | Does Decision 61 reach hosted sessions, given Decision 60(d)? | Decisions 59, 61 notes |
+| P4/S17 | Does `security.*` belong on `REMOTE_DENIED_SETTINGS`? | Decision 59 note |
+| DUST2.25 | The fleet question: build the LAN worker agent, capability table and hub-worker mTLS, or retire §2.2 and P4? | §2.2, §7 |
+
+## 11. Rebaseline notes (default-rule choices, for the user to overturn)
+
+Rule: *doc follows shipped code unless it touches security, a hard rule or a recorded USER decision* (DECISIONS.md). Each choice below is also marked inline.
+
+- **USER decisions applied as written:** C1 (hard-rule wording "lossless and prefix-stable at level <= 1", §4, Decision 22/31 notes); R11 (Decision 47, `??=` stays, "defaults only"); R12 (§4, who may change a dial); A4 (non-goal wording); H1 (Decision 45 superseding note); A1/S1 (`@pliable/golem` everywhere); R1-R4 and G1/G2/V2/P5 described as current code (DUSTSEC.1-18): redact-then-forward on pipeline error, redaction-off side doors removed, `worker_targets` live, invalid team value skips the layer.
+- **Default rule applied, no recorded decision touched:** A2/X1 (two processes, one logical engine); A3 (§1 identity follows Decision 32); A5 (R6 shipped, Decision 36's hold superseded); A6 (§5 rewritten; per-device utilization, canary quality-delta and `replay-eval` moved to §12); A7 (slider-specific parts of Decisions 50-52 superseded by ADR-0004); A8 (the `golem ui`/`settings` aliases still ship); A9 (tier thresholds `< 8 / 8-16 / > 16` GiB); A10 (`golem ollama setup` pulls the drafter model only); A12 (local-answer source set is any markdown outside `docs/plan/`); C3-C5 (CCR swap is dial-independent; narrowed reversibility; level-2 sidecar note); C6 (static Headroom config check documented as it behaves); K3 (bare `---` separator); K4 (Qdrant server claim retired); K8 (§3.1 rewritten wiki-primary); M4 (Decision 34 shipped, default-off); V1 (keyless gateways); X3 (nested skills layout superseded); X4 (head/tail swap is partial coverage); X6 (tree-sitter is an optional add-on); X12 (adapter plus pin); G4 (duplicate runtime/setting rows documented); P6 (both team-skill policies documented).
+- **Flagged — may touch a recorded decision:** A11 (local answer ON by default vs Decision 7's "never a global default"; Decision 33's own bullet records the USER default-on decision); G5 (panel writes `project` scope vs D58(f) for the CLI).
+- **Choices made in this pass (not in DECISIONS.md):** header re-versioned v1.33 with the log still ending at Decision 64; the old working title is not repeated in living prose; semantic compression is described as levels 2-3 (policy.ts) rather than "level 3"; decision numbers are untouched and every drifted entry gets an indented `Rebaseline 2026-10-08` bullet instead of being rewritten, so dated wording survives as the historical record; the SDK, shared collection, exact/semantic caches and the other aspirational claims are kept in §12 rather than deleted from the entries that introduced them.
+- **UNVERIFIED (not confirmed against code or a running system):** whether `snooze` is instrumented (§2.1); LM Studio and vLLM as drop-in inference backends (§3.3, §6); which call sites besides `coder` (drafter) and rerank (judge) invoke a catalog role (§3.3, Decision 26); whether the tier-fallback ladder exists beyond a `FallbackPolicy.allowHaiku` field (§2.2); whether a Bun standalone binary has been run (§6, Decision 41); whether the shim also bypasses local answer (Decision 56 note); the file names in Decision 51(d); that `.github/workflows/ci.yml:145-153` is still the macOS advisory leg (cited from DUST1.11 row 5).
+
+## 12. Gap register (SUMMARY.md "Phase 2 inputs", Gaps)
+
+Every `partial` / `not-started` row, either as an owning task or in **Not started (no task)**. Row refs are `SUMMARY.md` ids (`<doc>/<row>`).
+
+### Covered by a task
+
+| rows | topic | status | task |
+|---|---|---|---|
+| 1.1/r039, r042 | `golem plugin` surfaces every problem, counts it, names regex-hang risk | partial / not started | DUST2.11 |
+| 1.1/r011, r035, r046, r095 | path-like tokens (§49), redaction over stage output, plugin rules on every path, a policy that cannot represent redaction-off | partial | DUST2.23 (plus DUSTSEC.7, DUSTSEC.8) |
+| 1.1/r092, r093 | redaction-off is CLI-only and surfaced loudly | shipped as bypass_all; hook guard | DUSTSEC.2, DUSTSEC.3 |
+| 1.1/r048, r098, r106-r108 | prompt-cache stability, recorded-shape tests, `ConversationStore`/`JoinQueue`/`SessionEvent*` contracts | partial | DUST2.24 |
+| 1.2/r019, 1.2/r022 | per-request (gateway, provider, reason) log, single-target included | partial | DUST2.17 (r022's env-name collision is a Phase 3 defect) |
+| 1.2/r033 | `claude-cli` provider retirement | not started | R13.14 |
+| 1.3/r037, r043, r045 | per-content-type Headroom map, tool-result cache with mtime invalidation, lossy-stage gate declarations | partial | DUST2.20 |
+| 1.4/r008, r020, r070 | watcher daemons, wiki to index through the watcher, resumable ingest checkpoints | partial / not started | DUST2.14 |
+| 1.4/r018, r039 | graph-first alias lookup, full-text `fetch` of any hit | partial | DUST2.15 |
+| 1.4/r065, r067 | `max-age`/`Expires` freshness, fetched pages ingested into the KB | partial | DUST2.13 |
+| 1.6/r017 | team-wide prompt through the `team` origin | partial | DUST2.22 |
+| 1.6/r028, r029, r034, 1.11/r013, r023, r026 | LAN worker agent, hub capability table, hub-worker mTLS, P4 fleet | not started / partial | DUST2.25 (open question, §10) |
+| 1.6/r056 | real spawn/download and multi-GB pull as manual checklist items | partial | R1.6 |
+| 1.7/r025, r027, r029 | plan-task frontmatter parse, `golem task resume`, worktree capture | partial / not started | DUST2.12 |
+| 1.8/r004, r010, r011 | `default!` floor, locked-control render, `ApplyResult.overridden` | partial / not started | DUST2.16 |
+| 1.6/r062, 1.8/r016 (G08) | `inference.worker_targets` | live leaf | DUSTSEC.13 |
+| 1.8/r049 | vibe `sources.json`/`candidates.jsonl` redaction | partial | DUSTSEC.9 |
+| 1.8/r054, r055 | seed from `git log --author`, mark linter-enforced habits | not started | `vibe-authored-history` |
+| 1.8/r057, r072 (G23) | release lockstep, release asset assertion | partial | DUST2.21 |
+| 1.9/r002-r004 | dashboard tokens saved/spent, cache hit rates, cost estimate | partial | DUST2.18 |
+| 1.10/r004, r022, r034 | gate map as real controls, Decision 61 setting, permission questions answered in place | not started | R13.9 |
+| 1.10/r006 | relay/account/2FA/self-host tested path | not started | R13.10 |
+| 1.10/r018, r020, r021 | remote-authored turns surfaced locally, hosted park, interrupt from device | partial | DUST2.19 |
+| 1.10/r029, r031, r033 | `GET /sessions`, store-fed scrollback, start/continue from the device | partial / not started | R13.8 |
+| 1.10/r079, r085 | thread deferral, orchestrator `@Golem` | not started | R14.4 |
+| 1.10/r080, r082, r083 | Buzz identity manifest, BYOH harness, `golem buzz status` | partial / not started | R14.2 / R14.5 |
+| 1.10/r084 | tier C nested `claude-agent-acp` | not started | R14.5 |
+| 1.11/r037 | 20c self-hosted remote access | partial | R13.10, R13.8 |
+| 1.11/r041 | 20g prompt translation and style adaptation | partial | R5.5-scoring |
+| 1.11/r043 | 21b remote steering | partial | R12.13, R12.14, R13.15 |
+
+### Not started (no task)
+
+| rows | claim | note |
+|---|---|---|
+| 1.1/r060, 1.11/r012 (G05) | SDK surface (thin wrapper over the Anthropic SDK) | `src/index.ts` exports only interfaces and `VERSION` |
+| 1.1/r051, r052 | declarative pattern-only plugin rules, WASM-compiled rules | successor ideas in the plugin ADR |
+| 1.1/r070, 1.4/r009 (G19) | tree-sitter code chunking | an opt-in `web-tree-sitter` add-on exists (X6); not a default |
+| 1.2/r003 | target-model-friendly prompt translation (20g generalised) | only wire-schema translation exists |
+| 1.3/r034 | unified MCP surface re-exporting Headroom tools | §1.2 |
+| 1.3/r041, 1.11/r009 (G07) | exact response cache | no code |
+| 1.3/r042, 1.11/r025 (G06) | semantic cache | `semanticCache` has no reader |
+| 1.3/r046 | eval harness (replay per level, judge, quality curves) | R2.6 is a live cost A/B only |
+| 1.3/r047 | canary mode | |
+| 1.4/r002 | Qdrant server via config URL | throws `NotImplementedYetError` |
+| 1.4/r004 | opt-in shared cross-project "knowledge" collection | |
+| 1.5/r009, r012, 1.11/r021 (G13) | media pre-processing (Whisper, OCR), speculative prefetch | |
+| 1.5/r010, 1.11/r020 (G14) | local test running to failure digest | head/tail swap is partial coverage only (X4) |
+| 1.5/r011 | git-aware context | |
+| 1.5/r014 | session memory via local vector DB beyond notes/wiki | |
+| 1.5/r015 | Batch-API off-peak queueing | |
+| 1.6/r036 | Classifier/Router triage | roles exist in the catalog, no call site |
+| 1.6/r037 | Extractor | role exists, no call site |
+| 1.6/r041 | bundled llama.cpp fallback, vLLM opt-in | a `llamacpp` gateway kind exists |
+| 1.6/r044 | cross-encoder reranker, `bge-reranker-v2` | rerank is the opt-in chat-judge |
+| 1.9/r006 | dashboard per-device utilization | |
+| 1.9/r007 | dashboard quality-delta from canary runs | |
+| 1.9/r012 | `golem replay-eval` | |
+| 1.11/r036 | 20b concurrent-conversation multiplexing | queue at concurrency 2 exists |
+| 1.11/r039 | 20e separate workspace and org tiers | one `team` scope exists |
+| 1.11/r040 | 20f note capture as an MCP tool and hook | CLI exists |
+| 1.11/r042, r046 | 21a mid-thread escalation, 21e cost/quota arbitrage (ToS-gated by design) | `golem task escalate`, per-target routing exist |
+| 1.1/r042 | regex-hang risk named by `golem plugin` | also under DUST2.11 |
+| 1.1/r067 | ONNX / transformers.js CPU embedding fallback (§6) | the hashing embedder is the CPU fallback |
+
+Drift rows from SUMMARY (spec Decisions 18-64, §1-§3, §5-§7, §9) are traced by the `Rebaseline` bullets above and the section edits; the rows not repeated here (`1.2/r005`, `1.11/r001-r010`, `1.7/r034-r036`, `1.8/r013`, `1.5/r020`, `1.11/r034`) map to §1, §2, §5.1, §9 tail respectively.
