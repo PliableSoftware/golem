@@ -3,7 +3,7 @@
 Guidance for Claude Code agents working in this repository.
 
 ## What this project is
-A local-first TypeScript pre-LLM processing layer (proxy + MCP server): redaction, compression, local tools, routing, honest observability. Claude Code is the flagship integration — byte-faithful proxying, native MCP tools, agentic developer-assistant with local tools (vector KB, tiered Ollama inference, CCR expansion, telemetry). The pipeline extends to other gateways (R6.1). npm **`@pliable/golem`**, CLI **`golem`**.
+A local-first TypeScript pre-LLM processing layer (proxy + MCP server): redaction, compression, local tools, routing, honest observability. Claude Code is the flagship integration — lossless, prefix-stable proxying, native MCP tools, agentic developer-assistant with local tools (vector KB, tiered Ollama inference, CCR expansion, telemetry). The pipeline extends to other gateways (R6.1). npm **`@pliable/golem`**, CLI **`golem`**.
 
 Previously the project had a different working title — dated wiki records still show it, read as Golem. The MCP tools use short verb names: `search`, `fetch`, `expand`, `stats`, `ingest`, `coder` (Decisions 27/35). `level` was retired with the slider (ADR-0004): no tool call can change how much of the pipeline runs. Skills/prompts/env/config/header use `/golem-<cmd>` and `GOLEM_*`.
 
@@ -33,7 +33,7 @@ golem task add                 # capture new work inline
 - Cross-platform always: `node:path`, `env-paths`, argument-array spawn
 - Headroom pinned exactly; imports only in `src/compression/headroom-adapter.ts`
 - Redaction must never be weakened or reordered. `proxy.bypass_all` is the single exception (full bypass, never default, CLI-only, surfaced loudly — ADR-0004). No dial value can disable it
-- Proxy byte-faithful at compression ≤ 1. Pipeline changes need recorded-shape tests
+- Proxy lossless and prefix-stable at level ≤ 1. Pipeline changes need recorded-shape tests
 - No heavyweight native deps in default install — GPU/ML are optional add-ons
 
 ## Verify, don't assume

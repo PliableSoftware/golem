@@ -34,7 +34,7 @@ the existing workflow, then `golem task index --write`.
 Using the rebaselined spec as ground truth, remove dead/superseded code and
 stale comments. Propose removals before deleting. Respect CLAUDE.md hard
 rules: `src/interfaces/` frozen contracts, redaction never weakened/reordered,
-proxy byte-faithful at compression ≤ 1, no heavyweight native deps. `golem
+proxy lossless and prefix-stable at level ≤ 1, no heavyweight native deps. `golem
 verify` green (exit code) before and after.
 
 - **Input:** Phase 1's `SUMMARY.md` → "Phase 3 inputs" section (dead code,
