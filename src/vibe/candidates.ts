@@ -75,9 +75,16 @@ export async function loadCandidates(store: VibeStore): Promise<Candidate[]> {
   return [...byKey.values()].sort((a, b) => b.seen - a.seen || a.key.localeCompare(b.key));
 }
 
-async function append(store: VibeStore, row: Candidate): Promise<void> {
+async function append(store: VibeStore, row: Candidate): Promise<Candidate> {
+  // DUSTSEC.9 (R7): `note` is the human's free text and the only field that can
+  // carry a secret. `key`/`from`/`to` are derived from style metrics (quote kind,
+  // indent width, ...) and `files` are paths used as a distinct-set, so they stay
+  // exact. Redacted BEFORE the append, so no raw form ever reaches the file.
+  const safe: Candidate =
+    row.note === undefined ? row : { ...row, note: await store.redact(row.note) };
   await mkdir(path.dirname(store.paths.candidates), { recursive: true });
-  await appendFile(store.paths.candidates, `${JSON.stringify(row)}\n`, "utf8");
+  await appendFile(store.paths.candidates, `${JSON.stringify(safe)}\n`, "utf8");
+  return safe;
 }
 
 /**
@@ -110,8 +117,7 @@ export async function recordSignal(
     state: existing?.state ?? "open",
     ...(existing?.note === undefined ? {} : { note: existing.note }),
   };
-  await append(store, row);
-  return row;
+  return await append(store, row);
 }
 
 /**
@@ -159,6 +165,5 @@ async function transition(
     lastSeen: nowIso,
     ...(note === undefined ? {} : { note }),
   };
-  await append(store, row);
-  return row;
+  return await append(store, row);
 }

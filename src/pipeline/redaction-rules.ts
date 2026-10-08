@@ -101,7 +101,7 @@ export function isCreditCardLike(target: string): boolean {
  * first: `sk-ant-` before the generic `sk-` OpenAI shape), structured
  * formats (JWT, connection strings), then PII (card numbers, emails).
  */
-export const REDACTION_RULES: readonly RedactionRule[] = [
+const BUILT_IN_RULES: readonly RedactionRule[] = [
   {
     id: "private-key",
     description:
@@ -235,6 +235,22 @@ export const REDACTION_RULES: readonly RedactionRule[] = [
     pattern: /\bnsec1[023456789acdefghjklmnpqrstuvwxyz]{58,}/gi,
   },
 ];
+
+// DUSTSEC.7 (R5): `readonly` is a type-level promise only. `BUILT_IN_RULES` is
+// module-private and frozen (array and each rule object), and it is the only
+// table redaction ever reads. The exported `REDACTION_RULES` is a frozen COPY
+// with its own RegExp objects: freezing a RegExp does not stop
+// `re.compile(...)` from rewriting its source, so a caller holding a rule's
+// `pattern` must not be holding the one redaction runs.
+for (const rule of BUILT_IN_RULES) Object.freeze(rule);
+Object.freeze(BUILT_IN_RULES);
+
+/** Frozen copy of the built-in table, safe to hand out: mutating it changes nothing. */
+export const REDACTION_RULES: readonly RedactionRule[] = Object.freeze(
+  BUILT_IN_RULES.map((rule) =>
+    Object.freeze({ ...rule, pattern: new RegExp(rule.pattern.source, rule.pattern.flags) }),
+  ),
+);
 
 // ---------------------------------------------------------------------------
 // High-entropy heuristic (applied after the table; see redaction.ts).
@@ -475,7 +491,7 @@ export function registerExtraRedactionRules(
         "serving begins so prompt-cache prefixes stay stable (verification-notes §14)",
     };
   }
-  const builtInIds = new Set(REDACTION_RULES.map((r) => r.id));
+  const builtInIds = new Set(BUILT_IN_RULES.map((r) => r.id));
   const accepted: RedactionRule[] = [];
   for (const rule of rules) {
     if (!rule.id.includes("/")) continue; // must be `<plugin>/<rule>`
@@ -485,6 +501,11 @@ export function registerExtraRedactionRules(
   extraRules = accepted;
   extraRulesSealed = true;
   return { accepted: accepted.length, refused: null };
+}
+
+/** True once this process has fixed its plugin rule set (even to the empty set). */
+export function pluginRedactionRulesSealed(): boolean {
+  return extraRulesSealed;
 }
 
 /** The plugin-contributed rules currently in force (possibly empty). */
@@ -498,7 +519,7 @@ export function extraRedactionRules(): readonly RedactionRule[] {
  * specific rules keep winning the placeholder kind over the generic detector.
  */
 export function activeRedactionRules(): readonly RedactionRule[] {
-  return extraRules.length === 0 ? REDACTION_RULES : [...REDACTION_RULES, ...extraRules];
+  return extraRules.length === 0 ? BUILT_IN_RULES : [...BUILT_IN_RULES, ...extraRules];
 }
 
 /**
