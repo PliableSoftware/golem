@@ -2,11 +2,11 @@
 
 **DRAFT. Not published. Not a source of truth.** See [`README.md`](README.md). Publishing is the user's decision.
 
-Heavy development leaves docs and code out of step. Renames are half finished, specs describe features that changed, and nobody knows which claims still hold. We wrote down a method for cleaning that up and ran it once, here, on one project. We do not know that it transfers, and the numbers below are what happened to us, not what you should expect.
+Heavy development leaves docs and code out of step. Renames are half finished, specs describe features that changed, and nobody knows which claims still hold. We wrote down a method for cleaning that up and ran it once in full, here, on one project. We do not know that it transfers, and the numbers below are what happened to us, not what you should expect.
 
 ## Phase 1: read-only audits in parallel
 
-The first rule is that audits change nothing. We split the documented surface into eleven partitions and gave each its own git worktree. Each auditor checked one subsystem's documented claims against the code and committed one findings note with `path:line` evidence. Then one merge step rebuilt the totals.
+The first rule is that audits change nothing. We split the documented surface into eleven partitions and gave each its own git worktree. Each auditor checked one subsystem's documented claims against the code and committed one findings note with `path:line` evidence. Then one merge step rebuilt the totals. <!-- DUST1.12 debrief -->
 
 On 2026-09-26 the eleven audits produced 800 table rows, 791 of them classified. 436 matched the code and 194 had drifted. <!-- DUST1.12 debrief -->
 Roughly half the documented surface still matched, and about a quarter had drifted. <!-- DUST1.12 debrief -->
@@ -16,7 +16,7 @@ The recount step matters. Two of the eleven notes reported tallies that their ow
 
 ## Phase 2: rebaseline docs to the code, with a default rule
 
-For every disagreement someone must decide whether the doc or the code is right, and case by case does not scale. We used one default rule: the doc follows the shipped code, unless the item touches security, a hard rule or a recorded decision by the user. Every choice made under the rule is listed in one section of the spec so any of them can be overturned. Contradictions the rule could not settle are listed as open and left alone for a human.
+For every disagreement someone must decide whether the doc or the code is right, and case by case does not scale. We used one default rule: the doc follows the shipped code, unless the item touches security, a hard rule or a recorded decision by the user. Every choice made under the rule is listed in one section of the spec so any of them can be overturned. Contradictions the rule could not settle are listed as open and left alone for a human. <!-- DUST2 debrief; docs/golem-spec.md section 11 -->
 
 On 2026-10-08 the spec was rebaselined to v1.33. <!-- DUST2 debrief -->
 A sampled fact-check of the merged result found 54 of 58 claims true and 4 false. <!-- DUST2 debrief -->
@@ -57,7 +57,7 @@ It also found 11 defects in the skill text. Nine were fixed and two were filed a
 The missing pieces were basic: no table shape, no definition of the five classes, no unit for a "claim", and no guidance for a claim the code cannot settle. One more was subtle. A truncated file read looks like a complete read, and the agent only noticed because it checked. <!-- dogfood FINDINGS.md -->
 
 The honest grade was weak. The agent had also read the project's `CLAUDE.md` and the Dust Method wiki page, and it wrote the fixes itself. It did not independently re-grade the 38 matching rows, and one partition does not exercise the parallel and cross-note parts of the method. <!-- dogfood FINDINGS.md -->
-Those untested parts are filed as follow-up work.
+Those untested parts are filed as follow-up work. <!-- dogfood FINDINGS.md -->
 
 ## What we would tell you
 
