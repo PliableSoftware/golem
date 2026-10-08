@@ -181,7 +181,13 @@ export async function applyRuntime(
             { key: "runtime:proxy" },
           );
         }
-        const pid = await startDetached(shared.projectDir, settings.proxy.port, script);
+        const { credentialEnvForProxy } = await import("../cli/gateways.js");
+        const pid = await startDetached(
+          shared.projectDir,
+          settings.proxy.port,
+          script,
+          await credentialEnvForProxy(shared.projectDir),
+        );
         if (pid === null) {
           throw new ConfigError(
             `the proxy did not come up on port ${settings.proxy.port} — run \`golem proxy\` to see why`,

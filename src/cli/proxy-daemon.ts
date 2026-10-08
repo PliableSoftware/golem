@@ -431,6 +431,23 @@ async function openProxyLog(projectDir: string): Promise<FileHandle | null> {
   }
 }
 
+/**
+ * The daemon's spawn env. R9.20: the credentials-injected marker rides with the
+ * credentials it describes. DUST3.5: it is set ONLY when something was injected,
+ * so a caller that passes `{}` (nothing resolved) leaves the daemon to resolve
+ * the stored gateway keys itself instead of starting with none.
+ */
+export function daemonSpawnEnv(
+  base: Readonly<Record<string, string | undefined>>,
+  injected: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const hasCredentials = Object.keys(injected).length > 0;
+  return buildSpawnEnv(
+    base,
+    hasCredentials ? { ...injected, [CREDENTIALS_INJECTED_ENV]: "1" } : injected,
+  );
+}
+
 export async function startDetached(
   projectDir: string,
   port: number,
@@ -451,9 +468,7 @@ export async function startDetached(
     detached: true,
     stdio: log === null ? "ignore" : ["ignore", log.fd, log.fd],
     windowsHide: true,
-    // R9.20: the marker rides with the credentials it describes, so the two can
-    // never disagree — a caller cannot inject one without the other.
-    env: buildSpawnEnv(process.env, { ...env, [CREDENTIALS_INJECTED_ENV]: "1" }),
+    env: daemonSpawnEnv(process.env, env),
   });
   // The child holds its own duplicate of the descriptor; ours is done.
   if (log !== null) await log.close().catch(() => {});
