@@ -16,11 +16,18 @@
  * verification-notes §86.
  */
 
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { FAST_HOOK_EVENTS, fastPathFor, readSessionStdin } from "../../src/cli/fast-path.js";
+import {
+  FAST_HOOK_EVENTS,
+  fastPathFor,
+  fastPostToolUseOptions,
+  readSessionStdin,
+} from "../../src/cli/fast-path.js";
+import { writeSetting } from "../../src/config/index.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const source = (rel: string) => readFile(path.join(repoRoot, rel), "utf8");
@@ -131,6 +138,18 @@ describe("the fast path's safety boundary", () => {
         body,
         `the hook command now injects ${field} — fast-path.ts must pass it too`,
       ).not.toContain(field);
+    }
+  });
+
+  it("honours knowledge.read_skeleton_enabled=false, like the commander path (DUST3.9 C3)", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "golem-fast-skel-"));
+    try {
+      await writeSetting("project", "knowledge.read_skeleton_enabled", false, { projectDir });
+      const options = fastPostToolUseOptions(argv("hook", "post-tool-use").slice(2));
+      expect(options.skeletonEnabled).toBeTypeOf("function");
+      expect(await options.skeletonEnabled?.(projectDir)).toBe(false);
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
     }
   });
 

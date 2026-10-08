@@ -25,6 +25,10 @@ describe("unreachableHeadroomConfigKeys (R10.19)", () => {
     ).toEqual(["plugins"]);
   });
 
+  it("accepts `router`, a documented D57 key (DUST3.9)", () => {
+    expect(unreachableHeadroomConfigKeys({ router: { enabled: true } })).toEqual([]);
+  });
+
   it("passes every documented CompressConfig field", () => {
     const all = Object.fromEntries(KNOWN_HEADROOM_CONFIG_FIELDS.map((k) => [k, true]));
     expect(unreachableHeadroomConfigKeys(all)).toEqual([]);

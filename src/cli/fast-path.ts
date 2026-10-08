@@ -273,6 +273,37 @@ async function runStatusline(argv: readonly string[]): Promise<void> {
 }
 
 /** Mirrors the matching sub-command in src/hooks/command.ts, event by event. */
+/**
+ * The PostToolUseOptions the commander path ends up with. program.ts passes no
+ * `redact` / `projectDir` / `maxInlineChars` into buildHookCommand (its
+ * injections are all web-fetch ones; a test asserts that), and
+ * runPostToolUseHook defaults `redact` to `pipelineRedact` itself. The one
+ * dependency commander wires in that the hook does not default is
+ * `skeletonEnabled` (prompt-guidance.ts), so it is mirrored here: without it
+ * `knowledge.read_skeleton_enabled: false` was ignored on this path.
+ */
+export function fastPostToolUseOptions(
+  args: readonly string[],
+): import("../hooks/post-tool-use.js").PostToolUseOptions {
+  let maxInlineChars: number | undefined;
+  const flagIndex = args.indexOf("--max-inline-chars");
+  if (flagIndex !== -1) {
+    const parsed = Number(args[flagIndex + 1]);
+    if (Number.isInteger(parsed) && parsed > 0) maxInlineChars = parsed;
+  }
+  return {
+    ...(maxInlineChars !== undefined ? { maxInlineChars } : {}),
+    skeletonEnabled: async (projectDir: string) => {
+      try {
+        const { loadConfig } = await import("../config/index.js");
+        return (await loadConfig({ projectDir })).settings.knowledge.read_skeleton_enabled;
+      } catch {
+        return true;
+      }
+    },
+  };
+}
+
 async function runHook(argv: readonly string[]): Promise<void> {
   const args = argv.slice(2);
   const event = args[1];
@@ -329,17 +360,7 @@ async function runHook(argv: readonly string[]): Promise<void> {
       return;
     }
     case "post-tool-use": {
-      // program.ts passes no PostToolUseOptions field (`maxInlineChars`, `redact`,
-      // `projectDir`) into buildHookCommand — its injections are all web-fetch
-      // ones — and runPostToolUseHook defaults `redact` to `pipelineRedact`
-      // internally. So `{}` here is exactly what the commander path produces.
-      // A test asserts that call site stays free of those fields.
-      const runtime: { maxInlineChars?: number } = {};
-      const flagIndex = args.indexOf("--max-inline-chars");
-      if (flagIndex !== -1) {
-        const parsed = Number(args[flagIndex + 1]);
-        if (Number.isInteger(parsed) && parsed > 0) runtime.maxInlineChars = parsed;
-      }
+      const runtime = fastPostToolUseOptions(args);
       let code = 0;
       try {
         const { runPostToolUseHook } = await import("../hooks/post-tool-use.js");
