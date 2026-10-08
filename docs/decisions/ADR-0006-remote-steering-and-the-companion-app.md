@@ -528,3 +528,50 @@ Related: [[Redaction Stage]], ADR-0002 (the gate this feeds), ADR-0003
 (credentials, the other "an attacker gets what?" ADR), ADR-0005 (the precedent for
 stating an absent mitigation), Decision 37 (why capability 3 does not exist),
 verification-notes §121→§124 (the certificate machinery).
+
+## Amendment (2026-10-08, DUST2.3)
+
+**Amended 2026-10-08 (DUST2.3; DECISIONS.md P7, default rule "doc follows shipped
+code"; SUMMARY row 1.10/r005; DUST1.10 C8).** The text above is unchanged and is
+history. Five sections were overtaken by later decisions or by code, and this ADR
+carried no pointer to any of them.
+
+- **Section 2 and Section 8 ("no remote approval of `destructive` or `outward` …
+  There is no flag for this").** Superseded by Decision 61 (2026-08-22, USER
+  DECISION), which amends Decision 59(a): a paired device MAY answer a
+  `destructive` or `outward` prompt behind a setting that is off by default.
+  Decision 61 is **decided, not shipped**: the setting is R13.9 (queued) and no
+  such key exists in the `security` settings today. What ships is the opposite
+  extreme. A hosted session always denies those classes
+  (`src/hooks/host-gate.ts:68-82`), and the R12.12 `PermissionRequest` deny
+  applies to every session when the gate is enabled (see the ADR-0002 amendment
+  of the same date). The threat-model rows that repeat "no setting" carry the same
+  pointer. Whether Decision 61 reaches hosted sessions is a separate open
+  contradiction (P3) and is not decided here.
+- **Section 8, "No remote surface that changes settings".** Whether
+  `REMOTE_DENIED_SETTINGS` (`src/config/loader.ts:144`) should also name the
+  `security.*` keys is an open question (P4) that is not decided here. Note only
+  that the list does not name them today.
+- **Section 3a, `rejectUnauthorized: true`.** The shipped server sets
+  `requestCert: true` and `rejectUnauthorized: false`
+  (`src/security/write-server.ts:160-170`). A handshake-level rejection reads as
+  "cannot connect" on a phone, so the decision moved into `authorizeWrite`, which
+  answers 401 and says which claim failed, and the certificate is verified
+  explicitly on every request. The module header documents this
+  (`write-server.ts:14-26`). The properties §3a cares about hold: Golem is its own
+  CA, the certificate is the only credential, and no bearer token exists. Only the
+  mechanism of rejection differs.
+- **Section 4 (decision binding to `{session, tool, digest, nonce, deadline}`).**
+  Not built and not planned. It belonged to R12.3, which was paused and then
+  cancelled by Decision 59(i) after R12.11 found that Anthropic relays permission
+  prompts to a channel first-party. No `nonce` exists anywhere under
+  `src/session`, `src/security` or `src/hooks`. Treat §4 as dead.
+- **Section 7 (decisions logged to `autonomy-log.jsonl` with the device
+  fingerprint).** For a hosted session the record is the host log instead
+  (`src/session/host-log.ts:1-22`), which ADR-0007 invariant 4 requires and which
+  stores turns and the host's tool decisions. UNVERIFIED: which log, if any,
+  records a decision made on the joined-session path; this amendment did not trace
+  `src/session/join-queue.ts` for it.
+
+Not amended here: the relay and account design (§3b, §3c) is not started; the
+DUST1.10 audit found nothing for it in `src/` (R13.10 is the task).
