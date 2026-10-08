@@ -35,6 +35,7 @@ import {
   collectionDir,
   type FileState,
   knowledgeDir,
+  projectBaseDir,
   readCollectionDim,
   scanFiles,
   supportsIncremental,
@@ -415,18 +416,49 @@ export async function planBuildEmbedder(
 }
 
 /** Scan all roots into a `sourcePath → FileState` map (last-writer-wins across roots). */
-async function scanAll(roots: readonly string[]): Promise<Map<string, FileState>> {
+async function scanAll(
+  roots: readonly string[],
+  projectId: string,
+): Promise<Map<string, FileState>> {
   const map = new Map<string, FileState>();
   for (const root of roots) {
-    for (const f of await scanFiles(root)) map.set(f.sourcePath, f);
+    for (const f of await scanFiles(root, await baseDirFor(projectId, root)))
+      map.set(f.sourcePath, f);
   }
   return map;
+}
+
+/** The directory source paths are relative to for `root` — the same rule ingest uses. */
+async function baseDirFor(projectId: string, root: string): Promise<string> {
+  const abs = path.resolve(root);
+  const isFile = (await stat(abs).catch(() => null))?.isFile() === true;
+  return projectBaseDir(projectId, abs, isFile);
 }
 
 function toPersisted(states: Map<string, FileState>): Record<string, PersistedFileState> {
   const out: Record<string, PersistedFileState> = {};
   for (const [sp, f] of states) out[sp] = { m: f.mtimeMs, s: f.size };
   return out;
+}
+
+/**
+ * The manifest file map after indexing `scanned` into an existing collection
+ * (DUST3.7 D4): the previous map with the scanned files' states overlaid. A
+ * `golem index <sub-path>` used to write `files = {}`, so the next sync saw every
+ * file as new. If the previous manifest was built in a different embedder space
+ * its map is not carried over — those vectors were replaced.
+ */
+export async function mergeManifestFiles(
+  projectDir: string,
+  projectId: string,
+  signature: string,
+  scanned: readonly FileState[],
+): Promise<{ files: Record<string, PersistedFileState>; paths: readonly string[] }> {
+  const prev = await readManifest(collectionDir(knowledgeDir(projectDir), projectId));
+  const keep = prev !== null && prev.signature === signature;
+  const files: Record<string, PersistedFileState> = keep ? { ...(prev.files ?? {}) } : {};
+  for (const f of scanned) files[f.sourcePath] = { m: f.mtimeMs, s: f.size };
+  return { files, paths: keep ? (prev.paths ?? []) : [] };
 }
 
 /** Record the manifest (embedder signature + file states) for a collection. */
@@ -531,7 +563,7 @@ async function fullIndex(
     chunks += report.chunksIndexed;
     files += report.filesSeen;
   }
-  const states = await scanAll(roots);
+  const states = await scanAll(roots, opts.projectId);
   await writeManifest(
     opts.projectDir,
     opts.projectId,
@@ -579,7 +611,7 @@ export async function ensureProjectIndexed(
   }
 
   // Signature matches → incremental sync of changed/new/deleted files.
-  const current = await scanAll(roots);
+  const current = await scanAll(roots, opts.projectId);
   const prev = manifest.files ?? {};
   const changed: string[] = [];
   for (const [sp, f] of current) {
@@ -623,7 +655,7 @@ export async function ensureProjectIndexed(
     return { action: "reindexed", chunks, files };
   }
 
-  const baseDir = roots[0];
+  const baseDir = await baseDirFor(opts.projectId, roots[0]);
   // R11.2: progress is persisted as it is EARNED. The map starts from the states
   // the last completed run recorded and advances one batch at a time, so the
   // manifest never claims a file whose chunks aren't in the store yet — and an

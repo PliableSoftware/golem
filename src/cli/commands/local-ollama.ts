@@ -2,11 +2,19 @@
  * golem local / ollama / coder / index / devices — extracted from program.ts (R8.27).
  */
 
+import { stat } from "node:fs/promises";
+import path from "node:path";
 import type { Command } from "commander";
 import { InvalidArgumentError } from "commander";
 import { findProjectDir, loadConfig } from "../../config/index.js";
 import type { SettingsScope } from "../../config/write-setting.js";
-import { embedderSignatureForModel, ensureProjectIndexed, writeManifest } from "../auto-index.js";
+import { projectBaseDir, scanFiles } from "../../knowledge/index.js";
+import {
+  embedderSignatureForModel,
+  ensureProjectIndexed,
+  mergeManifestFiles,
+  writeManifest,
+} from "../auto-index.js";
 import { buildKnowledgeStack } from "../build-knowledge.js";
 import { collectDevices, devicesJson, renderDevices } from "../devices.js";
 import { InitError } from "../init.js";
@@ -207,14 +215,24 @@ export default function register(program: Command): void {
           }
           const target = pathArg ?? opts.dir;
           const report = await knowledge.ingest(target, opts.dir, opts.watch);
+          const signature = embedderSignatureForModel(embedMode, embedModel);
+          const absTarget = path.resolve(target);
+          const targetIsFile = (await stat(absTarget)).isFile();
+          const merged = await mergeManifestFiles(
+            opts.dir,
+            opts.dir,
+            signature,
+            await scanFiles(absTarget, projectBaseDir(opts.dir, absTarget, targetIsFile)),
+          );
           await writeManifest(
             opts.dir,
             opts.dir,
             // R10.6: the model that actually embedded these chunks, which is not
             // always the one the detected tier would have chosen.
-            embedderSignatureForModel(embedMode, embedModel),
-            [target],
+            signature,
+            [...new Set([...merged.paths, target])],
             new Date().toISOString(),
+            merged.files,
           );
           if (opts.json) {
             process.stdout.write(
