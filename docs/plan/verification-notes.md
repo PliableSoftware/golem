@@ -10965,3 +10965,27 @@ means only the R12.12-shipped half.
 **Open for the user:** accept the deny-for-everyone behaviour as-is (amend ADR-0002 via DUST2.3),
 or build a Golem-owned channel/pairing server that writes a connected marker (cleared on
 disconnect/crash) so the signal exists.
+
+## 2026-10-08 — DUSTSEC.20: Anthropic API object id formats, and what the entropy sweep did to them
+
+**Reproduced** (200 ids per family, built at runtime, `redactRequestBody({ id })` on `development`):
+`srvtoolu_` + 24 base62 (33 chars) replaced 200/200; `msgbatch_` + 24 replaced 199/200;
+`container_` + 24 (34 chars) 200/200; `container_` + 22 (32 chars) 200/200. Only the generic
+long-token rule fires; no provider rule matches these shapes.
+
+**Official format evidence** (fetched 2026-10-08 from docs.anthropic.com: `/en/api/messages-batches`,
+`/en/api/creating-message-batches`, `/en/docs/build-with-claude/batch-processing`,
+`/en/docs/agents-and-tools/tool-use/web-search-tool`, `.../code-execution-tool`,
+`/en/docs/agents-and-tools/tool-use/programmatic-tool-calling`, `/en/api/messages`):
+- `srvtoolu_`: every example id in the docs is `srvtoolu_` + 24 base62 characters (33 total).
+- `msgbatch_`: every example id is `msgbatch_` + 24 base62 characters (33 total).
+- `container_`: **no id example and no stated format appears on any fetched page** (only the
+  parameter names `container_upload` etc.). The 34-character figure in the task doc could not be
+  confirmed from an official source.
+- The docs show EXAMPLES, not a stated pattern or length guarantee. The exemption therefore
+  follows the documented examples and nothing wider.
+
+**Decision.** Exempt only the whole token `^(srvtoolu|msgbatch)_[A-Za-z0-9]{24}$` in the entropy
+sweep (`isApiObjectId`, `src/pipeline/redaction-rules.ts`). `container_` is NOT exempt: open until
+an official source gives its format. Re-check the docs before adding it, and before widening the
+length if the API changes id sizes.
