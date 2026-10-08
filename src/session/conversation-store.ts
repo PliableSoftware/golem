@@ -106,6 +106,9 @@ export function conversationStoreDir(projectRoot: string): string {
 }
 
 /** How many conversations to keep before evicting the oldest (by `lastTurnAt`). */
+/** Conversation ids are fingerprints/keys: no separators, no dots, so no `..`. */
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
 const DEFAULT_MAX_CONVERSATIONS = 32;
 
 /**
@@ -149,6 +152,11 @@ export class LocalConversationStore implements ConversationStore {
   }
 
   #fileFor(conversationId: string): string {
+    // Ids are written by this store (hex/word keys). Anything with a separator
+    // or `..` would escape the directory before `rm`/`readFile`.
+    if (!SAFE_ID.test(conversationId)) {
+      throw new Error(`invalid conversation id: ${JSON.stringify(conversationId)}`);
+    }
     return path.join(this.#dir, `${conversationId}.json`);
   }
 
@@ -241,6 +249,7 @@ export class LocalConversationStore implements ConversationStore {
 
   /** Delete one conversation. Returns whether it existed before deletion. */
   async forget(conversationId: string): Promise<boolean> {
+    if (!SAFE_ID.test(conversationId)) return false;
     const file = this.#fileFor(conversationId);
     try {
       await stat(file);

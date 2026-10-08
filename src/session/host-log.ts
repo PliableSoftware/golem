@@ -78,7 +78,21 @@ export async function appendHostLog(projectDir: string, entry: HostLogEntry): Pr
   const file = hostLogPath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
   await appendFile(file, `${JSON.stringify(entry)}\n`, "utf8");
+  // Trim on the first append per process (a log left long by earlier runs) and
+  // then every HOST_LOG_TRIM_EVERY appends, so the hot path stays an append.
+  const n = appendsSinceTrim.get(file) ?? 0;
+  appendsSinceTrim.set(file, (n + 1) % HOST_LOG_TRIM_EVERY);
+  if (n === 0) {
+    try {
+      await trimHostLog(projectDir);
+    } catch {
+      // Bounding is housekeeping; a failed trim must not fail the attributed turn.
+    }
+  }
 }
+
+const HOST_LOG_TRIM_EVERY = 200;
+const appendsSinceTrim = new Map<string, number>();
 
 /** Newest last. A malformed line is skipped rather than failing the read. */
 export async function readHostLog(
