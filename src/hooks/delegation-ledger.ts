@@ -131,18 +131,36 @@ export async function writeDelegationLedger(
 }
 
 /**
- * Load -> append -> save under a lock. Concurrent spawns each run this in their
- * own hook process; without the lock the later save overwrites the earlier one
- * (a lost delegation is a lost review obligation) and both pick the same seq id.
+ * Load -> `fn` -> save the ledger under the lock every writer shares. `fn` returns
+ * the ledger to save plus a value for the caller, or `null` ledger to write
+ * nothing. Every read-modify-write of `delegations.json` must come through here:
+ * an unlocked writer can erase a delegation recorded in between, and a lost
+ * delegation is a silently skipped review obligation.
  */
+export async function updateDelegationLedger<T>(
+  projectDir: string,
+  fn: (
+    ledger: DelegationLedger,
+  ) =>
+    | { readonly ledger: DelegationLedger | null; readonly result: T }
+    | Promise<{ readonly ledger: DelegationLedger | null; readonly result: T }>,
+): Promise<T> {
+  return withFileLock(delegationLedgerPath(projectDir), async () => {
+    const { ledger, result } = await fn(await readDelegationLedger(projectDir));
+    if (ledger !== null) await writeDelegationLedger(projectDir, ledger);
+    return result;
+  });
+}
+
+/** Append one delegation under the lock (also fixes the same-seq id collision). */
 export async function recordDelegation(
   projectDir: string,
   entry: Omit<DelegationRecord, "id">,
 ): Promise<void> {
-  await withFileLock(delegationLedgerPath(projectDir), async () => {
-    const ledger = await readDelegationLedger(projectDir);
-    await writeDelegationLedger(projectDir, appendDelegation(ledger, entry));
-  });
+  await updateDelegationLedger(projectDir, (ledger) => ({
+    ledger: appendDelegation(ledger, entry),
+    result: undefined,
+  }));
 }
 
 /** A short, collision-resistant-enough id for one delegation. */

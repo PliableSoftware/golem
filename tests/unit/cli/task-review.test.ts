@@ -9,6 +9,7 @@ import register from "../../../src/cli/commands/tasks.js";
 import {
   appendDelegation,
   readDelegationLedger,
+  recordDelegation,
   unreviewedDelegations,
   writeDelegationLedger,
 } from "../../../src/hooks/delegation-ledger.js";
@@ -66,5 +67,16 @@ describe("golem task review --waive", () => {
     await run(["--all", "--waive", "because"]);
     expect(exitCode).toBeUndefined();
     expect(unreviewedDelegations(await readDelegationLedger(dir))).toHaveLength(0);
+  });
+});
+
+describe("golem task review vs a concurrent spawn", () => {
+  it("never erases a delegation recorded while the review runs", async () => {
+    await Promise.all([
+      run(["--all"]),
+      recordDelegation(dir, { at: NOW, agentType: "golem-reviewer" }),
+    ]);
+    const { delegations } = await readDelegationLedger(dir);
+    expect(delegations).toHaveLength(3);
   });
 });
