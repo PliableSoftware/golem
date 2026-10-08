@@ -71,8 +71,6 @@ export async function collectOllamaStatus(opts: OllamaStatusOptions): Promise<Ol
     detectCapability(deps.probe),
   ]);
   const targetModel = chatModelFor(facts.tier, "drafter");
-  // The catalog carries no download sizes, so none is claimed; every model is named.
-  const allModels = roleModelsFor(facts.tier).join(", ");
   const reachable = await native.isReachable();
   const modelPulled = reachable ? await native.hasModel(targetModel) : false;
 
@@ -167,7 +165,8 @@ export async function runOllamaSetup(opts: SetupOptions): Promise<SetupResult> {
     });
 
   const facts = await detectCapability(deps.probe);
-  const targetModel = chatModelFor(facts.tier, "drafter");
+  // The catalog carries no download sizes, so none is claimed; every model is named.
+  const allModels = roleModelsFor(facts.tier).join(", ");
 
   const alreadyInstalled = await isOllamaInstalled(deps.probe);
   const planSummary = alreadyInstalled
