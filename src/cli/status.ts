@@ -5,7 +5,7 @@
  *   - the effective config with per-key provenance (E1 loader),
  *   - whether this project is wired to Golem (init.ts file checks),
  *   - whether the proxy answers on the configured port (short HTTP probe),
- *   - the effective slider level.
+ *   - the effective compression level (`compression.level`).
  *
  * JSON output keys are snake_case, matching the settings-file conventions.
  *
@@ -203,8 +203,8 @@ export interface StatusReport {
   /**
    * Whether a local model (Ollama) is reachable, and whether the `coder` MCP
    * tool is enabled. When reachable AND enabled, Golem is a local+upstream
-   * hybrid — the local model is available via the `coder` MCP tool at any slider
-   * level (Decision 30/31) — and `coder_model` names the concrete model that
+   * hybrid — the local model is available via the `coder` MCP tool at any
+   * compression level (Decision 30/31) — and `coder_model` names the concrete model that
    * role runs at this machine's hardware tier.
    */
   readonly local_model: {
