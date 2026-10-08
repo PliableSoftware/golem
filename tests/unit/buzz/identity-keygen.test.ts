@@ -5,6 +5,7 @@
  * the two keys; the pubkey is committed to `.golem/buzz/agents.json`.
  */
 
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { parseGenerateKeyOutput } from "../../../src/buzz/identity.js";
@@ -13,8 +14,8 @@ import { useTempDirs } from "../../helpers/tmp.js";
 
 const makeTempDir = useTempDirs("golem-buzz-keygen");
 
-const S = "a".repeat(64);
-const P = "b".repeat(64);
+const S = randomBytes(32).toString("hex");
+const P = randomBytes(32).toString("hex");
 
 describe("parseGenerateKeyOutput", () => {
   it("labelled secret-then-public: pubkey is the public key", () => {
@@ -34,11 +35,22 @@ describe("parseGenerateKeyOutput", () => {
       expect(parseGenerateKeyOutput(`secret: ${S}\npublic: ${P}\n`).pubkeyHex).toBe(P);
     }
   });
-  it("positional-only output is public-then-secret", () => {
-    expect(parseGenerateKeyOutput(`${P}\n${S}\n`)).toEqual({ pubkeyHex: P, secretHex: S });
+  it("never guesses by position: unlabelled hex pair is refused", () => {
+    expect(() => parseGenerateKeyOutput(`${P}\n${S}\n`)).toThrow(/ambiguous/);
+  });
+  it("bech32 label lines without hex do not trigger the positional guess", () => {
+    const bech = (p: string) => `${p}1${"q".repeat(40)}`;
+    const head = `npub: ${bech("npub")}\nnsec: ${bech("nsec")}\n`;
+    // hex lines labelled: resolved by label, not order
+    expect(parseGenerateKeyOutput(`${head}secret: ${S}\npublic: ${P}\n`)).toEqual({
+      pubkeyHex: P,
+      secretHex: S,
+    });
+    // hex lines unlabelled: no label line carries the hex -> refuse
+    expect(() => parseGenerateKeyOutput(`${head}${S}\n${P}\n`)).toThrow(/ambiguous/);
   });
   it("refuses ambiguous output instead of guessing", () => {
-    const C = "c".repeat(64);
+    const C = randomBytes(32).toString("hex");
     // three keys, no labels
     expect(() => parseGenerateKeyOutput(`${P}\n${S}\n${C}\n`)).toThrow(/ambiguous/);
     // only one label resolves; the other key is unlabelled
@@ -49,7 +61,7 @@ describe("parseGenerateKeyOutput", () => {
     expect(() => parseGenerateKeyOutput(`public: ${P}\n`)).toThrow(/two 64-hex/);
   });
   it("refuses a pair whose public key equals its secret", () => {
-    expect(() => parseGenerateKeyOutput(`${S}\n${S}\n`)).toThrow(/same key twice/);
+    expect(() => parseGenerateKeyOutput(`public: ${S}\nsecret: ${S}\n`)).toThrow(/same key twice/);
   });
 });
 
