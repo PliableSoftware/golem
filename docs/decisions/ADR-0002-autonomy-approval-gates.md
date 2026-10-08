@@ -136,3 +136,38 @@ Failure modes and why the design is safe by construction:
 
 Related: [[Redaction Stage]] (untouched), R5.1 `--permission-mode` plumbing
 (a resumed task can pair a launch mode with this gate), verification-notes §65.
+
+> **Amended 2026-10-08 (DUST2.3; DECISIONS.md R8; SUMMARY rows 1.7/r017, 1.7/r019).**
+> The decision text above is unchanged and is history. Two things drifted.
+>
+> **1. Destructive and outward now end in a `deny`, not a human prompt.** The
+> `PreToolUse` gate still emits `ask` for both classes at every level
+> (`src/autonomy/gate.ts:27-34`). R12.12 added a second, earlier layer: the
+> `PermissionRequest` hook returns a real `deny` for `destructive` and `outward`
+> whenever the gate is enabled (`decidePermissionRequest`, `src/autonomy/gate.ts:81-86`;
+> `src/hooks/permission-request.ts:91-100`). The reason was to stop a connected
+> channel's permission relay from being triggered by the dialog opening
+> (verification-notes §141). The effect is that a human at the terminal is not
+> shown the dialog for these two classes: Claude gets the deny message. `allow`
+> is still never emitted for either class, so invariant 5 above holds. What no
+> longer holds is the reading "destructive/outward means a human decides".
+>
+> **USER decision R8 (2026-10-08):** the deny should apply only when a relay
+> channel is connected. That is not implemented. DUSTSEC.10 checked first
+> whether the `PermissionRequest` hook can observe a connected relay and found no
+> signal in the hook payload, an environment variable, or a Golem-owned marker
+> (verification-notes, 2026-10-08 DUSTSEC.10 entry). **The deny is currently
+> unconditional.** Open question, recorded and not decided here: accept the
+> unconditional deny, or build a Golem-owned channel server that writes a
+> connected marker. DUSTSEC.10 stays queued until the user chooses. Separately,
+> R12.13 is unconfirmed: nobody has observed live whether the deny pre-empts the
+> relay (`owner: user`, needs an interactive session).
+>
+> **2. "Misclassification only escalates; unknown is never auto-allowed" was
+> false for newlines.** `SHELL_COMPOSITION_RE` lacked `\n` and `\r`, so a command
+> chained on a new line after a safe-listed read could classify as `read`
+> (SUMMARY S5). Fixed by DUSTSEC.5 (`7528c67`): the pattern now includes
+> both (`src/autonomy/classify.ts:129`, applied at `:318`),
+> and `git branch -D`, linter autofix flags and `git diff --output` no longer
+> classify as `read`. DUSTSEC.18 (`56983c4`) then judged git write flags on shell
+> words, so a quoted search term is data and an escaped flag is still a flag.
