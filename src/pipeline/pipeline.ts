@@ -8,7 +8,7 @@
  * lossless compression stage (A2) runs per the resolved PipelinePolicy.
  *
  * Lossless and prefix-stable at level <= 1 (CLAUDE.md): the full pipeline runs only on
- * `POST /v1/messages` requests carrying a JSON body; any other JSON object or array body
+ * `POST /v1/messages` requests carrying a JSON object body; any other JSON object or array body
  * gets redaction only (DUSTSEC.19). An absent, non-JSON or encoded body, or a request where
  * no stage changed anything, is returned unchanged (same object, original bytes), so streaming and
  * tool-use traffic and requests no stage touches stay byte-identical. A request

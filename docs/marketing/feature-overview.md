@@ -14,7 +14,7 @@ It has a proxy that sits in front of model traffic and an MCP server that offers
 
 The proxy redacts the JSON body of `POST /v1/messages` requests before any other pipeline stage runs and before the request is forwarded. <!-- C-01 -->
 A request to any other path whose body is a JSON object or array gets redaction only: the same rules in the same order, and no other stage. <!-- C-01 -->
-Some bodies are still forwarded as they arrived: one that is absent, empty or not JSON, and a JSON body sent with a content encoding such as gzip or starting with a byte-order mark. The redaction walk has no size cap. Two follow-up tasks, DUSTSEC.20 and DUSTSEC.21, are open. <!-- C-01 -->
+Some bodies are still forwarded as they arrived, among others: one that is absent, empty or not JSON, a JSON body sent with a content encoding such as gzip or starting with a byte-order mark, and a JSON array or a bare JSON value (a string or a number) rather than an object. The redaction walk has no size cap. Two follow-up tasks, DUSTSEC.20 and DUSTSEC.21, are open. <!-- C-01 -->
 This change is on `development` and in no release tag. <!-- C-01; B-29 -->
 
 Every compression level, including `off`, runs redaction, and no level value can turn it off. <!-- C-02 -->

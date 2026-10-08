@@ -11,7 +11,7 @@ Run on 2026-10-08 in this worktree (`git tag --sort=-v:refname`, `git tag --cont
 - `npm view @pliable/golem versions`, read-only on 2026-10-08, returned exactly one version: `0.54.2`. This read does not show `0.54.3` on the registry, and it does not show what was installed from any other channel. Whether `v0.54.3` was ever published is not established by this draft.
 - **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 commits). Every fix is on `development` only. <!-- B-29; git tag --contains over the fix shas -->
 
-So: **every tagged build, `v0.54.0` and `v0.54.3` alike, lacks all of the DUSTSEC fixes.** The `0.54.2` build on npm was not checked directly: its source commit is unknown but is `2fc7cd2` or later, and no tag contains any fix. Anyone running a build from this line should treat the weaknesses in the security section as present in it, with one caveat: for each item the section says which tagged builds were checked directly and which were not. No wording in this draft says that current releases are protected. <!-- B-29; git tag --contains over the fix shas; 1719982; b949fd3 -->
+So: **every tagged build, `v0.54.0` and `v0.54.3` alike, lacks all of the DUSTSEC fixes.** The `0.54.2` build on npm was not checked directly: its source commit is unknown but is `2fc7cd2` or later and before `1b08402` (the v0.54.3 version bump, 2026-09-23), so before any DUSTSEC fix, and no tag contains any fix. Anyone running a build from this line should treat the weaknesses in the security section as present in it, with one caveat: for each item the section says which tagged builds were checked directly and which were not. No wording in this draft says that current releases are protected. <!-- B-29; git tag --contains over the fix shas; 1719982; b949fd3 -->
 
 ## Unreleased (on `development`, in no tag)
 
@@ -64,7 +64,7 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 - Reach: a third party registering the old name. No access to the user's machine needed beyond the user running the installer or `golem update`.
 - Fix: `golem update`, the installers, `ps` detection, the lockfile and the docs now use `@pliable/golem` (the canonical name, C-26). Claiming `golem-run` itself is an open task that belongs to the user.
 - Status: fixed on `development` in `8b64e0b`, `a2cd6f0`, `0486815`, PR #219 (merge `c34fd52`). In no tag.
-- Affected released builds: `v0.54.0` still names `golem-run` in `package.json`; the rename is first in `v0.54.3` (`2fc7cd2` is contained in `v0.54.3` only). So the mismatch is in `v0.54.3`. By the registry read above `@pliable/golem@0.54.2` is the one version on npm under the new name; its source commit is unknown but is `2fc7cd2` or later.
+- Affected released builds: `v0.54.0` still names `golem-run` in `package.json`; the rename is first in `v0.54.3` (`2fc7cd2` is contained in `v0.54.3` only). So the mismatch is in `v0.54.3`. By the registry read above `@pliable/golem@0.54.2` is the one version on npm under the new name; its source commit is unknown but is `2fc7cd2` or later and before `1b08402` (the v0.54.3 version bump, 2026-09-23), so before any DUSTSEC fix.
 <!-- C-26; B-24; 8b64e0b; a2cd6f0; 0486815; c34fd52; 2fc7cd2; 1719982 -->
 
 **DUSTSEC.6: the Buzz key parser could write the secret key as the public key** (audit S6, HIGH, rated "not currently reachable").

@@ -52,4 +52,14 @@ No tag contains `109f32b` (DUSTSEC.19) or `fd5b1dd` (`git tag --contains`, empty
 
 ## Second pass
 
-Pending. A second review of the fixed drafts and the ledger has not been run. The Status column above records what the fix commits did, not a second reviewer's verdict.
+A second `golem-reviewer` pass (read-only, 2026-10-08) over the fix branch returned **CONCERNS**: no fix added a false claim or a banned wording, nothing suggests the fixes are released or that an advisory exists. Findings closed 14, partly 1, open 0, new 1.
+
+| # | Where | Finding | Fix | Status |
+|---|---|---|---|---|
+| 2nd-1 | CLAIMS.md C-01, feature-overview.md | The exception list was still not complete: a JSON array or scalar sent to `POST /v1/messages` is never redacted (both `process` and `redactOnly` return early when the body is not an object), and a bare scalar goes unredacted on every path, not only non-messages ones. Real exposure is small because the upstream rejects such bodies. | C-01 and the overview now list both, with "among others" in the overview | fixed in this commit |
+| 2nd-2 | src/pipeline/pipeline.ts:10-11 | The first-pass comment said the full pipeline runs on a request "carrying a JSON body"; it runs only on a JSON object body | "carrying a JSON object body" (comment only) | fixed in this commit |
+| 2nd-3 | changelog-v0.54.md (three places) | "2fc7cd2 or later" had no upper bound; the npm build must also predate 1b08402 (the v0.54.3 bump), so it predates every DUSTSEC fix | Added the upper bound | fixed in this commit |
+
+Left as is, by the reviewer's own judgement: ledger row C-15 stays stamped `7c92d36` because `local-answer.ts` did not change between `7c92d36` and `a3f1d39`; overview line 50 "near zero on cached Anthropic traffic" is the wording the rewritten C-13 allows and states no measured figure.
+
+Not fixed here, tracked: the array and scalar gap on the messages path itself (DUSTSEC.21 scope).
