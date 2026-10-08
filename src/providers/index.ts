@@ -177,8 +177,8 @@ export function isTranslatingProvider(provider: UpstreamProvider): boolean {
  * server would ignore — advice that is not merely noisy but wrong.
  *
  * `gemini` is deliberately NOT here even though its default scheme is `inherit`:
- * it genuinely needs a key, carried in the `?key=` query parameter rather than a
- * header. Keying this off `inherit` instead of naming the providers would
+ * it genuinely needs a key, carried in the `x-goog-api-key` header rather than a
+ * generic scheme. Keying this off `inherit` instead of naming the providers would
  * therefore silence the one warning that matters most.
  *
  * A keyless provider may still be *given* a key (`llama-server --api-key`); this
@@ -249,8 +249,8 @@ export function defaultAuthScheme(provider: UpstreamProvider): UpstreamAuthSchem
       // sets `auth_scheme = "bearer"` on the gateway and stores the key.
       return "inherit";
     case "gemini":
-      // Gemini authenticates with a `?key=` query param carried in the path, not
-      // a header — so no header mapping (inherit = none injected).
+      // Gemini's key is sent as `x-goog-api-key` by the route builder's own
+      // mapper (never in the path), so the generic scheme mapper injects none.
       return "inherit";
     case "nvidia-nim":
       // NVIDIA NIM uses Bearer token auth (Authorization: Bearer <api_key>)
@@ -326,7 +326,7 @@ export function originationAuthScheme(
       // non-`inherit` scheme on the gateway, which never reaches this function.
       return undefined;
     case "gemini":
-      // The credential rides in the path, not a header — unreachable by a mapper.
+      // The credential is `x-goog-api-key`, applied by the route builder's own mapper.
       return undefined;
     case "claude-cli":
       // There is no request for Golem to sign; the spawned client authenticates

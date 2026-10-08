@@ -20,7 +20,9 @@
  *
  * Secrets: resolved from the process environment, which the CLI populated at
  * spawn from the OS credential store (Decision 47). Nothing here reads settings
- * for a key, and no key is ever logged or placed on a `ProxyRoute`.
+ * for a key, and no key is ever logged or placed on a `ProxyRoute`: the one
+ * credential that used to ride in a path (Gemini `?key=`) is now a header the
+ * auth mapper applies at send time.
  */
 
 import {
@@ -100,23 +102,37 @@ export interface UpstreamTransport {
  */
 export function buildUpstreamTransport(input: UpstreamTransportInput): UpstreamTransport {
   const { provider, baseUrl, model, authScheme, apiKey } = input;
-  const mapUpstreamHeaders = makeAuthMapper(authScheme, apiKey);
+  const geminiKey =
+    isGeminiProvider(provider) && apiKey !== undefined && apiKey !== "" ? apiKey : undefined;
+  // S21: the Gemini credential is applied at send time as a header, so it never
+  // sits in a path on the route. Client Anthropic credentials are stripped, as
+  // every other auth mapper does, so they are not forwarded to Google either.
+  const mapUpstreamHeaders =
+    geminiKey !== undefined
+      ? (headers: Record<string, string | string[]>): Record<string, string | string[]> => {
+          const out = { ...headers };
+          delete out["x-api-key"];
+          delete out.authorization;
+          out["x-goog-api-key"] = geminiKey;
+          return out;
+        }
+      : makeAuthMapper(authScheme, apiKey);
   const translateFallback = { id: "msg_golem_translated", model: model ?? provider };
   const modelOpt = model !== undefined ? { model } : {};
 
   let translateUpstream: UpstreamTranslator | undefined;
   if (isGeminiProvider(provider)) {
-    // Gemini: distinct schema; auth is a `?key=` query param carried in the
-    // per-request path, so the base `path` is a placeholder that translateRequest
-    // always overrides.
+    // Gemini: distinct schema; the per-request path embeds model + method but NOT
+    // the credential (it travels as `x-goog-api-key`, set by the mapper above), so
+    // the base `path` is a placeholder that translateRequest always overrides.
     translateUpstream = {
-      path: geminiPath(baseUrl, model ?? "", false, apiKey),
+      path: geminiPath(baseUrl, model ?? "", false, undefined),
       translateRequest: (body: Buffer | null) => {
         const { body: g, stream, model: m } = anthropicToGemini(body, modelOpt);
         return {
           body: Buffer.from(JSON.stringify(g), "utf8"),
           stream,
-          path: geminiPath(baseUrl, m, stream, apiKey),
+          path: geminiPath(baseUrl, m, stream, undefined),
         };
       },
       translateResponse: (body: Buffer): Buffer =>
@@ -201,11 +217,102 @@ export interface RouteResolverOptions {
   readonly visionOf?: VisionLookup;
 }
 
-/** Read the `model` field from a JSON request body, if there is one. */
+/**
+ * Index just past the JSON string literal that opens at `i` (a `"`), or -1 when
+ * it never closes.
+ */
+function skipString(text: string, i: number): number {
+  for (let j = i + 1; j < text.length; j++) {
+    const c = text.charCodeAt(j);
+    if (c === 0x5c)
+      j++; // backslash: skip the escaped character
+    else if (c === 0x22) return j + 1;
+  }
+  return -1;
+}
+
+/** Index just past the JSON value starting at `i`, or -1 when malformed/truncated. */
+function skipValue(text: string, i: number): number {
+  const first = text.charCodeAt(i);
+  if (first === 0x22) return skipString(text, i);
+  if (first === 0x7b || first === 0x5b) {
+    let depth = 0;
+    for (let j = i; j < text.length; j++) {
+      const c = text.charCodeAt(j);
+      if (c === 0x22) {
+        j = skipString(text, j) - 1;
+        if (j < 0) return -1;
+      } else if (c === 0x7b || c === 0x5b) depth++;
+      else if ((c === 0x7d || c === 0x5d) && --depth === 0) return j + 1;
+    }
+    return -1;
+  }
+  let j = i;
+  while (j < text.length && !",}] \t\r\n".includes(text[j] as string)) j++;
+  return j;
+}
+
+function skipWs(text: string, i: number): number {
+  let j = i;
+  while (j < text.length && " \t\r\n".includes(text[j] as string)) j++;
+  return j;
+}
+
+/**
+ * Whether any TOP-LEVEL `model` string of the JSON object `text` decodes to a
+ * virtual `golem/<id>` id. A bounded scan: it walks the text once and allocates
+ * nothing per nested value, where `JSON.parse` builds the whole message graph of
+ * a multi-MB request just to read one key. It over-approximates on purpose
+ * (malformed input that merely looks like it yields true) because the caller
+ * confirms with a real parse before routing on the answer.
+ */
+function topLevelModelMayBeVirtual(text: string): boolean {
+  let i = skipWs(text, 0);
+  if (text[i] !== "{") return false;
+  i = skipWs(text, i + 1);
+  while (i < text.length && text[i] !== "}") {
+    if (text[i] !== '"') return false;
+    const keyEnd = skipString(text, i);
+    if (keyEnd < 0) return false;
+    let key: string;
+    try {
+      key = JSON.parse(text.slice(i, keyEnd)) as string;
+    } catch {
+      return false;
+    }
+    i = skipWs(text, keyEnd);
+    if (text[i] !== ":") return false;
+    i = skipWs(text, i + 1);
+    const valueEnd = skipValue(text, i);
+    if (valueEnd < 0) return false;
+    if (key === "model" && text[i] === '"') {
+      try {
+        if (targetIdFromVirtualModel(JSON.parse(text.slice(i, valueEnd)) as string) !== undefined) {
+          return true;
+        }
+      } catch {
+        /* undecodable: not virtual */
+      }
+    }
+    i = skipWs(text, valueEnd);
+    if (text[i] === ",") i = skipWs(text, i + 1);
+  }
+  return false;
+}
+
+/**
+ * The request body's `model`, for routing. Routing only ever acts on a VIRTUAL
+ * id (`golem/<id>`), so a body that cannot carry one is answered `undefined`
+ * after a bounded scan instead of a full `JSON.parse` — with several targets
+ * configured this runs on every request. A candidate is confirmed by the real
+ * parse, so the answer for any valid body is exactly what it was.
+ */
 function bodyModelOf(body: Buffer | null): string | undefined {
   if (body === null) return undefined;
+  const text = body.toString("utf8");
+  if (!topLevelModelMayBeVirtual(text)) return undefined;
   try {
-    const parsed: unknown = JSON.parse(body.toString("utf8"));
+    const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const model = (parsed as Record<string, unknown>).model;
     return typeof model === "string" ? model : undefined;
