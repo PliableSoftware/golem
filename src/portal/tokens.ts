@@ -57,6 +57,14 @@ const tokenSetSchema = z.object({
    * until the next `golem team link`.
    */
   api_origin: z.string().min(1).optional(),
+  /**
+   * Origin of the authorization server this token was linked against. A
+   * refresh POSTs the refresh_token to the token endpoint, and that endpoint
+   * must live on this origin: a project file that repoints `portal.issuer`
+   * cannot redirect the refresh_token to another host. Absent on tokens stored
+   * before this binding; those cannot be refreshed, only re-linked.
+   */
+  issuer_origin: z.string().min(1).optional(),
   access_token: z.string().min(1),
   refresh_token: z.string().min(1).optional(),
   token_type: z.string().min(1),

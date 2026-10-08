@@ -341,6 +341,7 @@ describe("linkPortal origin binding (DUSTSEC.4)", () => {
     });
     expect(result.tokens.api_origin).toBe(API);
     expect((await tokens.read({ issuer: ISSUER, clientId: "client_abc" }))?.api_origin).toBe(API);
+    expect(result.tokens.issuer_origin).toBe(ISSUER);
   });
 
   it("refuses an http:// non-loopback portal URL before opening a browser", async () => {

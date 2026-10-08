@@ -60,6 +60,7 @@ export async function linkPortal(options: LinkOptions): Promise<LinkResult> {
   const write = options.write ?? (() => {});
   // Refuse before any browser opens if the API base can never hold a token.
   const apiOrigin = portalOrigin(options.apiBaseUrl);
+  const issuerOrigin = portalOrigin(options.issuerUrl);
   const scopes = options.scopes ?? DEFAULT_SCOPES;
 
   write(`Discovering the portal's authorization server at ${options.issuerUrl}...\n`);
@@ -102,7 +103,11 @@ export async function linkPortal(options: LinkOptions): Promise<LinkResult> {
       ...(options.now === undefined ? {} : { now: options.now }),
     });
 
-    const tokens: PortalTokenSet = { ...exchanged, api_origin: apiOrigin };
+    const tokens: PortalTokenSet = {
+      ...exchanged,
+      api_origin: apiOrigin,
+      issuer_origin: issuerOrigin,
+    };
 
     if (tokens.refresh_token === undefined) {
       // Not fatal — the link works — but silence here becomes "why does it keep

@@ -138,6 +138,17 @@ export async function discoverAuthorizationServer(
   }
 
   const metadata = parsed.data;
+  // RFC 8414 section 3.3: the document must name the issuer it was fetched
+  // for. Without this, any host can serve a document that claims another
+  // issuer's identity while pointing token_endpoint at itself.
+  const asked = requireSecure(issuerBase, "portal URL").href.replace(/\/+$/, "");
+  if (metadata.issuer.replace(/\/+$/, "") !== asked) {
+    throw new PortalAuthError(
+      "discovery_failed",
+      `${url} names a different issuer (${metadata.issuer}) than the one it was fetched for ` +
+        `(${asked}). Refusing to trust its endpoints.`,
+    );
+  }
   requireSecure(metadata.authorization_endpoint, "authorization_endpoint");
   requireSecure(metadata.token_endpoint, "token_endpoint");
   assertSupportsThisFlow(metadata);

@@ -19,6 +19,7 @@ import {
   REMOTE_DENIED_SETTINGS,
   SECTION_NAMES,
 } from "../../../src/config/index.js";
+import { assertLinkConfigTrusted } from "../../../src/portal/index.js";
 
 describe("the portal settings section", () => {
   it("is part of the schema", () => {
@@ -119,5 +120,31 @@ describe("REMOTE_DENIED_SETTINGS", () => {
     for (const denied of REMOTE_DENIED_SETTINGS) {
       expect(leaves.has(denied), denied).toBe(true);
     }
+  });
+});
+
+describe("assertLinkConfigTrusted (DUSTSEC.17)", () => {
+  it("refuses a portal.url supplied by the committed project file", () => {
+    expect(() =>
+      assertLinkConfigTrusted({
+        "portal.url": { layer: "project", source: "/repo/.golem/settings.json" },
+      }),
+    ).toThrow(/portal\.url.*project settings/);
+  });
+
+  it("refuses a project-supplied portal.issuer", () => {
+    expect(() => assertLinkConfigTrusted({ "portal.issuer": { layer: "project" } })).toThrow(
+      /portal\.issuer/,
+    );
+  });
+
+  it("accepts user, env and default sources", () => {
+    expect(() =>
+      assertLinkConfigTrusted({
+        "portal.url": { layer: "user" },
+        "portal.issuer": { layer: "env" },
+      }),
+    ).not.toThrow();
+    expect(() => assertLinkConfigTrusted({ "portal.url": { layer: "default" } })).not.toThrow();
   });
 });

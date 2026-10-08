@@ -21,6 +21,7 @@ import { findProjectDir, loadConfig } from "../../config/index.js";
 import { defaultUserDir } from "../../config/paths.js";
 import { createCredentialStore } from "../../credentials/index.js";
 import {
+  assertLinkConfigTrusted,
   bindTeam,
   chooseOrganization,
   createPortalClient,
@@ -66,10 +67,10 @@ function _fail(err: unknown): never {
 }
 
 async function portalContext(dir: string) {
-  const { settings } = await loadConfig({ projectDir: dir });
+  const { settings, provenance } = await loadConfig({ projectDir: dir });
   const config = resolvePortalConfig(settings.portal);
   const tokens = portalTokenStore(createCredentialStore());
-  return { config, tokens, settings };
+  return { config, tokens, settings, provenance };
 }
 
 /**
@@ -256,7 +257,8 @@ export default function register(program: Command): void {
     .option("--json", "machine-readable output", false)
     .action(async (opts: LinkOptions) => {
       try {
-        const { config, tokens } = await portalContext(opts.dir);
+        const { config, tokens, provenance } = await portalContext(opts.dir);
+        assertLinkConfigTrusted(provenance);
         const timeoutMs = opts.timeout === undefined ? config.linkTimeoutMs : Number(opts.timeout);
         if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
           throw new Error(`--timeout must be a positive number of milliseconds`);
