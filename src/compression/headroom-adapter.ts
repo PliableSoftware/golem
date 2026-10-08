@@ -268,7 +268,7 @@ class HeadroomWorkerProcess {
     if (!existsSync(this.#workerPath)) {
       this.#log(
         `worker script not found at ${this.#workerPath} — this install did not ship it, so ` +
-          "the sidecar is unavailable and contributes nothing. Reinstall golem-run, or run " +
+          "the sidecar is unavailable and contributes nothing. Reinstall @pliable/golem, or run " +
           "`npm run build` if this is a source checkout.",
       );
       return false;

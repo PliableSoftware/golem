@@ -3,7 +3,7 @@
  *
  * Golem can be installed three ways (Decision 41b): as a global npm package, as a
  * Bun-compiled standalone binary, or (rare) something unknown. `golem update`
- * checks the npm registry for a newer `golem-run` and either performs the upgrade
+ * checks the npm registry for a newer `@pliable/golem` and either performs the upgrade
  * or prints the right command for how this copy was installed.
  *
  * Everything here is fail-soft: the registry may be unreachable, the package may
@@ -19,7 +19,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
-export const PACKAGE_NAME = "golem-run";
+export const PACKAGE_NAME = "@pliable/golem";
 const REGISTRY_URL = "https://registry.npmjs.org";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
@@ -83,6 +83,14 @@ export function upgradeCommand(method: InstallMethod, platform: NodeJS.Platform)
 }
 
 /**
+ * The registry path segment for a package name. A scoped name keeps its `@` but
+ * the slash is percent-encoded (`@pliable%2fgolem`) — the unencoded form 404s.
+ */
+export function registryPackagePath(pkg: string): string {
+  return pkg.startsWith("@") ? pkg.replace("/", "%2f") : pkg;
+}
+
+/**
  * Fetch the latest published version of `pkg` from the npm registry. Returns null
  * on ANY problem (404 = not published yet, network error, timeout, bad JSON).
  * Never throws.
@@ -92,7 +100,7 @@ export async function fetchLatestVersion(
   timeoutMs = 3000,
 ): Promise<string | null> {
   try {
-    const res = await fetch(`${REGISTRY_URL}/${pkg}/latest`, {
+    const res = await fetch(`${REGISTRY_URL}/${registryPackagePath(pkg)}/latest`, {
       signal: AbortSignal.timeout(timeoutMs),
       headers: { accept: "application/json" },
     });
@@ -171,7 +179,7 @@ export interface CheckForUpdateOptions {
 }
 
 /**
- * Determine whether a newer golem-run exists. Uses the cache when it's fresh
+ * Determine whether a newer @pliable/golem exists. Uses the cache when it's fresh
  * (< 24h) unless `force`; otherwise queries the registry, caches, and returns.
  * The `updateAvailable`/`command` are always recomputed against the CURRENT
  * running version, so a cached "latest" stays correct after a manual upgrade.
@@ -214,7 +222,10 @@ export async function checkForUpdate(opts: CheckForUpdateOptions): Promise<Updat
   const latest = await fetchLatest(PACKAGE_NAME);
   const result =
     latest === null
-      ? build(null, "could not reach the npm registry (offline, or golem-run not published yet)")
+      ? build(
+          null,
+          "could not reach the npm registry (offline, or @pliable/golem not published yet)",
+        )
       : build(latest);
 
   if (opts.cacheDir !== undefined) await writeCache(opts.cacheDir, result);

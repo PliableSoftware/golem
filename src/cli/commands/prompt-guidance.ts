@@ -361,7 +361,7 @@ export default function register(program: Command): void {
         // Resync Claude Code's own wiring (hooks/statusLine/permissions) with
         // whatever `golem` version is running THIS session, independent of
         // whether the daemon below needs (re)starting — see version-sync.ts.
-        // A long-lived daemon can outlive several `npm i -g golem-run`
+        // A long-lived daemon can outlive several `npm i -g @pliable/golem`
         // upgrades; this is the path that still catches drift every session.
         await syncProjectVersion({ projectDir: cwd, version: VERSION, proxyPort: port });
         if ((await proxyStatus(cwd, port)).running) return;
