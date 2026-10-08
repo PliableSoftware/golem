@@ -4,12 +4,12 @@
  * org shared standards & knowledge begins in P1 at local (user) scope
  * alongside the knowledge base"). Merges two {@link WikiReader}s so `search`/
  * `fetch` see both without any change to the graph-first search mechanics in
- * `src/mcp/server.ts` — those only ever depend on the generic `WikiReader`
+ * `src/mcp/search.ts` — those only ever depend on the generic `WikiReader`
  * surface, never on a concrete store.
  *
  * Writes are NOT federated: `upsertPage` stays on the single project
  * `WikiStore` as before (see `GolemMcpServerDeps.wiki` vs `.wikiSearch` in
- * `src/mcp/server.ts`) — a user-scope page is edited directly on disk or via
+ * `src/mcp/deps.ts`) — a user-scope page is edited directly on disk or via
  * a future dedicated tool, not through this class.
  */
 
@@ -42,11 +42,12 @@ export class FederatedWikiReader implements WikiReader {
   /**
    * A `user:`-prefixed path resolves straight to the user wiki (this is how
    * `fetch` recovers a graph-first hit built from a user-wiki page, per
-   * `wikiChunkRelPath`/`pageToHit` in `src/mcp/server.ts`). Otherwise the
+   * `wikiChunkRelPath`/`pageToHit` in `src/mcp/search.ts`). Otherwise the
    * project wiki is tried first — on a title or path miss there
    * (`UnknownWikiPageError`), the same lookup is retried against the user
    * wiki, so a plain title lookup still finds a user-only page. The project
-   * wins on a title collision between the two wikis.
+   * wins on a title collision between the two wikis in this lookup; search
+   * hits are ordered by `src/mcp/search.ts`, not here.
    */
   async readPage(titleOrPath: string): Promise<WikiPage> {
     if (titleOrPath.startsWith(USER_WIKI_PREFIX)) {
