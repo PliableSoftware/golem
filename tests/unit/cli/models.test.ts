@@ -105,3 +105,25 @@ describe("renderRefreshResult", () => {
     expect(out).toContain("always win on a collision");
   });
 });
+
+describe("long ids", () => {
+  it("marks a truncated id instead of cutting it silently", () => {
+    const long = "x".repeat(40);
+    const out = renderModelCatalog(
+      { ...catalog, entries: [{ id: long, provider: "ollama", contextTokens: 1 }] },
+      { nowMs: NOW, maxAgeDays: 30 },
+    );
+    expect(out).not.toContain(long);
+    expect(out).toContain(`${"x".repeat(32)}…`);
+  });
+
+  it("leaves an id that fits untouched", () => {
+    const fits = "y".repeat(33);
+    const out = renderModelCatalog(
+      { ...catalog, entries: [{ id: fits, provider: "ollama", contextTokens: 1 }] },
+      { nowMs: NOW, maxAgeDays: 30 },
+    );
+    expect(out).toContain(fits);
+    expect(out).not.toContain(`${fits}…`);
+  });
+});
