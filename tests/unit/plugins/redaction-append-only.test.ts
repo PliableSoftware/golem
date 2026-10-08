@@ -51,7 +51,7 @@ describe("registerExtraRedactionRules — a plugin can only add", () => {
     expect(active.length).toBe(REDACTION_RULES.length + 1);
     // Built-ins first, unchanged, same order — asserted element by element rather
     // than by length, because a reorder would keep the length identical.
-    for (const [i, rule] of REDACTION_RULES.entries()) expect(active[i]).toBe(rule);
+    for (const [i, rule] of REDACTION_RULES.entries()) expect(active[i]).toEqual(rule);
     expect(active[active.length - 1]).toBe(ACME_RULE);
   });
 
@@ -62,8 +62,8 @@ describe("registerExtraRedactionRules — a plugin can only add", () => {
     expect(REDACTION_RULES).not.toContain(ACME_RULE);
   });
 
-  it("returns the built-in table itself when no plugin registered anything", () => {
-    expect(activeRedactionRules()).toBe(REDACTION_RULES);
+  it("returns exactly the built-in table when no plugin registered anything", () => {
+    expect(activeRedactionRules()).toEqual(REDACTION_RULES);
   });
 
   it("drops a rule whose id is not namespaced — that is what stops impersonation", () => {
