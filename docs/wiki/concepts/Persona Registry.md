@@ -79,13 +79,13 @@ This distinction is why `personaModel(personas, id)` returns `undefined` for a p
 ### `owner: user` binds the worker lane (DUSTSEC.11, USER decision R9)
 
 For a while only the agent lane honoured this. `personaModel` and `resolvePersonaLane`
-(`src/inference/persona-lane.ts:111`) refused `owner: user`, but the worker lane's
+(`src/inference/persona-lane.ts:112`) refused `owner: user`, but the worker lane's
 `workerTargetFromPersona` deliberately ignored the permission axis, so a `coder` MCP
 call could dispatch a human-owned role. Now `assertWorkerDispatchable` throws
 `PersonaNotDispatchableError` (`src/inference/personas.ts:183-206`) and both worker
 entry points translate it into a refusal: `selectTarget` runs it **before any worker
 route**, including `worker_targets` and an explicit target
-(`src/inference/target-dispatcher.ts:724-733`), and `resolveCoderRoute` does the
+(`src/inference/target-dispatcher.ts:727-736`), and `resolveCoderRoute` does the
 same for `coder` (`src/inference/coder-route.ts:103-107`). An explicit target only
 chooses *where* a worker runs, never *whether* a human-owned role may run, and the
 refusal never falls back to a default target.
@@ -172,7 +172,7 @@ An earlier version of this page listed three items as pending. All three are in 
 code now:
 
 - **Staffing lane** (subagent vs dispatched worker) — `resolvePersonaLane`,
-  `src/inference/persona-lane.ts:88-142`, with `personaLaneConflict` at `:151`.
+  `src/inference/persona-lane.ts:89-143`, with `personaLaneConflict` at `:151`.
 - **Generating agent definitions** (`.claude/agents/golem-<id>.md`) —
   `installPersonaAgents` (`src/cli/init-personas.ts:198`) and
   `personaAgentDefinition` (`src/cli/agents.ts:70`).

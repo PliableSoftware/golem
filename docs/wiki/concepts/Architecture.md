@@ -124,9 +124,9 @@ flowchart TB
   EMIT --> UP["Upstream LLM"]
 ```
 
-Stage 1.7 (plugin pipeline stages, `pipeline.ts:587`) sits between local-answer and
+Stage 1.7 (plugin pipeline stages, `pipeline.ts:588`) sits between local-answer and
 lossless compression and is omitted from the diagram; redaction re-runs over its
-output. Stage 5 is `pipeline.ts:734`. Local answer is **on by default**
+output. Stage 5 is `pipeline.ts:735`. Local answer is **on by default**
 (`knowledge.local_answer_enabled: true`, `src/config/schema.ts:1150`), matching the
 distributed `golem-local-answer` rule; set it false to turn it off. (Default rule
 applied, decision A11, **flagged**: spec Decision 7's "never a global default" may

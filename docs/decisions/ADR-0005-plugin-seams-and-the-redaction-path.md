@@ -254,7 +254,7 @@ a plugin taught Golem to redact was forwarded or stored raw there. The paths
 now covered, all through one loader, `ensurePluginRedactionRules(projectDir)`
 (`src/plugins/redaction-init.ts`, which calls `initPlugins`):
 
-- the proxy and `golem mcp serve` (`src/cli/commands/proxy.ts:299-302`,
+- the proxy and `golem mcp serve` (`src/cli/commands/proxy.ts:300-303`,
   `src/cli/commands/mcp-serve.ts:259-261`), as before;
 - hooks: PostToolUse (`src/hooks/post-tool-use.ts`), web fetch
   (`src/hooks/web-fetch.ts`), and session state (`src/hooks/session-state.ts`);

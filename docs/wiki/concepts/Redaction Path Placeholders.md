@@ -93,7 +93,7 @@ explicitly ("Note for whoever fixes it"):
   non-local `coder` target (R9.3; see
   `docs/wiki/debriefs/2026-08-09-r9.3-coder-any-target.md`). The dispatcher calls
   the multi-string form, `redactReversibleTexts`
-  (`src/inference/target-dispatcher.ts:917-923`, R13.11), so the prompt and every
+  (`src/inference/target-dispatcher.ts:920-926`, R13.11), so the prompt and every
   prior attempt share one placeholder table; the single-string form is
   implemented in terms of it. Secrets are redacted going out, the target does
   its work on placeholder text, and the SAME per-value restoration map (kept in

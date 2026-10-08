@@ -130,7 +130,7 @@ deliberately separate functions:
 
 **Not every config load asks.** The team origin is applied only by
 `loadConfigWithTeamLayer` (`src/portal/team-layer.ts:596`), and only two production
-callers use it: the proxy foreground (`src/cli/commands/proxy.ts:191`) and
+callers use it: the proxy foreground (`src/cli/commands/proxy.ts:192`) and
 `golem status` (`src/cli/status-collect.ts:145`). Plain `loadConfig` never populates
 the `team` origin, and that is what `golem config list/get/set`, the panel and
 `config schema` call (`src/cli/config.ts:60,89`). This page used to say "every config

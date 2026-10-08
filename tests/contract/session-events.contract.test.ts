@@ -126,7 +126,7 @@ describe("SessionEvent contract: wire form", () => {
   });
 });
 
-describe("SessionMessage contract: idempotent by messageId", () => {
+describe("SessionMessage contract: MessageLedger is idempotent by messageId", () => {
   it("a repeated id resolves to the original seq, never a new one", () => {
     const ledger = new MessageLedger();
     expect(ledger.lookup("m1")).toBeUndefined();
