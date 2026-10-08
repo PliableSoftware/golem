@@ -20,7 +20,9 @@
  *    wonder; an absent one with an unlock prompt tells you what to do.
  *
  * 2. **Approve/deny for a `destructive`/`outward` question.** Gate-map item 3 is
- *    LOCKED (Decision 59(a)): those are never answerable from a device. So the
+ *    LOCKED (Decision 59(a)): those are never answerable from a device. (The
+ *    Decision 61 setting that amends this is unbuilt, so this is what the screen
+ *    enforces today.) So the
  *    screen shows the refusal and why a local human is required — **never a
  *    button that cannot exist.** A control that would always fail is worse than
  *    no control, because it implies an authority the design does not grant.
@@ -34,8 +36,8 @@ export interface ChatPageOptions {
    * `joined` — a live harness session Golem is injecting into (R13.7).
    *
    * Two different things with two different capabilities, and the user must
-   * never have to guess which they are in. R13.6 only ever renders `hosted`;
-   * the parameter exists so R13.7 adds a value rather than a redesign.
+   * never have to guess which they are in. R13.6 shipped rendering `hosted`;
+   * R13.7 added `joined` (see the `kind` branch below).
    */
   readonly kind: "hosted" | "joined";
 }

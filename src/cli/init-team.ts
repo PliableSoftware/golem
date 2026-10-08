@@ -78,7 +78,9 @@ export interface TeamInitStepOptions {
   readonly tokenPresent?: () => Promise<boolean>;
   /**
    * Fetch and apply the team layer, returning one line per thing that landed.
-   * Filled in by `team-layer-fetch` / `team-skills-sync`; absent until then.
+   * Both pieces (`team-layer-fetch`, `team-skills-sync`) have shipped and init
+   * passes `syncTeamLayerForInit`; absent only for callers that want the binding
+   * recorded and nothing fetched.
    *
    * Only ever called when the project names a team AND a token is present.
    */

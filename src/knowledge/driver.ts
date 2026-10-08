@@ -2,15 +2,16 @@
  * WS-C C1 — vector-store driver seam.
  *
  * The KnowledgeBase is store-agnostic: it talks to a `VectorDriver`, so the
- * embedded engine (LanceDB — decision memo, verification-notes §26) and a
- * Qdrant-server driver (config URL, spec Decision 12) are interchangeable, and
- * the native engine can be an OPTIONAL dependency lazily loaded behind this
- * seam (CLAUDE.md: no heavyweight native deps in the default install).
+ * default pure-TS `FileVectorDriver` (durable, under `.golem/knowledge`), a
+ * possible LanceDB engine (decision memo, verification-notes §26) and a
+ * Qdrant-server driver (config URL, spec Decision 12; not implemented, see
+ * `openKnowledgeBase`) are interchangeable, and a native engine can be an
+ * OPTIONAL dependency lazily loaded behind this seam (CLAUDE.md: no heavyweight
+ * native deps in the default install).
  *
  * `InMemoryVectorDriver` is a real, functional driver (cosine search, per-
- * project collections) used for tests and as the P0 non-durable default until
- * the embedded native driver lands. Durable drivers implement the same
- * interface; nothing above this seam changes.
+ * project collections) used for tests; `FileVectorDriver` is the default.
+ * Durable drivers implement the same interface; nothing above this seam changes.
  */
 
 import type { Chunk } from "../interfaces/knowledge.js";
@@ -133,8 +134,8 @@ export function cosineSimilarity(a: readonly number[], b: readonly number[]): nu
 
 /**
  * In-memory vector driver: functional (cosine search, per-project isolation)
- * but NOT durable — it exists so C1 has a working, dependency-free default and
- * a test double. Swap for a persisted driver (LanceDB) without touching callers.
+ * but NOT durable — a dependency-free test double. `FileVectorDriver` is the
+ * default; swap for another persisted driver without touching callers.
  */
 export class InMemoryVectorDriver implements DeletableVectorDriver {
   readonly schemaVersion = KNOWLEDGE_SCHEMA_VERSION;

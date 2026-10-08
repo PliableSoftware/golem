@@ -18,7 +18,7 @@
  *   * an `ask` has **nobody to answer it**, so it is a denial rather than a wait
  *     (ADR-0007 invariant 3).
  *
- * ## Invariant 8: no exemption
+ * ## Invariant 7: no exemption
  *
  * The child is spawned with `ANTHROPIC_BASE_URL` pointing at Golem's proxy, so
  * a hosted session gets the same redaction, the same telemetry and the same
@@ -109,7 +109,7 @@ export interface HostResultEvent {
   readonly numTurns?: number;
 }
 
-/** The runner reported rate-limit pressure — the park's signal (invariant 8). */
+/** The runner reported rate-limit pressure — the park's signal (invariant 7). */
 export interface HostRateLimitEvent {
   readonly type: "rate_limit";
   readonly raw: Record<string, unknown>;
@@ -208,7 +208,7 @@ export function userMessageLine(text: string): string {
 
 export interface HostedSessionOptions {
   readonly projectDir: string;
-  /** Golem's proxy base URL — invariant 8, the session is not exempt. */
+  /** Golem's proxy base URL — invariant 7, the session is not exempt. */
   readonly proxyBaseUrl: string;
   readonly settingsJson: string;
   readonly permissionMode?: string;
@@ -275,7 +275,7 @@ export class HostedSession extends EventEmitter {
       shell: false,
       env: {
         ...process.env,
-        // Invariant 8: every request this session makes transits Golem.
+        // Invariant 7: every request this session makes transits Golem.
         ANTHROPIC_BASE_URL: this.options.proxyBaseUrl,
         ...this.options.env,
       },

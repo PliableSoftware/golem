@@ -2,15 +2,18 @@
  * WS-E E2 — `golem init` / `golem uninit` engine.
  *
  * Wires an existing Claude Code project to Golem, idempotently:
- *   1. `.claude/settings.json`  — Claude Code → local proxy + ENABLE_TOOL_SEARCH.
+ *   1. `.claude/settings.local.json` by default (`claude.settings_scope`; `project`
+ *      selects `.claude/settings.json`) — Claude Code → local proxy +
+ *      ENABLE_TOOL_SEARCH.
  *      Direct Anthropic uses `ANTHROPIC_BASE_URL`; `foundry` uses the Foundry env
  *      (`CLAUDE_CODE_USE_FOUNDRY` + `ANTHROPIC_FOUNDRY_BASE_URL=<proxy>/anthropic`).
  *   1b. `.golem/settings.local.json` — proxy `upstream_base_url` when fronting a
  *      Foundry/generic gateway (Decision 22).
  *   2. `.mcp.json`              — stdio registration of `golem mcp serve` (§9).
- *   3. `.claude/skills/golem/<cmd>/SKILL.md` — namespaced `/golem/*` skills (§11).
- *   4. `.golem/settings.json`   — created with defaults when absent.
- *   5. PostToolUse CCR hook + Golem guidance (in the committed CLAUDE.md);
+ *   3. `.claude/skills/golem-<cmd>/SKILL.md` — flat `/golem-<cmd>` skills (§11).
+ *   4. `.golem/settings.json`   — created as an empty `{}` marker when absent.
+ *   5. PostToolUse CCR hook + Golem guidance (rule files under `.claude/rules/`;
+ *      CLAUDE.md is left untouched);
  *      status line + blocked-state hooks; WebFetch KB-cache hooks;
  *      `.gitignore`'s deny-by-default `.golem/` block (init-hooks.ts) —
  *      everything under `.golem/` is machine-local except settings.json and
@@ -268,7 +271,7 @@ export interface InitStatus {
   readonly claudeSettingsWired: boolean;
   /** `.mcp.json` registers the golem MCP server with init's stdio entry. */
   readonly mcpRegistered: boolean;
-  /** Every P0 skill file exists under `.claude/skills/golem/`. */
+  /** Every P0 skill file exists under `.claude/skills/golem-<cmd>/`. */
   readonly skillsInstalled: boolean;
   /** `<project>/.golem/settings.json` exists (created by init when absent). */
   readonly golemSettingsPresent: boolean;
@@ -429,14 +432,14 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
   // (`/golem-slider` outlived R11.1 by a release). Provenance-guarded: an
   // edited skill is reported, never deleted.
   actions.push(...(await pruneRetiredSkills(projectDir, dryRun)));
-  // 3c. R13.12 — the `golem-coder` subagent, when `inference.default_coder` names
-  // a MODEL rather than a registry target. This is the whole delivery mechanism
+  // 3c. R13.12 — the `golem-coder` subagent, when `inference.personas.<id>.model`
+  // names a MODEL rather than a registry target. This is the whole delivery mechanism
   // for a harness-run coder: an MCP server cannot invoke its client's tools, so
   // Golem cannot spawn a subagent — what it can do is write the definition so the
   // delegation is native.
   //
-  // Also REMOVES a stale definition when `default_coder` changes to a target or
-  // is unset. An install-only step would leave a file naming a model the config
+  // Also REMOVES a stale definition when `inference.personas.<id>.model` changes to a target
+  // or is unset. An install-only step would leave a file naming a model the config
   // no longer selects, and nothing about that file would say so.
   //
   // `syncPersonaArtifacts` (persona-sync.ts) is the same resolution+write this

@@ -4,9 +4,11 @@
  * package.json is canonical, but the VS Code extension carries its own
  * `version` and the compiled-in `VERSION` (src/version.ts) is generated from
  * package.json. This bumps the two package.json files together, regenerates
- * src/version.ts, and prints the release steps — it does NOT tag, commit,
- * publish, or push. Those are outward, credentialed acts left to the user
- * (Decision 41 / RELEASING.md).
+ * src/version.ts, and prints what happens next — it does NOT tag, commit,
+ * publish, or push itself. The Prepare release workflow runs it, commits the
+ * bump and opens the development -> main PR; merging that PR runs the release
+ * workflow, which tags, publishes the GitHub Release and binaries, and publishes
+ * to npm (Decision 41 / RELEASING.md).
  *
  *   node scripts/release.mjs <patch|minor|major|X.Y.Z>
  *
@@ -84,14 +86,11 @@ execFileSync(process.execPath, [join(root, "scripts", "sync-version.mjs")], { st
 process.stdout.write(
   [
     "",
-    `Version bumped to ${target}. Not committed/tagged/published (deliberate — see RELEASING.md).`,
-    "Next:",
-    "  1. npm run check && npm run build",
-    `  2. git commit -am "chore(release): v${target}"`,
-    `  3. git tag v${target}`,
-    "  4. npm publish            # @pliable/golem (requires npm auth)",
-    "  5. (optional) build + attach standalone binaries: npm run build:binary",
-    "  6. (optional) publish the VS Code extension: cd vscode-extension && npx @vscode/vsce publish",
+    `Version bumped to ${target}. This script does not commit, tag or publish.`,
+    "Next: the Prepare release workflow commits the bump on development and opens the",
+    "development -> main release PR. Merging that PR runs the release workflow, which",
+    "tags, publishes the GitHub Release and binaries, and publishes @pliable/golem to npm.",
+    "(The VS Code extension is published as well when the VSCE_PAT secret is set.)",
     "",
   ].join("\n"),
 );

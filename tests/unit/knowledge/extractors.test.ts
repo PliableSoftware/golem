@@ -122,7 +122,7 @@ describe("optional unpdf (Decision 53)", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe("PdfExtractionUnavailableError");
     expect(err.message).toContain("unpdf");
-    expect(err.message).toContain("golem ext status");
+    expect(err.message).toContain("golem pkg");
   });
 
   it("is caught by planIngest's per-file guard rather than aborting the run", async () => {

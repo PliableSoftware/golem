@@ -77,7 +77,7 @@ export default function register(program: Command): void {
   targetCmd
     .command("show")
     .description("Show one target in full (fails closed on an unknown id — never substitutes)")
-    .argument("<id>", "a target id from proxy.targets or proxy.accounts")
+    .argument("<id>", "a target id from proxy.targets or proxy.gateways")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--json", "machine-readable output", false)
     .action(async (id: string, opts: { dir: string; json: boolean }) => {
@@ -107,7 +107,7 @@ export default function register(program: Command): void {
   targetCmd
     .command("add")
     .description(
-      "Register a target in proxy.targets (non-secret config only — credentials stay with 'account login')",
+      "Register a target in proxy.targets (non-secret config only — credentials stay with 'gateway add/login')",
     )
     .argument("<id>", "new target id (e.g. coder, cheap)")
     .requiredOption(
@@ -162,7 +162,7 @@ export default function register(program: Command): void {
   targetCmd
     .command("test")
     .description("Probe a target's stored credential against its own endpoint")
-    .argument("<id>", "a target id from proxy.targets or proxy.accounts")
+    .argument("<id>", "a target id from proxy.targets or proxy.gateways")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--json", "machine-readable output", false)
     .action(async (id: string, opts: { dir: string; json: boolean }) => {

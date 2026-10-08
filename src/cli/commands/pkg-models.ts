@@ -3,7 +3,7 @@
  *
  * `golem pkg` manages tools Golem can interact with — spawned or detected,
  * never shipped (spec Decision 53). Named `pkg` to avoid confusion with
- * `golem plugin` (future in-process pipeline plugins) and `src/tools/`
+ * `golem plugin` (in-process pipeline plugins, shipped R8.11) and `src/tools/`
  * (the tool-selection benchmark harness).
  */
 

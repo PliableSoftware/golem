@@ -4,7 +4,7 @@
  * Claude Code runs this every turn and renders whatever it prints under the
  * prompt (verification-notes §28). We merge Claude Code's per-session stdin
  * JSON (context %, cache-read hits, cost, rate limits) with Golem's own state
- * (slider, upstream, cumulative savings from A4 telemetry) into one compact
+ * (compression dial, upstream, cumulative savings from A4 telemetry) into one compact
  * line, e.g.:
  *
  *   ⬢ Golem → ◆ foundry (gpt-5) · 🗜 lossless · ✂ full
@@ -233,7 +233,7 @@ export function blockedLabel(state: {
   return state.blockedKind === undefined ? "⏸ waiting" : `⏸ waiting (${state.blockedKind})`;
 }
 
-/** Human-facing name for a slider level, Title-cased ("balanced" → "Balanced"). */
+/** Human-facing name for a compression level, Title-cased ("balanced" → "Balanced"). */
 export function levelName(level: CompressionLevel): string {
   return compressionName(level);
 }

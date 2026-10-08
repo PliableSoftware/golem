@@ -61,7 +61,9 @@ function _fail(err: unknown): never {
  *
  * Resolution itself is `credentialEnvForProxy`'s, deliberately: it already
  * encodes which store id backs the active account versus a named one, and a
- * second implementation of that mapping would drift silently. What changes is
+ * second implementation of that mapping would drift silently. The closure then
+ * looks up a target's gateway id (`accountId`) in that env map: `null` reads the
+ * default key variable, anything else the per-gateway variable. What changes is
  * only where the secrets land — this closure, never `process.env`, so nothing
  * this server spawns inherits them. Read lazily and once: a session that never
  * dispatches to a remote target never touches the credential store.

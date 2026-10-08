@@ -1,8 +1,8 @@
 /**
  * Local-model reachability probe + short-TTL cache (Decision 30, "local+upstream"
  * status). A reachable local model (Ollama) means Golem is a local+upstream
- * hybrid at ANY compression level — `coder` works at every level, and level 3
- * auto-drafts / can answer locally — so the status surfaces render
+ * hybrid at ANY compression level — `coder` works at every level, and local
+ * answers are the Decision 33 extractive KB path at any level — so the status surfaces render
  * "local+upstream" whenever this reports the local model up.
  *
  * The probe is a bounded GET /api/tags that never throws. The cache lets the

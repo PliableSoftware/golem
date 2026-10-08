@@ -154,7 +154,7 @@ export function registerCoderTool(
             .describe(
               "Which configured target to draft on; omit to use the configured " +
                 "route (`inference.worker_targets.coder`, then " +
-                "`inference.model`, then the session's own upstream). " +
+                "`inference.personas.coder.model`, then `inference.model`, then the session's own upstream). " +
                 `Available: ${selectable
                   .map((t) => `${t.id} (${t.provider}, trust=${t.trust})`)
                   .join("; ")}. Anything non-local is REDACTED before dispatch — ` +
@@ -170,7 +170,7 @@ export function registerCoderTool(
         'Delegate a task to Golem\'s "drafter" role instead of doing everything ' +
         "yourself — a first coding draft you then review and refine. Where it runs " +
         "is a ROUTING decision, not a property of this tool: `inference." +
-        "worker_targets.coder`, then `inference.model`, then the session's " +
+        "worker_targets.coder`, then `inference.personas.coder.model`, then `inference.model`, then the session's " +
         "own upstream (R10.8). It is the local tiered Ollama model only when a " +
         "target points there, so do NOT assume the work stays on this machine — " +
         "anything non-local is REDACTED before dispatch and restored in the reply, " +

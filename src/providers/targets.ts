@@ -5,11 +5,11 @@
  * that a local model is an ordinary target whose provider is `ollama` — "optional
  * local coder" stops being a special case.
  *
- * The registry deliberately splits two concerns that `proxy.accounts` fused:
+ * The registry deliberately splits two concerns that `proxy.gateways` fused:
  *
  * | registry | answers | secrets? |
  * |---|---|---|
- * | `proxy.accounts` | *whose credential* — id → provider + OS-keychain reference | reference only |
+ * | `proxy.gateways` | *whose credential* — id → provider + OS-keychain reference | reference only |
  * | `proxy.targets`  | *which endpoint + model* — id → provider, base_url, model, `account` ref, `trust` | **none** |
  *
  * Several targets may reference one account (one OpenRouter key backing five
@@ -19,10 +19,9 @@
  * deliberately no `key`/`api_key` field here; adding one would reintroduce
  * plaintext-secrets-as-settings, which ADR-0003 invariant 1 forbids outright.
  *
- * **This module is inert in R9.1.** Nothing routes on it yet: the proxy still
- * serves one upstream (R9.2 consumes the registry, R9.3 gives `coder` a target).
- * It is configuration and reporting only, which is what makes it safe to land
- * alone.
+ * **The registry has routed since R9.2** (the proxy consumes it) and R9.3 gave
+ * `coder` a target. This module itself stays configuration and reporting only:
+ * the routing lives in the proxy.
  *
  * Fail-closed, in the same spirit as `resolveActiveUpstream`: an unknown id
  * resolves to *nothing*, never to a different target. A routing layer that

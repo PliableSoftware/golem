@@ -10,7 +10,7 @@
  * Capture must be instant and dependency-free (no inference on the capture
  * path) — this module only redacts (pure, sync) and appends. Distillation
  * (T3's engine) is what later shapes captured notes into draft `questions/`
- * or `artifacts/` wiki pages, plan-gated like every other wiki write.
+ * or `artifacts/` wiki pages.
  */
 
 import { appendFile, mkdir, readFile } from "node:fs/promises";

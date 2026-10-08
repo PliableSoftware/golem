@@ -2,7 +2,7 @@
  * The language-server config map (R8.6).
  *
  * One row per server: what to spawn, and which file extensions it answers for.
- * This is data, in the same spirit as `src/ext/manifest.ts` — Golem ships none
+ * This is data, in the same spirit as `src/pkg/manifest.ts` — Golem ships none
  * of these servers' bytes and spawns only what the user already installed.
  *
  * Only `typescript-language-server` is built in, because it is the one row this

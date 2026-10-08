@@ -162,7 +162,7 @@ const DURABLE_TASKS = [
   "",
   "For work that may outlast a session or hit a credit limit, capture it as a",
   'durable task with `golem task add "<prompt>"` rather than holding it only in',
-  "context — it survives restarts and can auto-resume. Service queued tasks",
+  "context — it survives restarts; resume is manual (`golem task resume`). Service queued tasks",
   "locally with `golem task run` (a local model handles triage/drafts); when a",
   "task genuinely needs cloud quality, hand it up explicitly with",
   "`golem task escalate <id>` (never escalate silently). Inspect with",

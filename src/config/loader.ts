@@ -87,8 +87,8 @@ export type LayerName = "default" | "user" | "team" | "project" | "local" | "env
  * declarations) walks it reversed. Adding an origin means adding it here and
  * nowhere else.
  *
- * `team` is declared but not yet populated by any fetch: `team-layer-fetch`
- * fills it, and {@link LoadConfigOptions.teamLayer} is the slot it fills
+ * `team` is populated by the team-layer fetch (`team-layer-fetch`);
+ * {@link LoadConfigOptions.teamLayer} is the slot it fills
  * (`team-settings-layer` was the original owner and is retired — Decision
  * 62(c) — so do not go looking for it). It
  * sits above `user` in the normal band because a team is shared across many
@@ -126,7 +126,7 @@ export const ORIGIN_ORDER: readonly LayerName[] = [
  * convenience with no security weight, and a team with slow SSO has a real
  * reason to raise it.
  *
- * The whole `team.*` section (`project-team-binding`) is denied for the same
+ * Four enumerated `team.*` keys (`project-team-binding`) are denied for the same
  * circularity, one level closer in: those keys say WHICH organization this
  * project belongs to and WHETHER the team layer applies at all. A team origin
  * able to write `team.org_id` could rebind the project to another organization

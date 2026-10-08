@@ -7,7 +7,7 @@
  * - `keychain` — the OS-backed store, shelling out to a tool that ships with
  *              the platform (no native dependency, per CLAUDE.md):
  *              macOS `security`, Linux `secret-tool`, Windows DPAPI via
- *              `powershell.exe`.
+ *              `pwsh`, falling back to `powershell.exe`.
  * - `file`   — plaintext, mode 0600. **Never selected automatically** (see
  *              store.ts); an explicit opt-out for headless boxes with no
  *              secret service, and labelled honestly as unencrypted.

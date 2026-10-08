@@ -185,8 +185,9 @@ export async function collectGateways(
     selected !== defaultId &&
     !gateways.some((g) => g.id === selected) &&
     selectedTarget === undefined;
-  // `active` stays a GATEWAY id: the gateway itself when one was selected, the
-  // gateway BEHIND a selected target, else the synthetic default.
+  // `active` is the gateway id: the gateway itself when one was selected, the
+  // gateway BEHIND a selected target, the target's own id when that target has
+  // no gateway (`accountId` null), else the synthetic default.
   const active =
     defaultActive || activeUnknown
       ? defaultId

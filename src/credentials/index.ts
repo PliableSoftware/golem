@@ -9,8 +9,9 @@
  * `prompt.ts`   — masked TTY entry, for when no credential is found.
  * `probe.ts`    — a cheap live check that the upstream actually accepts a key.
  *
- * ADR-0003 invariant 4 still holds: no MCP/tool surface imports any of this —
- * credentials are CLI and config only.
+ * ADR-0003 invariant 4 still holds: a key never enters model context or tool
+ * output. The MCP server does resolve credentials (`credentialEnvForProxy`) for
+ * `coder`'s remote dispatch, but no tool returns one.
  */
 
 export {

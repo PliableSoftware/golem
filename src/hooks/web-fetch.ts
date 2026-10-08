@@ -1,15 +1,19 @@
 /**
  * WebFetch hooks (KB-backed web cache; verification-notes §44).
  *
- * - PreToolUse(WebFetch): if the exact URL is already in the project's web cache
- *   and still fresh, DENY the fetch and hand Claude the cached content via
- *   `permissionDecisionReason` (PreToolUse has no output-substitution field, but
- *   the deny reason is shown to Claude and the network fetch is skipped). Else
- *   allow the fetch (empty output).
- * - PostToolUse(WebFetch): capture the fetched content — redact, write it to the
- *   web cache, and ingest it into the vector KB (so `search` finds it and
- *   re-fetches stay in sync). Store-only: writes NO stdout, so it never conflicts
- *   with the CCR-swap PostToolUse hook that shares the WebFetch matcher.
+ * - PreToolUse(WebFetch): the canonical engine in raw mode (Decision 42). If the
+ *   exact URL is already in the project's web cache and still fresh, DENY the
+ *   fetch and hand Claude the cached content via `permissionDecisionReason`
+ *   (PreToolUse has no output-substitution field, but the deny reason is shown to
+ *   Claude and the network fetch is skipped). On a miss it fetches the RAW page
+ *   itself, redacts it, writes it to the web cache, ingests it into the vector
+ *   KB (so `search` finds it) and serves it via the same deny. Only a failed
+ *   self-fetch allows WebFetch to run (empty output). With raw mode off it
+ *   serves a fresh cached entry, else allows the fetch.
+ * - PostToolUse(WebFetch): store-only capture, used when WebFetch actually ran —
+ *   it caches Claude Code's answer only with raw mode off (the legacy behavior).
+ *   Writes NO stdout, so it never conflicts with the CCR-swap PostToolUse hook
+ *   that shares the WebFetch matcher.
  *
  * Fail-safe: any error → exit 0 with no stdout (the fetch proceeds / the capture
  * is skipped) so a hook can never break a session. Redaction runs BEFORE storage
@@ -131,7 +135,7 @@ export interface WebFetchHookOptions {
   readonly nowIso?: string;
   /** Inject a WebCache (tests); default: `<projectDir>/.golem/webcache`. */
   readonly cache?: WebCache;
-  /** Build a KB for the project (cli injects buildKnowledgeStack). Post hook only. */
+  /** Build a KB for the project (cli injects buildKnowledgeStack); fetched pages are ingested into it. */
   readonly buildKnowledge?: (projectDir: string) => Promise<KnowledgeBase | null>;
   /**
    * Pipeline redaction stage; defaults to `pipelineRedact` (the full
@@ -153,8 +157,8 @@ export interface WebFetchHookOptions {
   /**
    * Decision 42: fetch the RAW page ourselves (default {@link fetchRawPage} via
    * the CLI wiring; tests inject a fake). When present AND {@link fetchRawEnabled}
-   * allows it, the PostToolUse hook caches/ingests the raw page instead of Claude
-   * Code's prompt-specific WebFetch answer. A raw fetch that throws caches
+   * allows it, the PreToolUse hook caches/ingests the raw page and serves it via
+   * `deny`, instead of Claude Code's prompt-specific WebFetch answer. A raw fetch that throws caches
    * nothing (an honest miss) — the answer is never stored. Absent → legacy
    * answer-capture behavior.
    *

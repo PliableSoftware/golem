@@ -41,8 +41,9 @@ export function headerLines(report: StatusReport): readonly HeaderLine[] {
   const ec = report.effective_compression;
   const level: HeaderSegment = {
     label: "Level",
-    // R11.1: `proxy.bypass_all` is the redaction-off bypass — flagged in the
-    // header, not just in a warning line, so it cannot be running unnoticed.
+    // R11.1: `proxy.bypass_all` is the redaction-off bypass — flagged by colour
+    // (tone) on this Level segment only; the value text does not name it (S11 is
+    // DUST3.4).
     value: ec.degraded
       ? `${ec.effective} ${ec.effective_name} (${ec.nominal} inert)`
       : `${ec.nominal} ${ec.nominal_name}`,

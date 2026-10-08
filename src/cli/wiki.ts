@@ -460,8 +460,8 @@ async function checkProseOutsideWiki(
 
 /**
  * `golem wiki check` (WS-W W2): frontmatter/date/link lint over every `.md`
- * page under `wikiDir`. Read-only — reports issues, never fixes them (the
- * wiki is plan-gated; a human or an approved agent write fixes what's found).
+ * page under `wikiDir`. Read-only — reports issues, never fixes them (a human
+ * or an agent write fixes what's found).
  *
  * Pass `projectDir` to also lint the prose files outside the wiki
  * (`PROSE_FILES_OUTSIDE_WIKI`) for retired identifiers.

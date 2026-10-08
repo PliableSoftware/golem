@@ -104,7 +104,7 @@ export function registerWikiTools(server: McpServer, wiki: WikiStore, tel?: Tool
         "the change is reviewable and revertible once you commit it. " +
         "Redaction-before-storage still applies and contradictions must be surfaced " +
         "to the human, never auto-resolved. If a page already exists at rel_path, " +
-        "the new body is appended under a dated separator and tags/sources are " +
+        "the new body is appended under a `---` separator and tags/sources are " +
         "merged in; this never replaces existing content wholesale. title/type must " +
         "match the existing page's when one is already there.",
       inputSchema: {

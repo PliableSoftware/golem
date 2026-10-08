@@ -105,9 +105,9 @@ export async function runHostGateHook(
       level as Parameters<typeof decideHostGate>[0],
       action,
     );
-    // R13.3 ships no answerer: there is no device transport (R13.5) and no chat
-    // surface (R13.6) yet, so an `ask` has nobody to reach and resolves to a
-    // refusal rather than a wait. The seam is `HostAttachment`.
+    // No answerer is wired in here: the device transport (R13.5) and chat
+    // surface (R13.6) have shipped, but neither is attached as an answerer, so
+    // an `ask` has nobody to reach and resolves to a refusal rather than a wait. The seam is `HostAttachment`.
     const resolved = resolveHostGate(decided);
 
     // Attribution is written for EVERY decision, allow included — an audit log

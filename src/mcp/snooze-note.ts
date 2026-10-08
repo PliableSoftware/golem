@@ -2,7 +2,8 @@
  * Snooze park notes — persisting "where you're up to" as part of parking.
  *
  * The park procedure used to be two acts: `golem task add "<note>"` through Bash,
- * then the `snooze` MCP tool. Decision 45 made snooze enforcement the default, and
+ * then the `snooze` MCP tool. Decision 45 made snooze enforcement the default
+ * (enforcement is opt-in now, advisory by default since 2026-09-25), and
  * enforcement denies every non-`snooze` tool call — so step 1 was denied by step 2's
  * own mechanism (task `snooze-taskadd`, observed live 2026-07-30). Exempting the
  * `Bash` call would have re-opened the hole enforcement exists to close, matched on

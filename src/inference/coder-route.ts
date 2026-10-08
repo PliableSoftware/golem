@@ -1,5 +1,6 @@
 /**
- * R13.12 — resolve `inference.default_coder` into a MECHANISM.
+ * R13.12 — resolve `inference.personas.coder.model` (formerly
+ * `inference.default_coder`, retired R14.1) into a MECHANISM.
  *
  * The setting deliberately accepts two shapes because the user's question is one
  * question ("who does the coding work?") while the answers are served by two
@@ -46,12 +47,12 @@ import { workerTarget } from "./workers.js";
  *
  * Lives here rather than in `src/cli/agents.ts` (which owns the file's CONTENT)
  * because `src/mcp/` needs to name it too, in the decline it returns when
- * `default_coder` routes to the harness. `src/mcp/` importing from `src/cli/`
+ * `personas.coder.model` routes to the harness. `src/mcp/` importing from `src/cli/`
  * would invert the layering; `src/inference/` is upstream of both.
  */
 export const CODER_AGENT_NAME = "golem-coder";
 
-/** What `default_coder` (and `worker_targets`) resolved to. */
+/** What `personas.coder.model` (and `worker_targets`) resolved to. The `via: "default_coder"` value is the old key's name, kept as is. */
 export type CoderRoute =
   /** Golem dispatches to this registry target itself. */
   | {
@@ -64,7 +65,7 @@ export type CoderRoute =
   /** Nothing is configured — the work stays in the calling session (R13.11). */
   | { readonly kind: "none" };
 
-/** Raised for a `default_coder` that names neither a target nor a plausible model. */
+/** Raised for a `personas.coder.model` that names neither a target nor a plausible model. */
 export class CoderRouteError extends Error {
   constructor(message: string) {
     super(message);
@@ -95,7 +96,7 @@ function looksLikeModelId(value: string): boolean {
 }
 
 /**
- * Resolve the coder mechanism. Pure; raises only for a `default_coder` that
+ * Resolve the coder mechanism. Pure; raises only for a `personas.coder.model` that
  * cannot mean anything.
  */
 export function resolveCoderRoute(input: CoderRouteInput): CoderRoute {

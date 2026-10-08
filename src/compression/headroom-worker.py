@@ -21,7 +21,7 @@ service* here, never a competing proxy (verification-notes §34).
 
 Heuristic-only by design (§35): the default install is bare `headroom-ai` (no
 torch / no `[ml]`), so the ML/Kompress stage is absent and `read_lifecycle` +
-structural compression do the work. `mode` maps the Golem slider's
+structural compression do the work. `mode` maps the Golem compression dial's
 `semanticCompression` setting onto Headroom's CompressConfig.
 
 Only Python stdlib + `headroom` are imported, so the sidecar stays light.
@@ -233,7 +233,7 @@ def _install_router_pipeline(router_applied: dict) -> "tuple[bool, list]":
     return True, []
 
 
-# Mode presets: Golem's opinion about the slider, as plain dicts so a caller's
+# Mode presets: Golem's opinion about the compression dial, as plain dicts so a caller's
 # `config` can override an individual key instead of replacing the whole object.
 #
 # No `kompress_model` is set by default — the ML stage is opt-in and out of scope
@@ -242,7 +242,7 @@ def _install_router_pipeline(router_applied: dict) -> "tuple[bool, list]":
 _MODE_PRESETS = {
     "aggressive": {"compress_user_messages": True, "protect_recent": 1},
     "low_relevance": {"compress_user_messages": True, "protect_recent": 2},
-    # "stale_turns" (level 3) and anything else: safe defaults — system-side text
+    # "stale_turns" (level 2) and anything else: safe defaults — system-side text
     # + read_lifecycle + structural; user content untouched.
     "stale_turns": {"protect_recent": 4},
 }

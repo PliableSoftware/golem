@@ -98,9 +98,9 @@ function askReason(action: ActionClass): string {
 /**
  * Who, if anyone, can answer an `ask` right now.
  *
- * R13.3 ships only the `none` case — there is no device transport yet (R13.5)
- * and no chat surface (R13.6). The seam exists so those tasks add an answerer
- * rather than rewriting the decision.
+ * Only the `none` case is wired here: the device transport (R13.5) and chat
+ * surface (R13.6) have shipped but are not attached as an answerer. The seam
+ * exists so one can be added rather than rewriting the decision.
  */
 export interface HostAttachment {
   /** Something that can be asked and will answer. */

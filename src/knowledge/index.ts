@@ -139,9 +139,12 @@ export function knowledgeDir(projectDir: string): string {
 
 export interface OpenKnowledgeBaseOptions extends KnowledgeBaseOptions {
   readonly projectDir: string;
-  /** Qdrant server URL (spec Decision 12). When set, uses the server driver. */
+  /**
+   * Qdrant server URL (spec Decision 12). When set, opening throws
+   * NotImplementedYetError (no server driver yet).
+   */
   readonly vectorDbUrl?: string;
-  /** Inject a driver directly (tests, or a future native driver). */
+  /** Inject a driver directly (tests, or another driver). */
   readonly driver?: VectorDriver;
   /**
    * WS-D inference service — its `embed` becomes the KB embedder (C3). Ignored
@@ -155,8 +158,9 @@ export interface OpenKnowledgeBaseOptions extends KnowledgeBaseOptions {
 
 /**
  * Build a KnowledgeBase, selecting the vector driver and the embedder:
- *  - driver: an injected `driver` wins; else `vectorDbUrl` → Qdrant (stub);
- *    else the embedded default (in-memory at C1 until the native engine, §26);
+ *  - driver: an injected `driver` wins; else `vectorDbUrl` throws
+ *    NotImplementedYetError (no Qdrant driver); else the embedded default
+ *    (`FileVectorDriver`, durable; in-memory is for tests);
  *  - embedder: explicit `embed` wins; else `inference` (WS-D bge-m3, SEMANTIC);
  *    else the pure-TS hashing embedder (LEXICAL) so the KB works with zero setup.
  */

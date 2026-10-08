@@ -99,7 +99,7 @@ describe("runPromote", () => {
       path.join(wikiDir, "questions", "promotion-archive-or-delete.md"),
       "utf8",
     );
-    // Both the old body and the promoted body, under a dated separator; tags unioned.
+    // Both the old body and the promoted body, under a bare `---` separator; tags unioned.
     expect(raw).toContain("EXISTING BODY");
     expect(raw).toContain("A question captured from a note.");
     expect(raw).toContain("\n---\n");
