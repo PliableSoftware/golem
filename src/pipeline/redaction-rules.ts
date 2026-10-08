@@ -503,6 +503,11 @@ export function registerExtraRedactionRules(
   return { accepted: accepted.length, refused: null };
 }
 
+/** True once this process has fixed its plugin rule set (even to the empty set). */
+export function pluginRedactionRulesSealed(): boolean {
+  return extraRulesSealed;
+}
+
 /** The plugin-contributed rules currently in force (possibly empty). */
 export function extraRedactionRules(): readonly RedactionRule[] {
   return extraRules;

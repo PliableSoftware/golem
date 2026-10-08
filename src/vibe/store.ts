@@ -27,8 +27,10 @@
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { findProjectDir } from "../config/index.js";
 import { defaultUserDir } from "../config/paths.js";
 import { redactStandaloneText } from "../pipeline/redaction.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { BRIEF_MAX_BYTES, isGolemProject, type VibePaths, vibePaths } from "./paths.js";
 
 /** One seeded source: what the user pointed at, and when it was last read. */
@@ -80,7 +82,7 @@ export function openVibeStore(opts: OpenVibeOptions = {}): VibeStore | null {
   const cwd = opts.cwd ?? process.cwd();
   // THE GATE — before any filesystem access to the guide.
   if (!isGolemProject(cwd, opts.rootDir, opts.home)) return null;
-  return new VibeStore(vibePaths(opts.userDir ?? defaultUserDir()));
+  return new VibeStore(vibePaths(opts.userDir ?? defaultUserDir()), findProjectDir(cwd) ?? cwd);
 }
 
 /** Slugify a topic or id into something safe to use as a filename. */
@@ -125,7 +127,24 @@ export function capBrief(text: string, maxBytes: number = BRIEF_MAX_BYTES): stri
 const FENCE = "```";
 
 export class VibeStore {
-  constructor(readonly paths: VibePaths) {}
+  /**
+   * `projectDir` only selects which project's plugin redaction rules apply (the
+   * guide itself is per-user). Default: the project around the cwd, else the cwd.
+   */
+  constructor(
+    readonly paths: VibePaths,
+    private readonly projectDir: string = findProjectDir(process.cwd()) ?? process.cwd(),
+  ) {}
+
+  /**
+   * The one redactor every vibe write goes through (DUSTSEC.8): built-in rules
+   * plus the project's plugin rules, loaded into this process first. Never
+   * throws; a plugin load failure leaves the built-ins in force.
+   */
+  protected async redact(text: string): Promise<string> {
+    await ensurePluginRedactionRules(this.projectDir);
+    return redactStandaloneText(text);
+  }
 
   /** The always-loaded brief, or null when the guide has not been started. */
   async brief(): Promise<string | null> {
@@ -138,7 +157,7 @@ export class VibeStore {
 
   /** Write the brief, redacted and capped. Returns the bytes actually stored. */
   async writeBrief(text: string): Promise<number> {
-    const body = capBrief(redactStandaloneText(text));
+    const body = capBrief(await this.redact(text));
     await mkdir(this.paths.root, { recursive: true });
     await writeFile(this.paths.brief, body, "utf8");
     return Buffer.byteLength(body, "utf8");
@@ -166,7 +185,7 @@ export class VibeStore {
   async writeGuideline(topic: string, body: string): Promise<string> {
     const file = path.join(this.paths.guidelines, `${vibeSlug(topic)}.md`);
     await mkdir(this.paths.guidelines, { recursive: true });
-    await writeFile(file, redactStandaloneText(body), "utf8");
+    await writeFile(file, await this.redact(body), "utf8");
     return file;
   }
 
@@ -224,7 +243,7 @@ export class VibeStore {
       "",
     ].join("\n");
     await mkdir(dir, { recursive: true });
-    await writeFile(file, redactStandaloneText(page), "utf8");
+    await writeFile(file, await this.redact(page), "utf8");
     return file;
   }
 

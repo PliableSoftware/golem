@@ -309,7 +309,10 @@ function redactDeep<T>(value: T, redact: (text: string) => string): T {
  * read path, and `../pipeline/redaction.js` reaches the compression barrel; the
  * READ path must not pay for it. Only writers do.
  */
-async function loadRedactor(): Promise<(text: string) => string> {
+async function loadRedactor(projectDir: string): Promise<(text: string) => string> {
+  // DUSTSEC.8: plugin rules too (lazy, like the redactor; never throws).
+  const { ensurePluginRedactionRules } = await import("../plugins/redaction-init.js");
+  await ensurePluginRedactionRules(projectDir);
   const { redactStandaloneText } = await import("../pipeline/redaction.js");
   return redactStandaloneText;
 }
@@ -325,7 +328,7 @@ async function loadRedactor(): Promise<(text: string) => string> {
  */
 export async function writeSessionState(projectDir: string, state: SessionState): Promise<void> {
   try {
-    const redact = await loadRedactor();
+    const redact = await loadRedactor(projectDir);
     await writeAtomic(sessionStatePath(projectDir), redactDeep(state, redact));
   } catch {
     // best-effort — a status indicator is not worth failing a hook over
@@ -338,7 +341,7 @@ export async function writePendingToolCall(
   call: PendingToolCall,
 ): Promise<void> {
   try {
-    const redact = await loadRedactor();
+    const redact = await loadRedactor(projectDir);
     await writeAtomic(pendingToolPath(projectDir), redactDeep(call, redact));
   } catch {
     // best-effort

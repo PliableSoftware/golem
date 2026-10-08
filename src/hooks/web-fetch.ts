@@ -36,6 +36,7 @@ import {
   type WebCacheMeta,
   webCacheDir,
 } from "../knowledge/index.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { isLoopbackStubUrl } from "../proxy/loopback-serve.js";
 import { type HookIo, readAll } from "./hook-io.js";
 import { pipelineRedact, type RedactFn, stripKnownSecrets } from "./redact.js";
@@ -261,6 +262,8 @@ async function fetchCacheAndServe(
   }
 
   // Redact BEFORE storing/serving (hard rule): pipeline stage first, built-in strip on top.
+  // DUSTSEC.8: plugin redaction rules are loaded into this process first.
+  if (options.redact === undefined) await ensurePluginRedactionRules(projectDir);
   const content = stripKnownSecrets((options.redact ?? pipelineRedact)(raw.content));
   if (content.length === 0) return false; // empty extraction → let WebFetch try
 
@@ -456,6 +459,7 @@ export async function runWebFetchPost(
     const nowIso = options.nowIso ?? new Date().toISOString();
     // Redact BEFORE storing/ingesting (hard rule): pipeline stage first
     // (defaults to pipelineRedact), built-in secret strip always on top.
+    if (options.redact === undefined) await ensurePluginRedactionRules(projectDir);
     const content = stripKnownSecrets((options.redact ?? pipelineRedact)(text));
     if (content.length === 0) return 0;
 

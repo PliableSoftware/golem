@@ -46,6 +46,7 @@ import type {
   LiveConversation,
 } from "../interfaces/join-queue.js";
 import { redactStandaloneText } from "../pipeline/redaction.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
 
 /** Largest message the queue stores. Matches the transport's own limit. */
@@ -105,12 +106,14 @@ export interface FileJoinQueueOptions {
 
 export class FileJoinQueue implements JoinQueue {
   readonly #root: string;
+  readonly #projectDir: string;
   readonly #resolve: FileJoinQueueOptions["resolve"];
   readonly #now: () => number;
   readonly #ttl: number;
 
   constructor(options: FileJoinQueueOptions) {
     this.#root = joinQueueDir(options.projectDir);
+    this.#projectDir = options.projectDir;
     this.#resolve = options.resolve;
     this.#now = options.now ?? Date.now;
     this.#ttl = options.pendingTtlMs ?? PENDING_TTL_MS;
@@ -160,6 +163,9 @@ export class FileJoinQueue implements JoinQueue {
       };
     }
 
+    // DUSTSEC.8: the CLI/panel process is not the proxy; load plugin redaction
+    // rules before the text is stored (built-ins first, never throws).
+    await ensurePluginRedactionRules(this.#projectDir);
     const nowMs = this.#now();
     const message: JoinQueueMessage = {
       messageId: input.messageId,
