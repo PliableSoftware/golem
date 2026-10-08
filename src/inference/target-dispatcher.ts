@@ -721,11 +721,10 @@ export function selectTarget(
   options: Pick<TargetDispatcherOptions, "settings" | "workerTargets" | "personas">,
   request: Pick<DispatchRequest, "targetId" | "worker">,
 ): { readonly id: string; readonly route: DispatchRoute } {
-  if (request.targetId !== undefined && request.targetId !== "") {
-    return { id: request.targetId, route: "explicit" };
-  }
   // owner: user binds the worker lane (DUSTSEC.11): refuse before ANY worker route,
-  // including worker_targets, and never fall through to the default target.
+  // including worker_targets and an explicit target, and never fall through to the
+  // default target. An explicit target only picks WHERE the worker runs, not whether
+  // a human-owned role may be dispatched.
   if (request.worker !== undefined) {
     try {
       assertWorkerDispatchable(options.personas ?? {}, request.worker);
@@ -733,6 +732,9 @@ export function selectTarget(
       if (err instanceof PersonaNotDispatchableError) throw new TargetDispatchError(err.message);
       throw err;
     }
+  }
+  if (request.targetId !== undefined && request.targetId !== "") {
+    return { id: request.targetId, route: "explicit" };
   }
   // First worker_targets (live, highest after explicit), then personas[worker].model
   const fromWorkerRaw =
