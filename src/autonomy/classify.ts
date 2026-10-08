@@ -140,10 +140,83 @@ const WRITE_FLAG_RE =
 const VITEST_UPDATE_RE = /^(?:npx\s+)?(?:vitest|npm\s+(?:run\s+)?test)\b.*\s-u(?=\s|$)/;
 /** Commands whose arguments are all flags/paths for a build tool, so a quoted flag still reaches it. */
 const TOOL_COMMAND_RE = /^(?:npx\s+)?(?:tsc|vitest|biome|npm|git)(?:\s|$)/;
+/** Split a command into the words a shell would hand the program: quotes removed, escapes resolved. */
+function shellWords(cmd: string): string[] {
+  const words: string[] = [];
+  let cur = "";
+  let inWord = false;
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < cmd.length; i += 1) {
+    const c = cmd[i] ?? "";
+    const next = cmd[i + 1] ?? "";
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      else cur += c;
+    } else if (quote === '"') {
+      if (c === "\\" && /["\\$`]/.test(next)) {
+        cur += next;
+        i += 1;
+      } else if (c === '"') quote = null;
+      else cur += c;
+    } else if (c === "\\" && next !== "") {
+      cur += next; // an unquoted backslash escapes any char: `--outpu\t` is `--output`
+      inWord = true;
+      i += 1;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      inWord = true;
+    } else if (/\s/.test(c)) {
+      if (inWord) words.push(cur);
+      cur = "";
+      inWord = false;
+    } else {
+      cur += c;
+      inWord = true;
+    }
+  }
+  if (inWord) words.push(cur);
+  return words;
+}
+
+/** `git` options whose NEXT word is a search term or name, never a flag (`git log --grep "--fix"`). */
+const GIT_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "--grep",
+  "--author",
+  "--committer",
+  "--since",
+  "--until",
+  "--after",
+  "--before",
+  "-S",
+  "-G",
+  "-e",
+]);
+
+/** Words of a git command that git itself would read as options (not values, not paths after `--`). */
+function gitOptionWords(words: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i] ?? "";
+    if (w === "--") break;
+    if (GIT_VALUE_FLAGS.has(w)) {
+      i += 1; // the value
+      continue;
+    }
+    out.push(w);
+  }
+  return out;
+}
+
 function writesToDisk(cmd: string): boolean {
-  // A tool sees `"--write"` as `--write` (the shell strips the quotes), so for a
-  // build tool the flag is judged with quotes removed; for `cat '--write'` it is data.
-  const seen = TOOL_COMMAND_RE.test(cmd) ? cmd.replace(/["']/g, "") : blankQuoted(cmd);
+  if (!TOOL_COMMAND_RE.test(cmd)) {
+    const seen = blankQuoted(cmd);
+    return WRITE_FLAG_RE.test(seen) || VITEST_UPDATE_RE.test(seen);
+  }
+  // A tool sees `"--write"` as `--write` (the shell strips the quotes), so the flag
+  // is judged on the words the program receives; for `cat '--write'` it is data.
+  const words = shellWords(cmd);
+  const isGit = (words[0] === "npx" ? words[1] : words[0]) === "git";
+  const seen = (isGit ? gitOptionWords(words) : words).join(" ");
   return WRITE_FLAG_RE.test(seen) || VITEST_UPDATE_RE.test(seen);
 }
 
