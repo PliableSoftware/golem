@@ -61,6 +61,7 @@ export {
   type PortalIdentity,
 } from "./client.js";
 export {
+  assertLinkConfigTrusted,
   type PortalConfig,
   type PortalSettings,
   resolvePortalConfig,

@@ -42,7 +42,8 @@ export type PortalAuthErrorKind =
   /** The request origin is not the origin the stored token was issued for. */
   | "origin_mismatch"
   /** A portal URL is not https (loopback excepted). */
-  | "insecure_url";
+  | "insecure_url"
+  | "untrusted_config";
 
 export class PortalAuthError extends Error {
   readonly kind: PortalAuthErrorKind;
