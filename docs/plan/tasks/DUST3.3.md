@@ -30,7 +30,7 @@ each fix as it goes green.
    stage a clone. Test: a plugin that mutates in place and injects a secret-shaped string; assert
    the forwarded body holds a placeholder.
 2. **S10: `connection-password` re-matches its own placeholder** (`src/pipeline/redaction-rules.ts:190-196`).
-   The `[^\s@/]+` group matches `[REDACTED:connection-password:N]`, so a second pass renumbers
+   The `[^\s@/]+` group matches the rule's own placeholder text, so a second pass renumbers
    it. That breaks idempotency and prefix stability. Fix: exclude the placeholder shape from the
    group. Test: `redact(redact(x)) === redact(x)` for a connection string; property-style over
    every built-in rule.
@@ -54,7 +54,7 @@ each fix as it goes green.
 
 ## Out of scope
 
-- S9 (object keys never redacted): NEEDS-USER design call, see `[REDACTED:high-entropy:3].md`.
+- S9 (object keys never redacted): NEEDS-USER design call, see `docs/plan/audit/dust-1/PHASE3-INDEX.md`.
 - h9 path-like tokens with `=`/`+` and a policy that cannot represent redaction-off: DUST2.23.
 - Whole-body `JSON.stringify` re-serialisation: settled by decision C1 / DUST2.24.
 - Plugin diagnostics UX (counts, regex-hang heuristic): DUST2.11.

@@ -5,7 +5,7 @@ state: queued
 owner: agent
 size: S
 discipline: code
-design: "docs/plan/audit/dust-1/PLAN.md Phase 3; SUMMARY.md 'Dead candidates in code' DUST1.1, DUST1.5, DUST1.6, DUST1.8, DUST1.9; re-verified 2026-10-08 in [REDACTED:high-entropy:3].md"
+design: "docs/plan/audit/dust-1/PLAN.md Phase 3; SUMMARY.md 'Dead candidates in code' DUST1.1, DUST1.5, DUST1.6, DUST1.8, DUST1.9; re-verified 2026-10-08 in docs/plan/audit/dust-1/PHASE3-INDEX.md"
 gate: "golem verify exit 0 before AND after (exit code); suite test count unchanged; every SAFE-TO-DELETE item gone and its grep proof returns zero hits; no NEEDS-USER item touched."
 depends_on: []
 touches: [src/config/control-surface-types.ts, src/tui/state.ts, src/tui/ansi.ts, src/cli/session-report.ts, src/cli/proxy-runtime.ts]
@@ -40,7 +40,7 @@ Note: `src/cli/session-report.ts` is also touched by `dust-comment-pass-code-def
 ## NEEDS-USER (proposals only, do not delete)
 
 These are public, contract-bound, test-pinned or hard-rule items in this task's area. They are
-collected with all the others in `[REDACTED:high-entropy:3].md` for one approval pass.
+collected with all the others in `docs/plan/audit/dust-1/PHASE3-INDEX.md` for one approval pass.
 
 | item | file:line | evidence | recommendation |
 |---|---|---|---|
