@@ -182,11 +182,14 @@ export default function register(program: Command): void {
     .description("Accept a noticed preference — it becomes a stated instruction in the guide")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--note <text>", "why, in your own words")
-    .action(async (key: string, opts: { dir: string; note?: string }) => {
+    .option("--force", "confirm a key you previously rejected")
+    .action(async (key: string, opts: { dir: string; note?: string; force?: boolean }) => {
       try {
         const store = requireStore(opts.dir);
         const now = new Date();
-        const row = await confirmCandidate(store, key, now.toISOString(), opts.note);
+        const row = await confirmCandidate(store, key, now.toISOString(), opts.note, {
+          force: opts.force === true,
+        });
         if (row === null) {
           process.stderr.write(`golem: no candidate with key ${key}\n`);
           process.exit(1);
