@@ -194,12 +194,13 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "Credentials embedded in connection-string URLs " +
       "(scheme://user:password@host). Only the password is redacted so the " +
       "scheme, user, and host stay legible to the model.",
-    // The lookahead skips a group that is EXACTLY one placeholder, so a second
-    // pass over already-redacted text cannot re-match (and renumber) it (S10).
-    // It is anchored on `]@`, so a password that merely contains or starts with
-    // placeholder-like text is still redacted whole.
+    // The lookahead skips a group that is EXACTLY one connection-password
+    // placeholder, so a second pass over already-redacted text cannot re-match
+    // (and renumber) it (S10). It names that ONE kind and anchors on `]@`: a
+    // password shaped like any other placeholder (attacker-chosen kind text, or
+    // another rule's placeholder) is still redacted, as before.
     pattern:
-      /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:@/]+:(?!\[REDACTED:[A-Za-z0-9-]+:\d+\]@)([^\s@/]+)@/g,
+      /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
     group: 1,
   },
   {

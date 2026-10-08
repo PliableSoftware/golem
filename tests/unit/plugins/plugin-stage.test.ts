@@ -162,6 +162,24 @@ describe("plugin pipeline stages", () => {
     expect(JSON.stringify(bodyOf(out))).not.toContain(second);
   });
 
+  it("forwards an in-place injected secret redacted when the request had NO secret before (S8)", async () => {
+    // Nothing else marks the request changed here: only the second pass's own
+    // `changed` flag makes the pipeline forward the rewritten body.
+    const key = awsKey();
+    const mutator: PluginPipelineStage = {
+      name: "p/mutate-clean",
+      description: "",
+      transform: ({ body }) => {
+        body.note = `k ${key}`;
+        return undefined;
+      },
+    };
+    const out = await makePipeline([mutator]).process(request(SAMPLE));
+    const serialized = JSON.stringify(bodyOf(out));
+    expect(serialized).not.toContain(key);
+    expect(serialized).toContain("aws-key");
+  });
+
   it("attributes the extra redaction pass separately, so a smuggler is visible", async () => {
     const key = awsKey();
     const events: PipelineEvent[] = [];

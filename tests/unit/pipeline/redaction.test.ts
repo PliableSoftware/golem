@@ -180,6 +180,11 @@ describe("idempotence over every built-in rule (S10)", () => {
     expect(redact(swapped)).toBe(swapped);
     expect(redact(first)).toBe(first);
   });
+
+  it("leaves a password that is exactly a connection-password placeholder alone", () => {
+    const already = conn("postgres", "u", ph(7), "h/db");
+    expect(redact(already)).toBe(already);
+  });
 });
 
 describe("connection-password: what it redacts is unchanged by the S10 fix (before/after guard)", () => {
@@ -202,6 +207,12 @@ describe("connection-password: what it redacts is unchanged by the S10 fix (befo
     [conn("a", "u", ["[REDACTED", "x]"].join(":"), "h"), conn("a", "u", ph(1), "h")],
     [conn("a", "u", `${ph(1)}tail`, "h"), conn("a", "u", ph(1), "h")],
     [conn("a", "u", `head${ph(1)}`, "h"), conn("a", "u", ph(1), "h")],
+    // Another kind's placeholder shape with attacker-chosen text in the kind: still a password.
+    [conn("pg", "u", ph(1, "MyRealPass-2024"), "h"), conn("pg", "u", ph(1), "h")],
+    // An earlier rule replaces the whole password first; connection-password then
+    // renames it, exactly as before the S10 fix.
+    [conn("a", "u", `ghp_${"a1B2c3D4e5".repeat(4)}`, "h"), conn("a", "u", ph(1), "h")],
+    [conn("a", "u", `sk-ant-${"a1B2c3D4e5".repeat(3)}`, "h"), conn("a", "u", ph(1), "h")],
   ];
   for (const [i, [input, expected]] of TABLE.entries()) {
     it(`row ${i}`, () => {
