@@ -5,11 +5,11 @@ Guidance for Claude Code agents working in this repository.
 ## What this project is
 A local-first TypeScript pre-LLM processing layer (proxy + MCP server): redaction, compression, local tools, routing, honest observability. Claude Code is the flagship integration — lossless, prefix-stable proxying, native MCP tools, agentic developer-assistant with local tools (vector KB, tiered Ollama inference, CCR expansion, telemetry). The pipeline extends to other gateways (R6.1). npm **`@pliable/golem`**, CLI **`golem`**.
 
-Previously the project had a different working title — dated wiki records still show it, read as Golem. The MCP tools use short verb names: `search`, `fetch`, `expand`, `stats`, `ingest`, `coder` (Decisions 27/35). `level` was retired with the slider (ADR-0004): no tool call can change how much of the pipeline runs. Skills/prompts/env/config/header use `/golem-<cmd>` and `GOLEM_*`.
+Previously the project had a different working title — dated wiki records still show it, read as Golem. The MCP tools use short verb names (Decisions 27/35); the full set of 11 is `search`, `fetch`, `expand`, `stats`, `ingest`, `coder`, `code`, `devices`, `snooze`, `wiki_read`, `wiki_upsert`. `level` was retired with the slider (ADR-0004): no tool call can change how much of the pipeline runs. Skills/prompts/env/config/header use `/golem-<cmd>` and `GOLEM_*`.
 
 ## Source of truth
 1. `docs/golem-spec.md` — architecture, decisions, ADR log
-2. `docs/plan/tasks/` — one committed task doc per open item. Start here: `golem task index --summary`
+2. `docs/plan/tasks/` — one committed task doc per open item. Start here: `golem task index --summary`. A doc whose frontmatter fails to parse is silently left out of the index, so confirm a new doc appears after `golem task index --write`
 3. `docs/plan/verification-notes.md` — dated live-doc findings, check before building on external-tool facts
 4. `docs/plan/ROADMAP.md` — generated index over tasks, never hand-edit
 

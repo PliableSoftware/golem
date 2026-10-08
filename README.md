@@ -15,12 +15,12 @@ off on non-caching upstreams, not on Anthropic's cached traffic, where the
 honest number today is ~0% (see `docs/plan/verification-notes.md` §54).
 
 Claude Code is Golem's flagship, most-verified integration — byte-faithful
-proxying, native MCP tools, `/golem/*` skills — with the same pipeline
+proxying, native MCP tools, `/golem-<cmd>` skills — with the same pipeline
 designed to extend to other gateways. Native Windows, macOS, and Linux.
 
 ## How it works
 
-One local process exposes two doors — a **transparent proxy** (every request) and an
+Golem exposes two doors — a **transparent proxy** (every request) and an
 **MCP server** (explicit tools) — over one shared engine, and talks to local models
 (Ollama, on this box or a LAN GPU box), a vector knowledge base, and the upstream
 LLM:
@@ -39,7 +39,7 @@ compression level ≤ 1:
 
 ```mermaid
 flowchart LR
-  R["Request"] --> RD["Redact"] --> LA["Local-answer?<br/>(opt-in short-circuit)"] --> CO["Compress<br/>(situational)"] --> FW["Forward<br/>byte-faithful at level <= 1"] --> UP["Upstream"]
+  R["Request"] --> RD["Redact"] --> LA["Local-answer?<br/>(on by default, confidence-gated)"] --> CO["Compress<br/>(situational)"] --> FW["Forward<br/>byte-faithful at level <= 1"] --> UP["Upstream"]
 ```
 
 Full component diagrams — request lifecycle by compression level, web-fetch caching,
