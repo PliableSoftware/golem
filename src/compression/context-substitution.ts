@@ -25,7 +25,7 @@
  * already-tested Decision-31 pattern the semantic stage established: gate
  * the whole stage off on caching upstreams. On a non-caching upstream there
  * is no stable prefix to break, so any substitution there is unconditionally
- * cache-safe — satisfying §14 by construction. See pipeline.ts's
+ * cache-safe — satisfying §14 by construction. See effective-level.ts's
  * `isCachingUpstream` — the exact same gate is reused for this stage.
  *
  * Fidelity: only user-side text and tool_result text are candidates (proxy

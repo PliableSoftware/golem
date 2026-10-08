@@ -1,8 +1,9 @@
 /**
- * R6.1 case (a) — Anthropic-native upstream providers (spec Decisions 22/32,
- * verification-notes §73).
+ * Barrel for every upstream provider and protocol translator: the
+ * Anthropic-native providers of R6.1 case (a) (spec Decisions 22/32,
+ * verification-notes §73) plus the OpenAI/Gemini translators of case (b).
  *
- * These providers all speak the **Anthropic Messages** wire protocol, so the
+ * The case (a) providers all speak the **Anthropic Messages** wire protocol, so the
  * proxy stays byte-faithful: SSE streams and tool-use blocks pass through
  * exactly as they do against `api.anthropic.com` (CLAUDE.md hard rule). The
  * only per-provider differences case (a) has to handle are (i) the upstream
@@ -12,8 +13,8 @@
  * upstream credential under that provider's expected header.
  *
  * The genuine protocol *translation* to OpenAI/Gemini/Ollama schemas is case
- * (b) — a separate, larger build with its own response-transform seam. Nothing
- * here translates bodies.
+ * (b) — the translators re-exported below, each with its own response-transform
+ * seam. The case (a) auth-header mapping itself translates no bodies.
  *
  * The credential itself is a secret and is NEVER a settings leaf — the CLI
  * resolves it from the OS credential store (`golem gateway login`) and hands it

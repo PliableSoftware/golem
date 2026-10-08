@@ -5,7 +5,7 @@
  * communicating over local HTTP, and exposes them to the rest of Golem only
  * through neutral seams:
  *
- * - {@link HeadroomSidecar} implements {@link SemanticCompressor} (slider ≥3
+ * - {@link HeadroomSidecar} implements {@link SemanticCompressor} (`compression.level` ≥2
  *   semantic compression, spec Decision 18/23).
  * - {@link HeadroomMemorySidecar} implements {@link MemorySearchProvider}
  *   (R3.6 MEMORY-scope federated search, spec Decisions 13/18).
@@ -28,7 +28,7 @@
  * the public method resolves `null` so the caller skips the stage/contributes
  * nothing. Nothing here can break a request or a search.
  *
- * The exact PyPI pin lives in ./index.ts (CLAUDE.md); it is read lazily at spawn
+ * The exact PyPI pin lives in ./pins.ts (CLAUDE.md); it is read lazily at spawn
  * time so this module never bumps or hardcodes it.
  */
 
@@ -580,7 +580,7 @@ export interface HeadroomSidecarOptions {
    * is not the coupling point. Keys the installed Headroom does not accept are
    * reported back and skipped, never passed. Layered UNDER Golem's per-mode
    * presets in the worker, so a caller can override one key without replacing the
-   * slider's behaviour wholesale.
+   * dial's behaviour wholesale.
    */
   readonly config?: Readonly<Record<string, unknown>>;
   /** Sink for diagnostics (default: stderr). Never stdout (would corrupt MCP stdio callers). */

@@ -1,5 +1,5 @@
 /**
- * SemanticCompressor — the neutral seam for slider ≥3 semantic compression.
+ * SemanticCompressor — the neutral seam for semantic compression (`compression.level` ≥2).
  *
  * The pipeline depends on THIS abstraction, never on Headroom directly, so the
  * CLAUDE.md rule "any Headroom client imports live only in headroom-adapter.ts"
@@ -9,14 +9,14 @@
  * Contrast with the frozen `CompressionService` (lossless, byte-stable, levels
  * ≤2): a SemanticCompressor is LOSSY and NOT guaranteed prefix-stable — it may
  * change earlier-turn bytes and so can miss Anthropic's prompt cache. That is an
- * accepted trade-off gated to slider ≥3 (spec §4; verification-notes §34), and it
+ * accepted trade-off gated to `compression.level` ≥2 (spec §4; verification-notes §34), and it
  * must always be optional and fail-open (a null result → the pipeline skips it
  * and forwards the losslessly-compressed body unchanged).
  */
 
 import type { SemanticCompression } from "../interfaces/policy.js";
 
-/** The slider's non-"off" semantic-compression modes (level ≥3). */
+/** The non-"off" semantic-compression modes (`compression.level` ≥2). */
 export type SemanticMode = Exclude<SemanticCompression, "off">;
 
 export interface SemanticResult {

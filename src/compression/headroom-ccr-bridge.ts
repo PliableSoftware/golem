@@ -2,7 +2,7 @@
  * R2.4 — reconciles Headroom's own elision markers with Golem's CCR store
  * (verification-notes §38, §6x).
  *
- * Headroom's semantic stage (slider ≥2, `headroom-adapter.ts`) can elide
+ * Headroom's semantic stage (`compression.level` ≥2, `headroom-adapter.ts`) can elide
  * stale/superseded Read tool-result content and substitute an inline marker
  * using the SAME `hash=<hex>` grammar Golem's own `ccrMarker()` deliberately
  * mirrors (`native-lossless.ts`'s doc comment). But that hash is a key into

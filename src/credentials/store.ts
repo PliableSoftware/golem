@@ -29,8 +29,9 @@
  * shell-inheritance trap where restarting the proxy from a terminal that lacked
  * the key silently un-configured a working daemon.
  *
- * No MCP/tool surface reaches this module — ADR-0003 invariant 4 (credentials
- * are CLI/config only) is unchanged.
+ * The MCP server does resolve credentials through this module
+ * (`credentialEnvForProxy`), but ADR-0003 invariant 4 is unchanged: a key never
+ * enters model context or tool output.
  */
 
 import { defaultUserDir } from "../config/paths.js";
