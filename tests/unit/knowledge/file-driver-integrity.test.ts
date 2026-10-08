@@ -4,7 +4,7 @@
  * and `getChunk` must find a chunk in a collection this instance never opened.
  */
 
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { acquireLock } from "../../../src/knowledge/file-driver.js";
@@ -165,5 +165,57 @@ describe("in-memory swap and dim crash window", () => {
     const d = new FileVectorDriver(base);
     await d.upsert("p", [rec("p", "new", [1, 0, 0])]);
     expect(await ids(base, "p")).toEqual(["new"]);
+  });
+});
+
+describe("damaged meta.json self-heals", () => {
+  async function seed(): Promise<string> {
+    await new FileVectorDriver(base).upsert("p", [rec("p", "a", [1, 0]), rec("p", "b", [0, 1])]);
+    return path.join(collectionDir(base, "p"), "meta.json");
+  }
+
+  for (const [name, content] of [
+    ["torn", '{"schemaVersion":1,"di'],
+    ["zero-length", ""],
+  ] as const) {
+    it(`a ${name} meta.json keeps every chunk, is kept aside, and is rewritten`, async () => {
+      const metaPath = await seed();
+      await writeFile(metaPath, content);
+      const d = new FileVectorDriver(base);
+      await d.upsert("p", [rec("p", "c", [1, 1])]);
+      expect(await ids(base, "p")).toEqual(["a", "b", "c"]);
+      const meta = JSON.parse(await readFile(metaPath, "utf8")) as { dim: number; count: number };
+      expect(meta).toMatchObject({ dim: 2, count: 3 });
+      const aside = (await readdir(path.dirname(metaPath))).filter((f) =>
+        f.startsWith("meta.json.corrupt-"),
+      );
+      expect(aside).toHaveLength(1);
+      expect(await readFile(path.join(path.dirname(metaPath), aside[0] ?? ""), "utf8")).toBe(
+        content,
+      );
+    });
+  }
+
+  it("still refuses to write when chunks.jsonl is unreadable, even with bad meta", async () => {
+    const metaPath = await seed();
+    await writeFile(metaPath, "");
+    const chunksFile = path.join(path.dirname(metaPath), "chunks.jsonl");
+    await rm(chunksFile);
+    await mkdir(chunksFile);
+    await expect(new FileVectorDriver(base).upsert("p", [rec("p", "z")])).rejects.toThrow();
+  });
+});
+
+describe("lock acquisition under persistent errors", () => {
+  it("times out instead of spinning when breaking a stale lock keeps failing", async () => {
+    // A stale lock that is a DIRECTORY: create gives EEXIST, it looks stale, and
+    // reading/renaming it as a file keeps failing. The old loop spun forever.
+    const lockPath = path.join(base, "d.lock");
+    await mkdir(lockPath);
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lockPath, old, old);
+    const t0 = Date.now();
+    await expect(acquireLock(lockPath, { staleMs: 50, waitMs: 150 })).rejects.toThrow(/timeout/);
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 });

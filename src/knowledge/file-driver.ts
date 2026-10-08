@@ -24,7 +24,17 @@
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
 import type { Chunk } from "../interfaces/knowledge.js";
@@ -174,23 +184,37 @@ export async function acquireLock(
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
+    let retryNow = false;
     try {
       const st = await stat(lockPath);
       if (Date.now() - st.mtimeMs > staleMs) {
+        const seen = (await readFile(lockPath, "utf8")).trim();
         const moved = `${lockPath}.stale.${token}`;
         await rename(lockPath, moved);
-        const fresh = Date.now() - (await stat(moved)).mtimeMs <= staleMs;
-        if (fresh) {
-          // Lost a race with a new owner: give the lock back if the slot is free.
-          const content = await readFile(moved, "utf8");
-          await writeFile(lockPath, content, { flag: "wx" }).catch(() => {});
+        // Double-check that what we moved is the very lock we judged stale (same
+        // token). If a new owner slipped in between the stat and the rename we
+        // just took THEIR live lock: put it back, and never proceed on it.
+        const movedContent = (await readFile(moved, "utf8").catch(() => "")).trim();
+        if (movedContent === seen) {
+          await rm(moved, { force: true });
+          retryNow = true;
+        } else {
+          try {
+            await writeFile(lockPath, `${movedContent}\n`, { flag: "wx" });
+          } catch {
+            process.stderr.write(
+              `golem: vector store lock ${lockPath} was displaced while breaking a stale lock; ` +
+                "a concurrent writer may overlap\n",
+            );
+          }
+          await rm(moved, { force: true });
         }
-        await rm(moved, { force: true });
-        continue;
       }
     } catch {
-      continue; // released/broken between the create and the stat — retry now
+      // released/broken between the create and the stat, or a transient fs error:
+      // fall through to the deadline check and the sleep either way.
     }
+    if (retryNow) continue;
     if (Date.now() > deadline) throw new Error(`vector store lock timeout: ${lockPath}`);
     await new Promise((r) => setTimeout(r, 15 + Math.floor(Math.random() * 25)));
   }
@@ -239,7 +263,8 @@ export class FileVectorDriver implements DeletableVectorDriver {
     const dir = this.#dirFor(projectId);
     const col: Collection = { dir, records: new Map(), dim: 0 };
     try {
-      this.#adopt(projectId, col, await this.#readDisk(dir));
+      const { metaCorrupt: _c, ...disk } = await this.#readDisk(dir);
+      this.#adopt(projectId, col, disk);
     } catch {
       // Unreadable right now: serve empty for reads. Mutations re-read strictly
       // and refuse to write rather than overwrite what they could not read.
@@ -265,39 +290,63 @@ export class FileVectorDriver implements DeletableVectorDriver {
    * parse error ...) THROWS, so a caller about to rewrite the store never mistakes
    * "could not read" for "nothing there" and wipes it.
    */
-  async #readDisk(dir: string): Promise<{ records: Map<string, StoredChunk>; dim: number }> {
+  async #readDisk(
+    dir: string,
+  ): Promise<{ records: Map<string, StoredChunk>; dim: number; metaCorrupt: boolean }> {
     const records = new Map<string, StoredChunk>();
-    let metaRaw: string;
+    let metaRaw: string | null = null;
     try {
       metaRaw = await readFile(path.join(dir, "meta.json"), "utf8");
     } catch (err) {
-      if (isEnoent(err)) return { records, dim: 0 };
-      throw err;
+      if (!isEnoent(err)) throw err;
     }
-    const meta = JSON.parse(metaRaw) as Partial<PersistedMeta>;
-    if (meta.schemaVersion !== KNOWLEDGE_SCHEMA_VERSION) return { records, dim: 0 };
-    const dim = typeof meta.dim === "number" ? meta.dim : 0;
+    // A torn, zero-length or non-object meta.json is a damaged INDEX FILE, not a
+    // damaged index: the chunks are still good. Recover dim from them instead of
+    // throwing on every mutation (the store would be stuck until deleted by hand).
+    let metaCorrupt = false;
+    let dim = 0;
+    if (metaRaw !== null) {
+      let meta: Partial<PersistedMeta> | null = null;
+      try {
+        const parsed: unknown = JSON.parse(metaRaw);
+        if (typeof parsed === "object" && parsed !== null) meta = parsed as Partial<PersistedMeta>;
+      } catch {
+        // falls through to metaCorrupt
+      }
+      if (meta === null) metaCorrupt = true;
+      else {
+        if (meta.schemaVersion !== KNOWLEDGE_SCHEMA_VERSION)
+          return { records, dim: 0, metaCorrupt };
+        dim = typeof meta.dim === "number" ? meta.dim : 0;
+      }
+    }
     let raw: string;
     try {
       raw = await readFile(path.join(dir, "chunks.jsonl"), "utf8");
     } catch (err) {
-      if (isEnoent(err)) return { records, dim }; // meta without chunks — empty
+      if (isEnoent(err)) return { records, dim, metaCorrupt }; // meta without chunks — empty
       throw err;
     }
+    if (metaRaw === null && raw.trim() === "") return { records, dim: 0, metaCorrupt };
     for (const line of raw.split("\n")) {
       if (line.trim() === "") continue;
       try {
         const rec = JSON.parse(line) as StoredChunk;
         if (rec.chunk?.chunkId === undefined || !Array.isArray(rec.vector)) continue;
-        // A crash between the meta and chunks renames can leave records from a
-        // different embedder space than meta.json records; those are unqueryable.
-        if (dim > 0 && rec.vector.length > 0 && rec.vector.length !== dim) continue;
+        if (metaCorrupt || metaRaw === null) {
+          // No trustworthy meta: adopt the first real vector width, drop nothing else.
+          if (dim === 0 && rec.vector.length > 0) dim = rec.vector.length;
+        } else if (dim > 0 && rec.vector.length > 0 && rec.vector.length !== dim) {
+          // A crash between the meta and chunks renames can leave records from a
+          // different embedder space than meta.json records; those are unqueryable.
+          continue;
+        }
         records.set(rec.chunk.chunkId, rec);
       } catch {
         // Skip a corrupt line (e.g. a torn final write); the rest still loads.
       }
     }
-    return { records, dim };
+    return { records, dim, metaCorrupt: metaCorrupt };
   }
 
   /**
@@ -322,9 +371,17 @@ export class FileVectorDriver implements DeletableVectorDriver {
         // Work on a detached copy of what is on disk NOW; readers keep seeing the
         // old state until the finished copy is swapped in, and a failed read or
         // flush leaves both the files and the in-memory state untouched.
-        const work: Collection = { dir: col.dir, ...(await this.#readDisk(col.dir)) };
+        const { metaCorrupt, ...disk } = await this.#readDisk(col.dir);
+        const work: Collection = { dir: col.dir, ...disk };
         const out = change(work);
         if (out.flush) {
+          if (metaCorrupt) {
+            // Keep the damaged file for inspection; the flush rewrites a good one.
+            await copyFile(
+              path.join(col.dir, "meta.json"),
+              path.join(col.dir, `meta.json.corrupt-${Date.now()}`),
+            ).catch(() => {});
+          }
           await this.#flush(work);
           this.#adopt(projectId, col, work);
         }
