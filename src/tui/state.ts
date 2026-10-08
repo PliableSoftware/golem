@@ -400,7 +400,7 @@ function cycleScope(state: PanelState, control: Control): PanelState {
 /**
  * The scope a write to `control` uses: the panel's current scope when the control
  * allows it, otherwise the control's own first (preferred) scope. This is what
- * keeps a `user`-scoped session from trying to write `user` to the slider, which
+ * keeps a `user`-scoped session from trying to write `user` to the compression dial, which
  * only ever writes local scope.
  */
 export function effectiveScope(state: PanelState, control: Control): string {
