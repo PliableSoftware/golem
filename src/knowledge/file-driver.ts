@@ -39,6 +39,7 @@ import path from "node:path";
 import { finished } from "node:stream/promises";
 import type { Chunk } from "../interfaces/knowledge.js";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
+import { isLockContention, renameWithRetry } from "../shared/win-fs-retry.js";
 import {
   assertEmbedderSpaceMatch,
   cosineSimilarity,
@@ -138,6 +139,10 @@ export interface LockOptions {
   readonly staleMs?: number;
   /** Give up acquiring after this long. Default 60s. */
   readonly waitMs?: number;
+  /** Test seam: platform whose contention rules apply. Defaults to `process.platform`. */
+  readonly platform?: NodeJS.Platform;
+  /** Test seam: the exclusive create. Defaults to `writeFile(..., { flag: "wx" })`. */
+  readonly createExclusive?: (file: string, content: string) => Promise<void>;
 }
 
 /**
@@ -151,6 +156,10 @@ export interface LockOptions {
  *   breaker wins the rename), then retrying the exclusive create. If the renamed
  *   file turns out to be fresh (we raced a new owner), it is put back.
  * - Throws after `waitMs` rather than writing unlocked.
+ * - Contention is EEXIST, and on win32 also EPERM/EACCES/EBUSY (an exclusive
+ *   create on a file another handle holds, or that is pending delete, fails with
+ *   those, not EEXIST). They are retried until the deadline; off win32 they are
+ *   real permission errors and throw.
  *
  * Exported for tests only; not part of the knowledge barrel.
  */
@@ -161,9 +170,12 @@ export async function acquireLock(
   const staleMs = options.staleMs ?? LOCK_STALE_MS;
   const deadline = Date.now() + (options.waitMs ?? LOCK_WAIT_MS);
   const token = `${process.pid}.${randomBytes(12).toString("hex")}`;
+  const platform = options.platform ?? process.platform;
+  const createExclusive =
+    options.createExclusive ?? ((file, content) => writeFile(file, content, { flag: "wx" }));
   for (;;) {
     try {
-      await writeFile(lockPath, `${token}\n`, { flag: "wx" });
+      await createExclusive(lockPath, `${token}\n`);
       const beat = setInterval(
         () => {
           const now = new Date();
@@ -182,7 +194,7 @@ export async function acquireLock(
         }
       };
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (!isLockContention(err, platform)) throw err;
     }
     let retryNow = false;
     try {
@@ -200,7 +212,7 @@ export async function acquireLock(
           retryNow = true;
         } else {
           try {
-            await writeFile(lockPath, `${movedContent}\n`, { flag: "wx" });
+            await createExclusive(lockPath, `${movedContent}\n`);
           } catch {
             process.stderr.write(
               `golem: vector store lock ${lockPath} was displaced while breaking a stale lock; ` +
@@ -441,8 +453,8 @@ export class FileVectorDriver implements DeletableVectorDriver {
     try {
       await writeFile(metaTmp, `${JSON.stringify(meta)}\n`, "utf8");
       await this.#writeRecordsStreamed(tmp, col.records.values());
-      await rename(metaTmp, path.join(col.dir, "meta.json"));
-      await rename(tmp, dest);
+      await renameWithRetry(metaTmp, path.join(col.dir, "meta.json"));
+      await renameWithRetry(tmp, dest);
     } catch (err) {
       await rm(tmp, { force: true });
       await rm(metaTmp, { force: true });
