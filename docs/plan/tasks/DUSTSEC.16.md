@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.16
 title: "Canonical npm name is @pliable/golem — move every consumer off golem-run"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md A1/S1 (USER, 2026-10-08); SUMMARY.md S1; DUST1.1 h8, DUST1.8 h1, DUST1.11 rows 14/74/80"
 gate: "`golem update` checks @pliable/golem and reports the published version (before: 404 on golem-run); install.sh / install.ps1 npm rung installs @pliable/golem; ps detection matches a process started from the new package; `git grep -n golem-run` returns only intentional mentions (history, the deprecation note, the user task). golem verify green by exit code; golem wiki check green."
+depends_on: []
 touches: [src/update/index.ts, src/cli/commands/status-update.ts, src/cli/commands/ps.ts, src/cli/init-vscode.ts, install/install.sh, install/install.ps1, package-lock.json, README.md, CLAUDE.md, docs/golem-spec.md, docs/wiki/concepts/Release Pipeline.md, docs/plan/tasks/R7.5.md]
 created: 2026-10-08
+updated: 2026-10-08T10:26:15.273Z
 ---
 
 ## What this is
@@ -57,3 +59,7 @@ Release Pipeline wiki page, the R7.5 gate. The user claims `golem-run` themselve
 ## Verification bar
 
 `golem verify` green by exit code; `golem wiki check`. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.18
 title: "Second-review follow-ups to DUSTSEC.17: local-layer portal link, token POST redirects, bypass-guard gaps and heredoc false deny, classifier quoting, keygen false refusal"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each finding below has a regression test that fails on the merged code an
 depends_on: [DUSTSEC.17]
 touches: [src/portal, src/hooks/bypass-guard.ts, src/autonomy/classify.ts, src/buzz/identity.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:16.324Z
 ---
 
 ## Findings
@@ -31,3 +32,7 @@ created: 2026-10-08
 ## Out of scope
 
 - Re-opening USER decisions; making the guard a sandbox (it is not, and the skill says so).
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

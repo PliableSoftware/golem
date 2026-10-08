@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.12
 title: "Shim runs no compression (D56(c)) — SHIM_POLICY stops being policyFor(1)"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md C2 (USER, 2026-10-08); spec Decision 56(c); DUST1.1 #5"
 gate: "Probe: a shim build forwards a body that level-1 dedup/compaction would have rewritten, with only redaction applied (before: level-1 rewrites). A secret in a shim request is still redacted. golem verify green by exit code."
+depends_on: []
 touches: [src/cli/proxy-runtime.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:13.108Z
 ---
 
 ## What this is
@@ -38,3 +40,7 @@ created: 2026-10-08
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

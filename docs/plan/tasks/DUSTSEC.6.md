@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.6
 title: "Buzz keygen parser: drop the `g` flag on HEX64_RE so the secret key can never be written as the pubkey"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "SUMMARY.md S6; DUST1.10 D2"
 gate: "For `secret: <S>\\npublic: <P>` (and the reversed order, and positional-only output) the parser returns pubkeyHex = P, secretHex = S (before: pubkeyHex = S). A test asserts the committed manifest written by provisionBuzz never contains the secret. golem verify green by exit code. R14.2 lists this task in depends_on."
+depends_on: []
 touches: [src/buzz/identity.ts, src/buzz/provision.ts, tests/unit/buzz]
 created: 2026-10-08
+updated: 2026-10-08T10:26:10.459Z
 ---
 
 ## What this is
@@ -38,3 +40,7 @@ adds one, so **R14.2 must not ship before this** (its `depends_on` names DUSTSEC
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

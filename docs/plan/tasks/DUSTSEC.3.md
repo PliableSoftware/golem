@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.3
 title: "PreToolUse denies agent Bash that runs `golem off` or sets `bypass_all`; skill says exactly what is enforced"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "A PreToolUse Bash payload running `golem off`, `golem proxy … bypass`, 
 depends_on: [DUSTSEC.2]
 touches: [src/hooks/pre-tool-use.ts, src/autonomy, src/cli/skills/basics.ts, .claude/skills/golem-bypass/SKILL.md, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:08.864Z
 ---
 
 ## What this is
@@ -47,3 +48,7 @@ sets `bypass_all`; reword the skill to say exactly what is enforced.
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

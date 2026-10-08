@@ -1,14 +1,16 @@
 ---
 task: DUST2.1
 title: "Reword the CLAUDE.md hard rule: \"byte-faithful at compression ≤ 1\" → \"lossless and prefix-stable at level ≤ 1\""
-state: queued
+state: done
 owner: agent
 size: S
 discipline: docs
 design: "docs/plan/audit/dust-1/DECISIONS.md C1 (USER, 2026-10-08, approved editing this hard rule); SUMMARY.md contradiction C1; DUST1.1 #6, DUST1.3 #1"
 gate: "CLAUDE.md Hard rules line 36 and the line-6 \"byte-faithful proxying\" phrase carry the new wording, with recorded-shape tests still named as the guard; docs/plan/audit/dust-1/PLAN.md Phase 3 hard-rule list matches. No other file changes. golem wiki check green by exit code."
+depends_on: []
 touches: [CLAUDE.md, docs/plan/audit/dust-1/PLAN.md]
 created: 2026-10-08
+updated: 2026-10-08T10:26:26.895Z
 ---
 
 ## What this is
@@ -40,3 +42,7 @@ tiny task.
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped in PR 225

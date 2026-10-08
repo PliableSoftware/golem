@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.13
 title: "inference.worker_targets is live — take it off RETIRED_SETTINGS, fix the test comment, document it"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md G1 (USER, 2026-10-08); SUMMARY.md X2, Gaps 1.6/r062 + 1.8/r016 (G08); DUST1.6 C1, DUST1.8 #4"
 gate: "A config carrying inference.worker_targets loads with no retired-setting error or warning and routes as the schema describes; the test comment that says it warns is corrected; the setting is documented in the config reference. golem verify green by exit code."
+depends_on: []
 touches: [src/config/migrations.ts, src/config/schema.ts, src/config/loader.ts, tests, docs/wiki/concepts/Persona Registry.md]
 created: 2026-10-08
+updated: 2026-10-08T10:26:13.640Z
 ---
 
 ## What this is
@@ -40,3 +42,7 @@ lists it (since R14.3), and a code comment says it raises.
 ## Verification bar
 
 `golem verify` green by exit code; `golem wiki check` if a wiki page changed. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

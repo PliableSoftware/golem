@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.11
 title: "owner: user binds the worker lane — workerTargetFromPersona refuses owner:user"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md R9 (USER, 2026-10-08); SUMMARY.md S19; DUST1.6 W8, C2; wiki Persona Registry"
 gate: "Probe: a persona (or task) with owner: user is NOT dispatched by the worker lane — workerTargetFromPersona, selectTarget and resolveCoderRoute refuse it with a clear reason (before: dispatched). owner: agent unchanged. golem verify green by exit code."
+depends_on: []
 touches: [src/inference/personas.ts, src/inference/target-dispatcher.ts, src/inference/coder-route.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:12.587Z
 ---
 
 ## What this is
@@ -39,3 +41,7 @@ must refuse owner:user tasks.
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

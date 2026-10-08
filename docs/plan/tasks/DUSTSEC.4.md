@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.4
 title: "Bind the portal access token to its issuer origin — https only, never sent or re-sent to another host"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md P5/S4 (USER, 2026-10-08); SUMMARY.md S4; DUST1.10 D1"
 gate: "Probe: a project file committing team.org_id + team.portal_url: \"https://attacker.example\" with a stored token for the real issuer — `golem team sync`, `golem init` and the team-skills sync send NO Authorization header to attacker.example (before: Bearer token sent). An http:// portal URL is refused. A 401 refresh never re-sends to a host other than the issuer. golem verify green by exit code."
+depends_on: []
 touches: [src/portal/binding.ts, src/portal/client.ts, src/portal/config.ts, src/cli/init.ts, src/cli/commands/team.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:09.385Z
 ---
 
 ## What this is
@@ -51,3 +53,7 @@ help: the vector is the committed project file. Files: `src/portal/{binding,clie
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

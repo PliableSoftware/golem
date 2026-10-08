@@ -9,7 +9,7 @@ updated: 2026-10-08
 
 # DUSTSEC: the Dust Phase 1 security batch
 
-Ships DUSTSEC.1-9 and 11-16 as PRs #213-#219. No task is closed yet: an independent review found follow-ups (see Review), tracked as DUSTSEC.17. DUSTSEC.10 also stays open. The findings came from Dust Phase 1 (`docs/plan/audit/dust-1/SUMMARY.md`); the choices came from the USER decisions in `docs/plan/audit/dust-1/DECISIONS.md`.
+Ships DUSTSEC.1-9 and 11-16 as PRs #213-#219. An independent review found follow-ups (see Review), fixed as DUSTSEC.17 and DUSTSEC.18. DUSTSEC.10 stays open for a USER decision. The findings came from Dust Phase 1 (`docs/plan/audit/dust-1/SUMMARY.md`); the choices came from the USER decisions in `docs/plan/audit/dust-1/DECISIONS.md`.
 
 ## Outcome
 
@@ -30,6 +30,15 @@ An independent `golem-reviewer` pass over the merged diff returned VERDICT: bloc
 - **High:** the Buzz keygen positional fallback still swaps the keys when label lines carry no hex (bech32 lines first).
 - **Medium:** bypass guard misses an Edit that flips only the value, misses common wrappers (`timeout`, `nice`, `sudo -u`, `xargs`), and falsely denies quoted text. An explicit `target` skips the `owner: user` check. `golem acp` never loads plugin redaction rules.
 - **Low:** a quoted write flag hides from the classifier, `git branch --contains` regressed to `unknown`, and the shim exemption makes the new fail-closed warning false.
+
+A second independent review of the DUSTSEC.17 fixes (#221-#224) returned VERDICT: concerns with no High. Original findings B and D were closed, A and C only partly. What remained went into DUSTSEC.18 (#227, #228):
+
+- A committed `.golem/settings.local.json` is tracked by git even when gitignored, so `golem team link` now refuses the local layer too and takes explicit `--portal-url` and `--issuer` flags.
+- The token POST and discovery GET refuse redirects.
+- The bypass guard now catches pipelines into a shell, `env -S`, a shell flag before `-c`, and here-strings, and treats heredoc bodies as data. That removes a false deny which had blocked ordinary file writes, commit messages and this review's own scratchpad.
+- Classifier quoting and the anchored keygen labels.
+
+DUSTSEC.18 itself got no third review; it was verified by `golem verify` and CI. The bypass guard is still not a sandbox: `cat file | sh`, process substitution and a shell invoked through a variable are not caught.
 
 ## Lessons
 

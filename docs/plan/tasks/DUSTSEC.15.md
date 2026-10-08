@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.15
 title: "An unknown default_target always fails closed — single-target included (behaviour change)"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md V2 (USER, 2026-10-08); DUST1.2 C4"
 gate: "Probe: with exactly one target and an unknown default_target / inference.model id, requests are refused (400-class, Golem-attributed) instead of using the top-level upstream with a warning; the multi-target behaviour (route-resolver.ts:270-286) is unchanged. golem verify green by exit code."
+depends_on: []
 touches: [src/providers/gateways.ts, src/cli/route-resolver.ts, src/cli/proxy-runtime.ts, src/cli/targets.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:14.732Z
 ---
 
 ## What this is
@@ -39,3 +41,7 @@ included (behaviour change).
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

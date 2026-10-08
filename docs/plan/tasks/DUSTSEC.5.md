@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.5
 title: "Autonomy classifier: newline-chained commands are never `read`; fix the destructive over-approvals"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "SUMMARY.md S5; DUST1.7 row 19; ADR-0002 ('unknown is never auto-allowed')"
 gate: "classifyAction(\"ls\\nnode -e …rmSync…\") and the \\r variant are not `read` and decideGate does not `allow` them at `assisted` (before: read/allow). `git branch -D main`, `npx biome check --write .` and `git diff --output=<path>` are no longer `read`. New newline/CR test cases exist (there were zero). golem verify green by exit code."
+depends_on: []
 touches: [src/autonomy/classify.ts, tests/unit/autonomy]
 created: 2026-10-08
+updated: 2026-10-08T10:26:09.925Z
 ---
 
 ## What this is
@@ -39,3 +41,7 @@ non-`manual` level — an arbitrary-command bypass of the gate.
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)
