@@ -461,6 +461,47 @@ export async function mergeManifestFiles(
   return { files, paths: keep ? (prev.paths ?? []) : [] };
 }
 
+/**
+ * Record a `golem index <target>` run in the manifest. A target INSIDE the project
+ * merges its files in (see {@link mergeManifestFiles}). A target OUTSIDE it must
+ * not: its keys are relative to itself, so merging them would make the next sync
+ * list them as deleted (erasing what the user ingested) or overwrite a project
+ * file's recorded state on a name collision. An existing manifest is then left
+ * exactly as it was; with none, a bare one (empty file map) is written as before.
+ */
+export async function recordIndexedTarget(
+  projectDir: string,
+  projectId: string,
+  signature: string,
+  target: string,
+  now: string,
+): Promise<void> {
+  const absTarget = path.resolve(target);
+  const isFile = (await stat(absTarget)).isFile();
+  const base = projectBaseDir(projectId, absTarget, isFile);
+  const rel = path.relative(path.resolve(projectId), absTarget);
+  const inside = path.isAbsolute(projectId) && !rel.startsWith("..") && !path.isAbsolute(rel);
+  if (!inside || base !== path.resolve(projectId)) {
+    const existing = await readManifest(collectionDir(knowledgeDir(projectDir), projectId));
+    if (existing === null) await writeManifest(projectDir, projectId, signature, [target], now);
+    return;
+  }
+  const merged = await mergeManifestFiles(
+    projectDir,
+    projectId,
+    signature,
+    await scanFiles(absTarget, base),
+  );
+  await writeManifest(
+    projectDir,
+    projectId,
+    signature,
+    [...new Set([...merged.paths, target])],
+    now,
+    merged.files,
+  );
+}
+
 /** Record the manifest (embedder signature + file states) for a collection. */
 export async function writeManifest(
   projectDir: string,
