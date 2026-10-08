@@ -17,7 +17,6 @@ import type { MemorySearchProvider } from "../compression/memory-search.js";
 import {
   type Chunk,
   DEFAULT_SCOPES,
-  type FederatedSearch,
   type Hit,
   type IngestReport,
   type KnowledgeBase,
@@ -32,6 +31,7 @@ import {
   chunkIdFor,
   type PreparedChunk,
   planIngest,
+  projectBaseDir,
   toPosix,
 } from "./ingest.js";
 
@@ -191,14 +191,19 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
       throw new NotImplementedYetError("file watching", "driver");
     }
 
-    const plan = await planIngest(pathArg, { syntaxAwareChunking: this.#syntaxAwareChunking });
+    const absTarget = path.resolve(pathArg);
+    const targetIsFile = (await stat(absTarget)).isFile();
+    const baseDir = projectBaseDir(projectId, absTarget, targetIsFile);
+    const plan = await planIngest(pathArg, {
+      syntaxAwareChunking: this.#syntaxAwareChunking,
+      baseDir,
+    });
     await this.#driver.openCollection(projectId);
     const chunksIndexed = await this.#embedAndStore(projectId, plan.chunks);
 
     let watching = false;
     if (watch === true) {
-      const absRoot = path.resolve(pathArg);
-      const baseDir = (await stat(absRoot)).isFile() ? path.dirname(absRoot) : absRoot;
+      const absRoot = absTarget;
       const watcher = await watchPath(absRoot, (batch) => {
         // Background maintenance: a failed reindex must never crash the host
         // process — the next change event naturally retries.
@@ -260,7 +265,9 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
     });
     // Clear the touched files' old chunks first (content-based ids would
     // orphan) — one batch call so persisted drivers flush once, not per file.
-    const sourcePaths = new Set(chunks.map((c) => c.sourcePath));
+    // Keyed by the INPUT files, not the new chunks: a file that now yields no
+    // chunks (emptied, or no longer chunkable) must still lose its old vectors.
+    const sourcePaths = new Set(absFiles.map((abs) => toPosix(path.relative(baseDir, abs))));
     await this.#driver.deleteBySourcePaths(projectId, [...sourcePaths]);
     return this.#embedAndStore(projectId, chunks);
   }
@@ -331,9 +338,4 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
     if (stored.length > 0) await this.#driver.upsert(projectId, stored);
     return stored.length;
   }
-}
-
-/** Narrowing helper: expose only the read side (FederatedSearch) when that's all a caller needs. */
-export function asFederatedSearch(kb: KnowledgeBase): FederatedSearch {
-  return kb;
 }

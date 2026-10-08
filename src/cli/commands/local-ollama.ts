@@ -6,7 +6,11 @@ import type { Command } from "commander";
 import { InvalidArgumentError } from "commander";
 import { findProjectDir, loadConfig } from "../../config/index.js";
 import type { SettingsScope } from "../../config/write-setting.js";
-import { embedderSignatureForModel, ensureProjectIndexed, writeManifest } from "../auto-index.js";
+import {
+  embedderSignatureForModel,
+  ensureProjectIndexed,
+  recordIndexedTarget,
+} from "../auto-index.js";
 import { buildKnowledgeStack } from "../build-knowledge.js";
 import { collectDevices, devicesJson, renderDevices } from "../devices.js";
 import { InitError } from "../init.js";
@@ -207,13 +211,13 @@ export default function register(program: Command): void {
           }
           const target = pathArg ?? opts.dir;
           const report = await knowledge.ingest(target, opts.dir, opts.watch);
-          await writeManifest(
+          await recordIndexedTarget(
             opts.dir,
             opts.dir,
             // R10.6: the model that actually embedded these chunks, which is not
             // always the one the detected tier would have chosen.
             embedderSignatureForModel(embedMode, embedModel),
-            [target],
+            target,
             new Date().toISOString(),
           );
           if (opts.json) {

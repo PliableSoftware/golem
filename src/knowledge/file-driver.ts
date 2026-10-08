@@ -21,10 +21,20 @@
  * never crashes.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
 import type { Chunk } from "../interfaces/knowledge.js";
@@ -120,9 +130,103 @@ export async function readCollectionDim(
   }
 }
 
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 60_000;
+
+export interface LockOptions {
+  /** A lock whose mtime is older than this is presumed orphaned. Default 30s. */
+  readonly staleMs?: number;
+  /** Give up acquiring after this long. Default 60s. */
+  readonly waitMs?: number;
+}
+
+/**
+ * Exclusive-create lockfile (`wx`) carrying a unique owner token.
+ *
+ * - Release removes the file only if it still holds OUR token, so a holder whose
+ *   lock was broken never deletes the next owner's.
+ * - A heartbeat refreshes the mtime while held, so a long flush is never mistaken
+ *   for a crashed holder.
+ * - A stale lock is broken by RENAMING it to a unique name (atomic: only one
+ *   breaker wins the rename), then retrying the exclusive create. If the renamed
+ *   file turns out to be fresh (we raced a new owner), it is put back.
+ * - Throws after `waitMs` rather than writing unlocked.
+ *
+ * Exported for tests only; not part of the knowledge barrel.
+ */
+export async function acquireLock(
+  lockPath: string,
+  options: LockOptions = {},
+): Promise<() => Promise<void>> {
+  const staleMs = options.staleMs ?? LOCK_STALE_MS;
+  const deadline = Date.now() + (options.waitMs ?? LOCK_WAIT_MS);
+  const token = `${process.pid}.${randomBytes(12).toString("hex")}`;
+  for (;;) {
+    try {
+      await writeFile(lockPath, `${token}\n`, { flag: "wx" });
+      const beat = setInterval(
+        () => {
+          const now = new Date();
+          void utimes(lockPath, now, now).catch(() => {});
+        },
+        Math.max(5, Math.floor(staleMs / 3)),
+      );
+      beat.unref();
+      return async () => {
+        clearInterval(beat);
+        try {
+          if ((await readFile(lockPath, "utf8")).trim() === token)
+            await rm(lockPath, { force: true });
+        } catch {
+          // already gone — nothing of ours to release
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    let retryNow = false;
+    try {
+      const st = await stat(lockPath);
+      if (Date.now() - st.mtimeMs > staleMs) {
+        const seen = (await readFile(lockPath, "utf8")).trim();
+        const moved = `${lockPath}.stale.${token}`;
+        await rename(lockPath, moved);
+        // Double-check that what we moved is the very lock we judged stale (same
+        // token). If a new owner slipped in between the stat and the rename we
+        // just took THEIR live lock: put it back, and never proceed on it.
+        const movedContent = (await readFile(moved, "utf8").catch(() => "")).trim();
+        if (movedContent === seen) {
+          await rm(moved, { force: true });
+          retryNow = true;
+        } else {
+          try {
+            await writeFile(lockPath, `${movedContent}\n`, { flag: "wx" });
+          } catch {
+            process.stderr.write(
+              `golem: vector store lock ${lockPath} was displaced while breaking a stale lock; ` +
+                "a concurrent writer may overlap\n",
+            );
+          }
+          await rm(moved, { force: true });
+        }
+      }
+    } catch {
+      // released/broken between the create and the stat, or a transient fs error:
+      // fall through to the deadline check and the sleep either way.
+    }
+    if (retryNow) continue;
+    if (Date.now() > deadline) throw new Error(`vector store lock timeout: ${lockPath}`);
+    await new Promise((r) => setTimeout(r, 15 + Math.floor(Math.random() * 25)));
+  }
+}
+
+function isEnoent(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
 interface Collection {
   readonly dir: string;
-  readonly records: Map<string, StoredChunk>;
+  records: Map<string, StoredChunk>;
   /** Embedding dimension seen so far (0 until the first non-empty vector). */
   dim: number;
 }
@@ -140,9 +244,14 @@ export class FileVectorDriver implements DeletableVectorDriver {
   readonly #collections = new Map<string, Collection>();
   /** chunkId -> projectId, for global getChunk over loaded collections. */
   readonly #chunkIndex = new Map<string, string>();
+  /** collection dir -> tail of the in-process mutation queue. */
+  readonly #queues = new Map<string, Promise<void>>();
 
-  constructor(baseDir: string) {
+  readonly #lock: LockOptions;
+
+  constructor(baseDir: string, lock: LockOptions = {}) {
     this.#baseDir = baseDir;
+    this.#lock = lock;
   }
 
   #dirFor(projectId: string): string {
@@ -154,81 +263,191 @@ export class FileVectorDriver implements DeletableVectorDriver {
     const dir = this.#dirFor(projectId);
     const col: Collection = { dir, records: new Map(), dim: 0 };
     try {
-      const metaRaw = await readFile(path.join(dir, "meta.json"), "utf8");
-      const meta = JSON.parse(metaRaw) as Partial<PersistedMeta>;
-      if (meta.schemaVersion === KNOWLEDGE_SCHEMA_VERSION) {
-        col.dim = typeof meta.dim === "number" ? meta.dim : 0;
-        await this.#loadChunks(dir, projectId, col);
-      }
-      // Version mismatch → leave the collection empty; the next upsert overwrites
-      // the old files (re-index), so stale-schema data is never served.
+      const { metaCorrupt: _c, ...disk } = await this.#readDisk(dir);
+      this.#adopt(projectId, col, disk);
     } catch {
-      // No existing collection on disk — start empty.
+      // Unreadable right now: serve empty for reads. Mutations re-read strictly
+      // and refuse to write rather than overwrite what they could not read.
     }
     this.#collections.set(projectId, col);
   }
 
-  async #loadChunks(dir: string, projectId: string, col: Collection): Promise<void> {
+  /** Swap a freshly read state into `col` in one assignment and re-point the id index. */
+  #adopt(
+    projectId: string,
+    col: Collection,
+    next: { records: Map<string, StoredChunk>; dim: number },
+  ): void {
+    for (const id of col.records.keys()) this.#chunkIndex.delete(id);
+    col.records = next.records;
+    col.dim = next.dim;
+    for (const id of next.records.keys()) this.#chunkIndex.set(id, projectId);
+  }
+
+  /**
+   * Read a collection's state from disk. Only a missing file (ENOENT) or a stale
+   * schema version means "empty"; any other failure (EBUSY, EPERM, EISDIR, a meta
+   * parse error ...) THROWS, so a caller about to rewrite the store never mistakes
+   * "could not read" for "nothing there" and wipes it.
+   */
+  async #readDisk(
+    dir: string,
+  ): Promise<{ records: Map<string, StoredChunk>; dim: number; metaCorrupt: boolean }> {
+    const records = new Map<string, StoredChunk>();
+    let metaRaw: string | null = null;
+    try {
+      metaRaw = await readFile(path.join(dir, "meta.json"), "utf8");
+    } catch (err) {
+      if (!isEnoent(err)) throw err;
+    }
+    // A torn, zero-length or non-object meta.json is a damaged INDEX FILE, not a
+    // damaged index: the chunks are still good. Recover dim from them instead of
+    // throwing on every mutation (the store would be stuck until deleted by hand).
+    let metaCorrupt = false;
+    let dim = 0;
+    if (metaRaw !== null) {
+      let meta: Partial<PersistedMeta> | null = null;
+      try {
+        const parsed: unknown = JSON.parse(metaRaw);
+        if (typeof parsed === "object" && parsed !== null) meta = parsed as Partial<PersistedMeta>;
+      } catch {
+        // falls through to metaCorrupt
+      }
+      if (meta === null) metaCorrupt = true;
+      else {
+        if (meta.schemaVersion !== KNOWLEDGE_SCHEMA_VERSION)
+          return { records, dim: 0, metaCorrupt };
+        dim = typeof meta.dim === "number" ? meta.dim : 0;
+      }
+    }
     let raw: string;
     try {
       raw = await readFile(path.join(dir, "chunks.jsonl"), "utf8");
-    } catch {
-      return; // meta without chunks — treat as empty
+    } catch (err) {
+      if (isEnoent(err)) return { records, dim, metaCorrupt }; // meta without chunks — empty
+      throw err;
     }
+    if (metaRaw === null && raw.trim() === "") return { records, dim: 0, metaCorrupt };
     for (const line of raw.split("\n")) {
       if (line.trim() === "") continue;
       try {
         const rec = JSON.parse(line) as StoredChunk;
-        if (rec.chunk?.chunkId !== undefined && Array.isArray(rec.vector)) {
-          col.records.set(rec.chunk.chunkId, rec);
-          this.#chunkIndex.set(rec.chunk.chunkId, projectId);
+        if (rec.chunk?.chunkId === undefined || !Array.isArray(rec.vector)) continue;
+        if (metaCorrupt || metaRaw === null) {
+          // No trustworthy meta: adopt the first real vector width, drop nothing else.
+          if (dim === 0 && rec.vector.length > 0) dim = rec.vector.length;
+        } else if (dim > 0 && rec.vector.length > 0 && rec.vector.length !== dim) {
+          // A crash between the meta and chunks renames can leave records from a
+          // different embedder space than meta.json records; those are unqueryable.
+          continue;
         }
+        records.set(rec.chunk.chunkId, rec);
       } catch {
         // Skip a corrupt line (e.g. a torn final write); the rest still loads.
       }
     }
+    return { records, dim, metaCorrupt: metaCorrupt };
+  }
+
+  /**
+   * Cross-process-safe read-modify-write (DUST3.7 D6). Every session runs its own
+   * driver over the same `chunks.jsonl`; a load-once + whole-file rewrite let one
+   * process erase another's chunks. So each mutation takes an exclusive-create
+   * lockfile, RELOADS from disk, applies `change`, and writes via a uniquely named
+   * temp + rename. Returns whatever `change` returns; it reports whether to flush.
+   */
+  async #mutate<T>(
+    projectId: string,
+    change: (col: Collection) => { flush: boolean; result: T },
+  ): Promise<T> {
+    await this.openCollection(projectId);
+    const col = this.#collections.get(projectId);
+    if (col === undefined) throw new Error("collection missing after open");
+    const prev = this.#queues.get(col.dir) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      await mkdir(col.dir, { recursive: true });
+      const release = await acquireLock(path.join(col.dir, "chunks.lock"), this.#lock);
+      try {
+        // Work on a detached copy of what is on disk NOW; readers keep seeing the
+        // old state until the finished copy is swapped in, and a failed read or
+        // flush leaves both the files and the in-memory state untouched.
+        const { metaCorrupt, ...disk } = await this.#readDisk(col.dir);
+        const work: Collection = { dir: col.dir, ...disk };
+        const out = change(work);
+        if (out.flush) {
+          if (metaCorrupt) {
+            // Keep the damaged file for inspection; the flush rewrites a good one.
+            await copyFile(
+              path.join(col.dir, "meta.json"),
+              path.join(col.dir, `meta.json.corrupt-${Date.now()}`),
+            ).catch(() => {});
+          }
+          await this.#flush(work);
+          this.#adopt(projectId, col, work);
+        }
+        return out.result;
+      } finally {
+        await release();
+      }
+    });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#queues.set(col.dir, tail);
+    return run;
   }
 
   async upsert(projectId: string, records: readonly StoredChunk[]): Promise<void> {
-    await this.openCollection(projectId);
-    const col = this.#collections.get(projectId);
-    if (col === undefined) return; // unreachable: openCollection just set it
-    // Embedder-space change (verification-notes §69 / PRE_R6_BATCH LE5c): if the
-    // incoming vectors have a different dimension than the persisted collection,
-    // the existing chunks were embedded by a different model and live in an
-    // incompatible space — a mixed-dim collection is unqueryable
-    // (`assertEmbedderSpaceMatch` rejects every query). `golem index` re-ingests
-    // without clearing, so a lexical→semantic reindex (e.g. after `ollama pull
-    // bge-m3`) would otherwise strand the old-dim chunks under the new signature.
-    // Reset the collection to the new space rather than corrupt it.
-    const incomingDim = records.find((r) => r.vector.length > 0)?.vector.length ?? 0;
-    if (incomingDim > 0 && col.dim > 0 && incomingDim !== col.dim) {
-      for (const id of col.records.keys()) this.#chunkIndex.delete(id);
-      col.records.clear();
-      col.dim = incomingDim;
-    }
-    for (const rec of records) {
-      col.records.set(rec.chunk.chunkId, rec);
-      this.#chunkIndex.set(rec.chunk.chunkId, projectId);
-      if (col.dim === 0 && rec.vector.length > 0) col.dim = rec.vector.length;
-    }
-    await this.#flush(col);
+    await this.#mutate(projectId, (col) => {
+      // Embedder-space change (verification-notes §69 / PRE_R6_BATCH LE5c): if the
+      // incoming vectors have a different dimension than the persisted collection,
+      // the existing chunks were embedded by a different model and live in an
+      // incompatible space — a mixed-dim collection is unqueryable
+      // (`assertEmbedderSpaceMatch` rejects every query). `golem index` re-ingests
+      // without clearing, so a lexical→semantic reindex (e.g. after `ollama pull
+      // bge-m3`) would otherwise strand the old-dim chunks under the new signature.
+      // Reset the collection to the new space rather than corrupt it.
+      const incomingDim = records.find((r) => r.vector.length > 0)?.vector.length ?? 0;
+      if (incomingDim > 0 && col.dim > 0 && incomingDim !== col.dim) {
+        col.records.clear();
+        col.dim = incomingDim;
+      }
+      for (const rec of records) {
+        col.records.set(rec.chunk.chunkId, rec);
+        if (col.dim === 0 && rec.vector.length > 0) col.dim = rec.vector.length;
+      }
+      return { flush: true, result: undefined };
+    });
   }
 
   async #flush(col: Collection): Promise<void> {
     await mkdir(col.dir, { recursive: true });
-    // Atomic replace: stream records to a temp file then rename over the live
-    // one so a crash mid-write never leaves a half-truncated collection.
-    const tmp = path.join(col.dir, "chunks.jsonl.tmp");
-    const dest = path.join(col.dir, "chunks.jsonl");
-    await this.#writeRecordsStreamed(tmp, col.records.values());
-    await rename(tmp, dest);
+    // Atomic replace: stream records to a uniquely named temp file then rename
+    // over the live one so a crash mid-write never leaves a half-truncated
+    // collection and two writers never share a temp.
+    const suffix = `${process.pid}.${randomBytes(6).toString("hex")}`;
+    // meta.json FIRST: a crash between the two renames then leaves the new dim
+    // with old-dim chunks (dropped on load by the dim check) rather than new-dim
+    // chunks under the old dim (which the next upsert would clear as a "change").
     const meta: PersistedMeta = {
       schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
       dim: col.dim,
       count: col.records.size,
     };
-    await writeFile(path.join(col.dir, "meta.json"), `${JSON.stringify(meta)}\n`, "utf8");
+    const metaTmp = path.join(col.dir, `meta.json.${suffix}.tmp`);
+    const tmp = path.join(col.dir, `chunks.jsonl.${suffix}.tmp`);
+    const dest = path.join(col.dir, "chunks.jsonl");
+    try {
+      await writeFile(metaTmp, `${JSON.stringify(meta)}\n`, "utf8");
+      await this.#writeRecordsStreamed(tmp, col.records.values());
+      await rename(metaTmp, path.join(col.dir, "meta.json"));
+      await rename(tmp, dest);
+    } catch (err) {
+      await rm(tmp, { force: true });
+      await rm(metaTmp, { force: true });
+      throw err;
+    }
   }
 
   /**
@@ -278,8 +497,51 @@ export class FileVectorDriver implements DeletableVectorDriver {
 
   async getChunk(chunkId: string): Promise<Chunk | null> {
     const projectId = this.#chunkIndex.get(chunkId);
-    if (projectId === undefined) return null;
-    return this.#collections.get(projectId)?.records.get(chunkId)?.chunk ?? null;
+    if (projectId !== undefined) {
+      const hit = this.#collections.get(projectId)?.records.get(chunkId)?.chunk;
+      if (hit !== undefined) return hit;
+    }
+    return this.#openOwnerOf(chunkId);
+  }
+
+  /**
+   * D7: `getChunk` is global but only loaded collections are indexed, so a fresh
+   * process (the `fetch` tool) missed every chunk until something opened its
+   * collection. On a miss, find the on-disk collection that holds the id (each
+   * record carries its `projectId`), open it, and answer from it.
+   */
+  async #openOwnerOf(chunkId: string): Promise<Chunk | null> {
+    const loaded = new Set([...this.#collections.values()].map((c) => c.dir));
+    let dirs: string[];
+    try {
+      dirs = await readdir(this.#baseDir);
+    } catch {
+      return null;
+    }
+    for (const name of dirs) {
+      const dir = path.join(this.#baseDir, name);
+      if (loaded.has(dir)) continue;
+      let raw: string;
+      try {
+        raw = await readFile(path.join(dir, "chunks.jsonl"), "utf8");
+      } catch {
+        continue;
+      }
+      if (!raw.includes(chunkId)) continue;
+      for (const line of raw.split("\n")) {
+        if (!line.includes(chunkId)) continue;
+        try {
+          const rec = JSON.parse(line) as StoredChunk;
+          if (rec.chunk?.chunkId !== chunkId) continue;
+          if (collectionDir(this.#baseDir, rec.chunk.projectId) !== dir) continue;
+          await this.openCollection(rec.chunk.projectId);
+          return this.#collections.get(rec.chunk.projectId)?.records.get(chunkId)?.chunk ?? null;
+        } catch {
+          // corrupt line — keep scanning
+        }
+      }
+    }
+    return null;
   }
 
   /** Remove all of one source file's chunks (for incremental re-index). Flushes if any changed. */
@@ -293,20 +555,19 @@ export class FileVectorDriver implements DeletableVectorDriver {
    * run, so per-path flushing is O(files × collection size) in write I/O).
    */
   async deleteBySourcePaths(projectId: string, sourcePaths: readonly string[]): Promise<number> {
-    await this.openCollection(projectId);
-    const col = this.#collections.get(projectId);
-    if (col === undefined || sourcePaths.length === 0) return 0;
+    if (sourcePaths.length === 0) return 0;
     const targets = new Set(sourcePaths);
-    let removed = 0;
-    for (const [id, rec] of col.records) {
-      if (rec.chunk.sourcePath !== undefined && targets.has(rec.chunk.sourcePath)) {
-        col.records.delete(id);
-        this.#chunkIndex.delete(id);
-        removed += 1;
+    return this.#mutate(projectId, (col) => {
+      let removed = 0;
+      for (const [id, rec] of col.records) {
+        if (rec.chunk.sourcePath !== undefined && targets.has(rec.chunk.sourcePath)) {
+          col.records.delete(id);
+          this.#chunkIndex.delete(id);
+          removed += 1;
+        }
       }
-    }
-    if (removed > 0) await this.#flush(col);
-    return removed;
+      return { flush: removed > 0, result: removed };
+    });
   }
 
   async close(): Promise<void> {
