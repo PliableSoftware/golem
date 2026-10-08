@@ -105,18 +105,19 @@ export function buildUpstreamTransport(input: UpstreamTransportInput): UpstreamT
   const geminiKey =
     isGeminiProvider(provider) && apiKey !== undefined && apiKey !== "" ? apiKey : undefined;
   // S21: the Gemini credential is applied at send time as a header, so it never
-  // sits in a path on the route. Client Anthropic credentials are stripped, as
-  // every other auth mapper does, so they are not forwarded to Google either.
-  const mapUpstreamHeaders =
-    geminiKey !== undefined
-      ? (headers: Record<string, string | string[]>): Record<string, string | string[]> => {
-          const out = { ...headers };
-          delete out["x-api-key"];
-          delete out.authorization;
-          out["x-goog-api-key"] = geminiKey;
-          return out;
-        }
-      : makeAuthMapper(authScheme, apiKey);
+  // sits in a path on the route. A Gemini route ALWAYS strips the client's
+  // Anthropic credentials (`x-api-key`, `authorization`), key or no key: with no
+  // key it sends no auth and lets the upstream 401, rather than forwarding the
+  // client's Anthropic credential to Google.
+  const mapUpstreamHeaders = isGeminiProvider(provider)
+    ? (headers: Record<string, string | string[]>): Record<string, string | string[]> => {
+        const out = { ...headers };
+        delete out["x-api-key"];
+        delete out.authorization;
+        if (geminiKey !== undefined) out["x-goog-api-key"] = geminiKey;
+        return out;
+      }
+    : makeAuthMapper(authScheme, apiKey);
   const translateFallback = { id: "msg_golem_translated", model: model ?? provider };
   const modelOpt = model !== undefined ? { model } : {};
 

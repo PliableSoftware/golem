@@ -106,3 +106,40 @@ describe("model extraction (bodyModelOf)", () => {
     expect(pick('{"model":"golem/nope"}')).toBe("err:400");
   });
 });
+
+describe("gemini route with no stored key", () => {
+  it("never forwards the client's Anthropic credentials", () => {
+    const oauth = ["Bearer", "oauth", String(Date.now())].join(" ");
+    const apiKey = ["sk", "client", String(Date.now())].join("-");
+    const resolver = createRouteResolver({
+      settings: {
+        upstream_provider: "anthropic",
+        upstream_base_url: "https://api.anthropic.com",
+        upstream_auth_scheme: "inherit",
+        map_reasoning_to_thinking: true,
+        gateways: [
+          {
+            id: "g",
+            provider: "gemini",
+            base_url: "https://generativelanguage.googleapis.com/v1beta",
+            models: [{ name: "gemini-2.0-flash" }],
+          },
+        ],
+        targets: [{ id: "g", gateway: "g", model: { name: "gemini-2.0-flash" } }],
+        model: "g",
+      },
+      env: {},
+    });
+    const out = resolver({ method: "POST", url: "/v1/messages", headers: {}, body: null });
+    if (!out.ok) throw new Error("expected a route");
+    const sent = out.route.mapUpstreamHeaders?.({
+      "x-api-key": apiKey,
+      authorization: oauth,
+      "anthropic-version": "2023-06-01",
+    });
+    expect(sent).toBeDefined();
+    expect(sent?.["x-api-key"]).toBeUndefined();
+    expect(sent?.authorization).toBeUndefined();
+    expect(sent?.["x-goog-api-key"]).toBeUndefined();
+  });
+});
