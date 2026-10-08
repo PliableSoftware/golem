@@ -228,3 +228,43 @@ therefore no ADR needed at all. This is strictly safer and strictly less capable
 (no `validate`, so no Luhn-style checks). It is the right default for most users
 and is a natural follow-up; it does not remove the need for this ADR, because
 pipeline stages and MCP tools are code by definition.
+
+## Amendment (2026-10-08, DUST2.3)
+
+**Amended 2026-10-08 (DUST2.3; DECISIONS.md R5 and R6).** The text above is
+unchanged and is history. Two corrections.
+
+**"Structurally" is reworded (R5, code by DUSTSEC.7).** Section 2 and the threat
+model say a plugin cannot weaken built-in redaction "structurally", and that
+`REDACTION_RULES` "is never passed out". Read both as: **cannot, via the API.
+A plugin has process authority anyway.** The API offers no remove, replace or
+reorder, but a plugin runs in Golem's own process, and until DUSTSEC.7 the
+exported `REDACTION_RULES` was a mutable table that a plugin could edit in
+place (including `re.compile(...)` on a rule's pattern). It is now a frozen copy
+with its own `RegExp` objects, while the table redaction reads is module-private
+and frozen (`src/pipeline/redaction-rules.ts:239-252`). That closes the accident
+and the API path. It is not a boundary against hostile plugin code, which this
+ADR already says does not exist. The threat-model rows "Yes, structurally"
+for weakening and reordering describe API shape only.
+
+**Plugin rules apply on every redaction path (R6, code by DUSTSEC.8).** The ADR
+names the proxy and the MCP server as the two consumers of a loaded plugin set.
+That left the other redaction callers running built-ins only, so a secret format
+a plugin taught Golem to redact was forwarded or stored raw there. The paths
+now covered, all through one loader, `ensurePluginRedactionRules(projectDir)`
+(`src/plugins/redaction-init.ts`, which calls `initPlugins`):
+
+- the proxy and `golem mcp serve` (`src/cli/commands/proxy.ts:299-302`,
+  `src/cli/commands/mcp-serve.ts:259-261`), as before;
+- hooks: PostToolUse (`src/hooks/post-tool-use.ts`), web fetch
+  (`src/hooks/web-fetch.ts`), and session state (`src/hooks/session-state.ts`);
+- the vibe store (`src/vibe/store.ts`);
+- the join queue (`src/session/join-queue.ts`);
+- notes (`src/cli/notes.ts`);
+- `golem acp` loads plugin rules before dispatch (DUSTSEC.17, `357db99`).
+
+Built-ins still run first. A plugin load failure is reported on stderr and leaves
+the built-ins in force. UNVERIFIED: that no further redaction caller exists
+beyond this list. The change (`69179f2`) and its test
+(`tests/unit/plugins/redaction-all-paths.test.ts`) name these paths; the list was
+not re-derived by a repository-wide search for redaction call sites.

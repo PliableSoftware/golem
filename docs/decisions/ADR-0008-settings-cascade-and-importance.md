@@ -306,3 +306,30 @@ The wire format is unchanged; three meanings change.
    and `env` only changes rank relative to importance, which did not previously
    exist. The one live change is the team origin's position, and no client ships
    a team layer yet.
+
+## Amendment (2026-10-08, DUST2.3)
+
+**Amended 2026-10-08 (DUST2.3; DECISIONS.md G2, USER decision; SUMMARY S20).** The
+text above is unchanged and is history.
+
+**The failure rule is now true of an invalid team value.** "The failure rule"
+above says nothing about a team link may stop the proxy from starting. Until
+DUSTSEC.14 that held for an unreachable portal but not for a reachable one that
+served a bad value: the loader threw `ConfigError` on any invalid leaf, team
+layer included, and the proxy refused to start. Code now follows the ADR
+(`b30ca87`): an invalid team value logs one warning, `team layer SKIPPED: nothing
+from it applies, and the proxy still starts`, and the **whole** team layer is
+skipped, not just the bad key. The layer is dry-run through both bands against a
+scratch copy of the tree first, so a throw cannot leave a half-applied layer
+(`buildTeamOrigin`, `src/config/loader.ts:335`, called at `:262`). Only
+`ConfigError` is swallowed. An invalid value in any other origin still throws.
+
+Skipping cannot loosen redaction: the team origin is remote, so it can only add
+to the floor (`REMOTE_DENIED_SETTINGS`), and the built-in rules are not a
+setting.
+
+Open, not decided here (G3): where enforced team policy must apply. Per the
+DUST1 audit (UNVERIFIED, not re-checked in this pass), `golem
+status` loads the team origin, while `config`, the TUI, VS Code, hooks, MCP and
+the hot-reload do not. This ADR's provenance and portal sections do not settle
+it, and no amendment is made for it.
