@@ -77,13 +77,13 @@ export {
   chunkIdFor,
   MAX_FILE_BYTES,
   planIngest,
+  projectBaseDir,
   SKIP_DIRS,
   scanFiles,
   toPosix,
 } from "./ingest.js";
 export type { EmbedFn, IncrementalIngest, KnowledgeBaseOptions } from "./knowledge-base.js";
 export {
-  asFederatedSearch,
   GolemKnowledgeBase,
   isMemoryChunkId,
   NotImplementedYetError,

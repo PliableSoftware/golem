@@ -29,6 +29,30 @@ export interface IngestPlan {
 export interface IngestOptions {
   /** R3.3: try `web-tree-sitter` syntax-aware chunking for TS/JS before the heuristic. */
   readonly syntaxAwareChunking?: boolean;
+  /**
+   * Directory `sourcePath` is made relative to. Defaults to the ingest target
+   * (its parent for a file). Pass the PROJECT root so a sub-path ingest names
+   * files the way a full index does and cannot duplicate them (DUST3.7 D5).
+   */
+  readonly baseDir?: string;
+}
+
+/**
+ * The directory source paths are relative to for an ingest of `absTarget`: the
+ * project root when `projectId` is an absolute path containing the target, else
+ * the target itself (its parent for a file).
+ */
+export function projectBaseDir(
+  projectId: string,
+  absTarget: string,
+  targetIsFile: boolean,
+): string {
+  const own = targetIsFile ? path.dirname(absTarget) : absTarget;
+  if (!path.isAbsolute(projectId)) return own;
+  const root = path.resolve(projectId);
+  const rel = path.relative(root, absTarget);
+  if (rel === "") return own;
+  return rel.startsWith("..") || path.isAbsolute(rel) ? own : root;
 }
 
 /** Directories never walked (vendored, build output, VCS, Golem state). */
@@ -141,7 +165,7 @@ export async function planIngest(root: string, options: IngestOptions = {}): Pro
   const absRoot = path.resolve(root);
   const { seen, skipped } = await collectFiles(absRoot);
   const rootIsFile = (await stat(absRoot)).isFile();
-  const baseDir = rootIsFile ? path.dirname(absRoot) : absRoot;
+  const baseDir = options.baseDir ?? (rootIsFile ? path.dirname(absRoot) : absRoot);
 
   const chunks: PreparedChunk[] = [];
   let filesSkipped = skipped;
@@ -185,11 +209,11 @@ export interface FileState {
  * traversal `planIngest` uses, but returning file identity instead of chunks, so
  * the auto-index can detect what changed since last time.
  */
-export async function scanFiles(root: string): Promise<FileState[]> {
+export async function scanFiles(root: string, baseDirOverride?: string): Promise<FileState[]> {
   const absRoot = path.resolve(root);
   const { seen } = await collectFiles(absRoot);
   const rootIsFile = (await stat(absRoot)).isFile();
-  const baseDir = rootIsFile ? path.dirname(absRoot) : absRoot;
+  const baseDir = baseDirOverride ?? (rootIsFile ? path.dirname(absRoot) : absRoot);
   const out: FileState[] = [];
   for (const abs of seen) {
     try {
