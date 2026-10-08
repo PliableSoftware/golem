@@ -137,6 +137,48 @@ function safeValidate(
   };
 }
 
+/** Distinct `validate` failure messages kept per rule; the rest only bump a count. */
+const MAX_DISTINCT_VALIDATE_PROBLEMS = 10;
+
+interface ValidateProblemLedger {
+  /** message -> index into `problems` */
+  readonly byMessage: Map<string, number>;
+  /** index of the most recently pushed problem for this rule */
+  last: number;
+}
+
+/**
+ * `validate` runs on every candidate match for the life of the process, so a
+ * throwing one would otherwise push a problem per call. Record each distinct
+ * message once with a count, and cap the distinct messages per rule (a message
+ * that embeds the candidate text is otherwise unbounded).
+ */
+function recordValidateProblem(
+  problems: PluginProblem[],
+  seen: Map<string, ValidateProblemLedger>,
+  subject: string,
+  ruleId: string,
+  reason: string,
+): void {
+  let ledger = seen.get(ruleId);
+  if (ledger === undefined) {
+    ledger = { byMessage: new Map(), last: -1 };
+    seen.set(ruleId, ledger);
+  }
+  let index = ledger.byMessage.get(reason);
+  if (index === undefined) {
+    if (ledger.byMessage.size >= MAX_DISTINCT_VALIDATE_PROBLEMS) {
+      index = ledger.last; // fold further distinct messages into the latest entry
+    } else {
+      index = problems.push({ subject, reason, count: 0 }) - 1;
+      ledger.byMessage.set(reason, index);
+      ledger.last = index;
+    }
+  }
+  const existing = problems[index];
+  if (existing !== undefined) problems[index] = { ...existing, count: (existing.count ?? 0) + 1 };
+}
+
 /**
  * Load every specifier. Never throws; the result carries what worked and what
  * did not.
@@ -204,6 +246,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
     const pendingStages: PluginPipelineStage[] = [];
     const pendingTools: PluginMcpTool[] = [];
     const ruleIds = new Set<string>();
+    const validateSeen = new Map<string, ValidateProblemLedger>();
     const stageNames = new Set<string>();
 
     const api: GolemPluginApi = {
@@ -221,6 +264,13 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
           // first occurrence would be replaced, which leaks the rest.
           if (!rule.pattern.flags.includes("g")) {
             return `rule "${rule.id}": pattern must carry the \`g\` flag`;
+          }
+          // A pattern that matches "" would put a placeholder at every position
+          // of every string. Refuse it loudly rather than drop it silently. (A
+          // context-dependent zero-width match, e.g. a lookahead, is not visible
+          // to this probe; `applyRule` skips empty matches as a second line.)
+          if (new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "")).test("")) {
+            return `rule "${rule.id}": pattern matches the empty string, which would insert a placeholder at every position; make it require at least one character`;
           }
           if (rule.group !== undefined && (!Number.isInteger(rule.group) || rule.group < 1)) {
             return `rule "${rule.id}": group must be a positive integer`;
@@ -248,10 +298,13 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
           ...(rule.validate !== undefined
             ? {
                 validate: safeValidate(rule.validate, (message) => {
-                  problems.push({
-                    subject: plugin.name,
-                    reason: `rule "${rule.id}" validate threw (treated as not-a-secret): ${message}`,
-                  });
+                  recordValidateProblem(
+                    problems,
+                    validateSeen,
+                    plugin.name,
+                    rule.id,
+                    `rule "${rule.id}" validate threw (treated as not-a-secret): ${message}`,
+                  );
                 }),
               }
             : {}),

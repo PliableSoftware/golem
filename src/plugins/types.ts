@@ -144,6 +144,11 @@ export interface PluginProblem {
   /** The specifier at fault, or the plugin name for a per-registration problem. */
   readonly subject: string;
   readonly reason: string;
+  /**
+   * How many times this exact problem occurred, when it can repeat at runtime
+   * (a throwing `validate`). Absent means once.
+   */
+  readonly count?: number;
 }
 
 /** The whole outcome of a load pass. Every field is safe to ignore. */

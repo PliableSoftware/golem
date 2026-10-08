@@ -66,6 +66,16 @@ describe("registerExtraRedactionRules — a plugin can only add", () => {
     expect(activeRedactionRules()).toEqual(REDACTION_RULES);
   });
 
+  it("never inserts a placeholder for an EMPTY match, however the rule got registered", () => {
+    registerExtraRedactionRules([{ id: "acme/empty", description: "d", pattern: /x*/g }]);
+    // `x*` matches "" at every position of "abc"; none of those is a secret.
+    expect(redactStandaloneText("abc def")).toBe("abc def");
+    // Context-dependent zero-width matches are not caught by a load-time probe.
+    resetExtraRedactionRulesForTests();
+    registerExtraRedactionRules([{ id: "acme/look", description: "d", pattern: /(?=d)/g }]);
+    expect(redactStandaloneText("abc def")).toBe("abc def");
+  });
+
   it("drops a rule whose id is not namespaced — that is what stops impersonation", () => {
     const outcome = registerExtraRedactionRules([
       { id: "unnamespaced", description: "d", pattern: /x/g },

@@ -219,6 +219,59 @@ describe("loadPlugins — a plugin may only ADD", () => {
     expect(loaded.problems.some((p) => p.reason.includes("validate threw"))).toBe(true);
   });
 
+  it("records a repeatedly-throwing validator ONCE with a count, not once per call", async () => {
+    const loaded = await loadFake({
+      acme: plugin("acme", (api) => {
+        api.addRedactionRule({
+          id: "throws",
+          description: "d",
+          pattern: /ACME-\d+/g,
+          validate: () => {
+            throw new Error("validator exploded");
+          },
+        });
+      }),
+    });
+    const validate = loaded.redactionRules[0]?.validate;
+    for (let i = 0; i < 500; i++) validate?.("ACME-1");
+    const thrown = loaded.problems.filter((p) => p.reason.includes("validate threw"));
+    expect(thrown).toHaveLength(1);
+    expect(thrown[0]?.count).toBe(500);
+  });
+
+  it("bounds the problems a validator whose message varies can accumulate", async () => {
+    const loaded = await loadFake({
+      acme: plugin("acme", (api) => {
+        api.addRedactionRule({
+          id: "varies",
+          description: "d",
+          pattern: /ACME-\d+/g,
+          validate: (target: string) => {
+            throw new Error(`bad ${target}`);
+          },
+        });
+      }),
+    });
+    const validate = loaded.redactionRules[0]?.validate;
+    for (let i = 0; i < 500; i++) validate?.(`ACME-${i}`);
+    expect(loaded.problems.length).toBeLessThanOrEqual(20);
+  });
+
+  it("refuses a pattern that matches the empty string, with a message that says why", async () => {
+    const loaded = await loadFake({
+      acme: plugin("acme", (api) => {
+        api.addRedactionRule({ id: "star", description: "d", pattern: /x*/g });
+        api.addRedactionRule({ id: "opt", description: "d", pattern: /(?:ACME-\d+)?/g });
+        api.addRedactionRule({ id: "ok", description: "d", pattern: /ACME-\d+/g });
+      }),
+    });
+    expect(loaded.redactionRules.map((r) => r.id)).toEqual(["acme/ok"]);
+    const reasons = loaded.problems.map((p) => p.reason);
+    expect(reasons).toHaveLength(2);
+    for (const reason of reasons) expect(reason).toMatch(/empty string/);
+    expect(reasons[0]).toContain('"star"');
+  });
+
   it("coerces a non-boolean validator result to false", async () => {
     const loaded = await loadFake({
       acme: plugin("acme", (api) => {

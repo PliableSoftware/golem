@@ -102,6 +102,10 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
     let redactEnd = matchStart + whole.length;
     let target = whole;
 
+    // An empty match is not a secret. A zero-width pattern (a plugin's `/x*/g`,
+    // or a lookahead) would otherwise get a placeholder at every position.
+    if (whole === "" && rule.group === undefined) continue;
+
     if (rule.group !== undefined) {
       const span = m.indices?.[rule.group];
       const value = m[rule.group];
