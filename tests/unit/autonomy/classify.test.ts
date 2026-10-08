@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { classifyAction, classifyBash } from "../../../src/autonomy/index.js";
+import { classifyAction, classifyBash, decideGate } from "../../../src/autonomy/index.js";
 
 describe("classifyAction (tools)", () => {
   it("classifies read-only tools as read", () => {
@@ -123,5 +123,86 @@ describe("classifyBash", () => {
     // An unquoted danger token still escalates even with quotes elsewhere.
     expect(classifyBash('echo "safe" && git push origin main')).toBe("outward");
     expect(classifyBash("rm -rf 'quoted arg'")).toBe("destructive");
+  });
+});
+
+describe("DUSTSEC.5: newline-chained commands and over-approved reads", () => {
+  const PAYLOAD = "node -e \"require('fs').rmSync('x',{recursive:true})\"";
+
+  it("never classifies a newline/CR-chained command as read, and assisted does not allow it", () => {
+    for (const sep of ["\n", "\r", "\r\n", "\n\n", " \n "]) {
+      for (const lead of ["ls", "ls -la", "cat x", "echo hi", "git status", "pwd", "npm test"]) {
+        const cmd = `${lead}${sep}${PAYLOAD}`;
+        expect(classifyBash(cmd), JSON.stringify(cmd)).not.toBe("read");
+        expect(classifyAction("Bash", { command: cmd })).not.toBe("read");
+        expect(decideGate("assisted", classifyAction("Bash", { command: cmd })).emit).not.toBe(
+          "allow",
+        );
+      }
+    }
+  });
+  it("a newline-chained danger token still escalates", () => {
+    expect(classifyBash("ls\nrm -rf build")).toBe("destructive");
+    expect(classifyBash("ls\r\ngit push origin main")).toBe("outward");
+    expect(classifyBash("rtk ls\nnode -e x")).not.toBe("read");
+  });
+  it("a trailing newline alone does not change a plain read", () => {
+    expect(classifyBash("ls -la\n")).toBe("read");
+  });
+
+  it("git branch deletion is destructive; creation/rename is not read", () => {
+    for (const c of [
+      "git branch -D main",
+      "git branch -d feature",
+      "git branch --delete feature",
+      "git branch -a -D main",
+      "git branch -vD main",
+    ]) {
+      expect(classifyBash(c), c).toBe("destructive");
+    }
+    for (const c of [
+      "git branch newbranch",
+      "git branch -m old new",
+      "git branch -f main HEAD~3",
+    ]) {
+      expect(classifyBash(c), c).not.toBe("read");
+    }
+    for (const c of [
+      "git branch",
+      "git branch -a",
+      "git branch -vv",
+      "git branch --show-current",
+    ]) {
+      expect(classifyBash(c), c).toBe("read");
+    }
+  });
+  it("linter autofix flags are never read", () => {
+    for (const c of [
+      "npx biome check --write .",
+      "biome check --fix src",
+      "biome lint --apply-unsafe",
+      "npm run lint -- --fix",
+      "npx vitest run -u",
+      "npx vitest run --update",
+      "tsc --outDir x",
+    ]) {
+      expect(classifyBash(c), c).not.toBe("read");
+    }
+    for (const c of ["npx biome check .", "npx tsc --noEmit", "npm run lint", "npx vitest run"]) {
+      expect(classifyBash(c), c).toBe("read");
+    }
+  });
+  it("git diff/log/show --output writes a file, so it is not read", () => {
+    for (const c of [
+      "git diff --output=/tmp/x",
+      "git diff --output /tmp/x",
+      "git log --output=x",
+      "git show --output=x HEAD",
+    ]) {
+      expect(classifyBash(c), c).not.toBe("read");
+    }
+  });
+  it("quoted literals of write flags are data, not flags", () => {
+    expect(classifyBash("cat '--write'")).toBe("read");
   });
 });
