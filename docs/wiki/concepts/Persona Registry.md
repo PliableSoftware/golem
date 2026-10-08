@@ -138,6 +138,20 @@ settings.local.json: "inference.default_coder" was retired in R14.1 and no longe
 
 That message names the file, the key, and the exact replacement syntax.
 
+## `inference.worker_targets` is live, and wins over a persona's model
+
+`inference.worker_targets` (worker name → target id) is **not** retired (DUSTSEC.13, USER decision G1). It is a schema leaf, loads with no warning, and is never migrated into `personas`. Earlier text that called it retired in R14.3 and raising was wrong; `RETIRED_SETTINGS` holds only `inference.default_coder`.
+
+Destination precedence for a worker, highest first:
+
+1. an explicit target on the call
+2. `inference.worker_targets[worker]`
+3. `inference.personas[worker].model`
+4. `inference.model`
+5. the harness's own upstream
+
+When `worker_targets` and a persona's `model` name different destinations, `worker_targets` wins; the conflict is reported, and unsetting the map entry hands the worker to the persona's model. The map affects the worker lane only; the persona's `model` also serves the harness (agent) lane.
+
 ## What is not here yet
 
 - **Staffing lane** (subagent vs dispatched worker) — R14.2.

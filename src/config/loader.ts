@@ -259,10 +259,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
   }
   if (options.teamLayer !== undefined) {
     const { settings: raw, source } = options.teamLayer;
-    origins.set(
-      "team",
-      buildObjectLayer(raw, "team", source, source ?? "team settings", true, warnings),
-    );
+    const teamOrigin = buildTeamOrigin(raw, source, tree, provenance, warnings);
+    if (teamOrigin !== undefined) origins.set("team", teamOrigin);
   }
   if (options.overrides !== undefined) {
     origins.set(
@@ -319,6 +317,46 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     files,
     warnings,
   });
+}
+
+/**
+ * ADR-0008 DUSTSEC.14 (USER decision G2): nothing about a team link may stop the
+ * proxy. An invalid team value therefore SKIPS THE WHOLE TEAM LAYER with one
+ * warning, where every other origin still throws.
+ *
+ * The layer is dry-run through both bands against a scratch copy of the tree, so
+ * a throw cannot leave a half-applied layer behind: it is all-or-nothing. Only a
+ * {@link ConfigError} is swallowed; a bug elsewhere still surfaces.
+ *
+ * Skipping cannot loosen redaction: the team origin is remote, so it may only
+ * add to the floor (REMOTE_DENIED_SETTINGS), and the built-in rules are not a
+ * setting at all.
+ */
+function buildTeamOrigin(
+  raw: unknown,
+  source: string | undefined,
+  tree: MutableTree,
+  provenance: Record<string, ProvenanceEntry>,
+  warnings: string[],
+): ObjectLayer | undefined {
+  const label = source ?? "team settings";
+  const teamWarnings: string[] = [];
+  try {
+    const origin = buildObjectLayer(raw, "team", source, label, true, teamWarnings);
+    const scratchTree = structuredClone(tree);
+    const scratchProvenance = structuredClone(provenance);
+    applyObjectLayer(scratchTree, scratchProvenance, [], origin, "normal");
+    applyObjectLayer(scratchTree, scratchProvenance, [], origin, "important");
+    warnings.push(...teamWarnings);
+    return origin;
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    warnings.push(
+      "team layer SKIPPED: nothing from it applies, and the proxy still starts " +
+        `(ADR-0008). ${err.message}`,
+    );
+    return undefined;
+  }
 }
 
 /**

@@ -70,7 +70,7 @@ export class CoderRouteError extends Error {
 
 export interface CoderRouteInput {
   readonly settings: TargetRegistrySettings;
-  /** DEPRECATED: `inference.worker_targets` — kept for migration. Precedence over personas. */
+  /** `inference.worker_targets` — live; takes precedence over personas. */
   readonly workerTargets?: Readonly<Record<string, string>> | undefined;
   /** The `coder` persona's model (`inference.personas.coder.model`). */
   readonly defaultCoder?: string | undefined;

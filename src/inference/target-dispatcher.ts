@@ -212,7 +212,7 @@ export interface DispatchRequest {
 export type DispatchRoute =
   /** An explicit `targetId` on the call. */
   | "explicit"
-  /** This worker's `inference.worker_targets` entry (DEPRECATED). */
+  /** This worker's `inference.worker_targets` entry. */
   | "worker"
   /** `inference.personas[worker].model` resolved as a target. */
   | "persona_worker"
@@ -720,7 +720,7 @@ export function selectTarget(
   if (request.targetId !== undefined && request.targetId !== "") {
     return { id: request.targetId, route: "explicit" };
   }
-  // First check deprecated worker_targets, then personas[worker].model
+  // First worker_targets (live, highest after explicit), then personas[worker].model
   const fromWorkerRaw =
     request.worker !== undefined
       ? workerTarget(options.workerTargets, request.worker, options.personas)

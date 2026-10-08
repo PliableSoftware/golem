@@ -16,6 +16,8 @@ import {
   assertLeafRename,
   liveKeyFor,
   migrationFrom,
+  RETIRED_SETTINGS,
+  retirementFor,
   SETTING_MIGRATIONS,
 } from "../../src/config/migrations.js";
 import { useTempDirs } from "../helpers/tmp.js";
@@ -49,12 +51,6 @@ describe("the migration table", () => {
   it("every entry renames a retired leaf onto a live one, within one section", () => {
     expect(SETTING_MIGRATIONS.length).toBeGreaterThan(0);
     for (const m of SETTING_MIGRATIONS) {
-      // R14.3: worker_targets → personas is a structural change (map → record
-      // with different value shape). The old key is kept as a deprecated leaf
-      // with a warning; no automatic migration is performed.
-      if (m.from === "inference.worker_targets" && m.to === "inference.personas") {
-        continue;
-      }
       expect(assertLeafRename(m), `${m.from} → ${m.to}`).toBeUndefined();
     }
   });
@@ -215,5 +211,26 @@ describe("the two intermediate historical spellings still forward (R9.23)", () =
     expect(
       warnings.some((w) => /"inference\.default_target".*renamed to "inference\.model"/.test(w)),
     ).toBe(true);
+  });
+});
+
+// DUSTSEC.13 (USER decision G1): `inference.worker_targets` is a LIVE setting.
+// It is a schema leaf that routing reads at the highest precedence, so listing
+// it as retired (and saying it raises) was documentation of a behaviour that
+// never existed.
+describe("inference.worker_targets is live, not retired", () => {
+  it("is not in RETIRED_SETTINGS and has no retirement record", () => {
+    expect(RETIRED_SETTINGS.map((r) => r.path)).not.toContain("inference.worker_targets");
+    expect(retirementFor("inference.worker_targets")).toBeUndefined();
+  });
+
+  it("loads with no error and no warning, and is not rewritten into personas", async () => {
+    await writeJson(projectFile(), {
+      inference: { worker_targets: { coder: "openrouter-qwen3" } },
+    });
+    const { settings, warnings } = await loadConfig({ projectDir, userDir });
+    expect(settings.inference.worker_targets).toEqual({ coder: "openrouter-qwen3" });
+    expect(settings.inference.personas.coder?.model).toBeUndefined();
+    expect(warnings.filter((w) => w.includes("worker_targets"))).toEqual([]);
   });
 });

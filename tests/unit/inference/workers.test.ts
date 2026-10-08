@@ -10,8 +10,8 @@
  * the honesty property survived that move — the roster is open now, so a typo'd
  * key is easier to write and matters more.
  *
- * R14.3 retired `worker_targets` — worker lane now reads `personas[worker].model`
- * directly. Tests updated to reflect this.
+ * `worker_targets` is live (DUSTSEC.13) and wins; the worker lane otherwise reads
+ * `personas[worker].model`.
  */
 
 import { describe, expect, it } from "vitest";

@@ -290,15 +290,18 @@ export const SETTINGS_LEAVES = {
     request_timeout_ms: timeoutMsSchema,
 
     /**
-     * R9.4 / R14.3 — DEPRECATED: use `inference.personas[worker].model` instead.
+     * R9.4 — LIVE (DUSTSEC.13, USER decision G1): worker name -> target id.
      *
-     * The worker lane now reads `inference.personas[worker].model` directly.
-     * A persona's `model` field serves both lanes:
-     *   - worker lane: Golem dispatches to the target (redacted)
-     *   - harness lane: subagent runs on the model (your key)
+     * Precedence for a worker's destination, highest first: an explicit target on
+     * the call; `worker_targets[worker]`; `inference.personas[worker].model`;
+     * `inference.model`; the harness's own upstream. So when both this map and a
+     * persona's `model` name a destination, THIS map wins — unset it to use the
+     * persona's model. A persona's `model` serves both lanes (worker lane:
+     * Golem dispatches to the target, redacted; harness lane: the subagent runs
+     * on the model with your key); this map affects the worker lane only.
      *
-     * Kept as a valid leaf so the migration table can forward old settings files.
-     * New configs should not use this key.
+     * Not retired and not migrated: it loads with no warning and is never
+     * rewritten into `personas`.
      */
     worker_targets: z.record(z.string().min(1), z.string().min(1)).default({}),
 
