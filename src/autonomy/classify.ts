@@ -55,7 +55,10 @@ const SAFE_BASH = [
   /^tail\s/,
   /^wc\s/,
   /^which\s/,
-  /^git\s+(status|diff|log|show|branch|remote\s+-v)(\s|$)/,
+  /^git\s+(status|diff|log|show|remote\s+-v)(\s|$)/,
+  // `git branch` creates, renames and deletes branches, so only the listing
+  // forms are read. Anything else (`-D`, `-m`, a bare branch name) is gated.
+  /^git\s+branch(\s+(-a|-r|-v|-vv|--all|--remotes|--verbose|--list|-l|--show-current|--merged|--no-merged|--contains|--no-contains))*\s*$/,
   /^npm\s+(test|run\s+(test|lint|typecheck|format:check))(\s|$)/,
   /^(npx\s+)?(tsc|vitest|biome)(\s|$)/,
   /^node\s+--version/,
@@ -72,6 +75,9 @@ const DESTRUCTIVE_BASH = [
   /\bgit\s+reset\s+--hard/i,
   /\bgit\s+clean\s+-[a-z]*f/i,
   /\bgit\s+checkout\s+--\s/i,
+  // Branch deletion (`-d`, `-D`, `--delete`, in any flag position): local data
+  // loss, and `-D` skips the merged check.
+  /\bgit\s+branch\s+(?:\S+\s+)*(?:-[a-z]*d[a-z]*|--delete)(?=\s|$)/i,
   /\bdd\s+if=/i,
   /\bmkfs\b/i,
   /\btruncate\b/i,
@@ -104,7 +110,22 @@ const OUTWARD_BASH = [
  * lists only catch their specific shapes, so a command that composes at all is
  * `unknown` (gated), never `read`. `<` (input redirection) stays allowed.
  */
-const SHELL_COMPOSITION_RE = /[;&|>`]|\$\(/;
+const SHELL_COMPOSITION_RE = /[;&|>`\n\r]|\$\(/;
+
+/**
+ * Flags that make an otherwise read-only safe-listed command WRITE to disk:
+ * linter autofix (`biome check --write`, `--fix`, `--apply`), snapshot update
+ * (`vitest -u`), and `--output=<path>` on the git diff family. Checked on the
+ * quote-blanked form, only for commands that matched {@link SAFE_BASH}; the
+ * result is `write`, never `read`.
+ */
+const WRITE_FLAG_RE =
+  /(?:^|\s)(?:--write|--fix|--fix-type|--apply|--apply-unsafe|--unsafe|--output|--output-file|--outfile|--out-dir|--outdir|--update|--update-snapshots?|--updateSnapshot)(?=[\s=]|$)/i;
+const VITEST_UPDATE_RE = /^(?:npx\s+)?vitest\b.*\s-u(?=\s|$)/;
+function writesToDisk(cmd: string): boolean {
+  const unquoted = blankQuoted(cmd);
+  return WRITE_FLAG_RE.test(unquoted) || VITEST_UPDATE_RE.test(unquoted);
+}
 
 function bashCommand(input: unknown): string | null {
   if (typeof input === "object" && input !== null && !Array.isArray(input)) {
@@ -202,12 +223,14 @@ export function classifyBash(command: string): ActionClass {
   // Composition (redirection, chaining, pipes, substitution) can hide a write
   // or a second command behind a safe leading token — never classify it read.
   if (SHELL_COMPOSITION_RE.test(cmd)) return "unknown";
-  if (SAFE_BASH.some((re) => re.test(cmd))) return "read";
+  if (SAFE_BASH.some((re) => re.test(cmd))) return writesToDisk(cmd) ? "write" : "read";
   // R8.12: retry the safe-list against the unwrapped command, so an installed
   // output compactor does not turn auto-approved reads into prompts. Safe-list
   // only — the danger checks already ran on the original.
   const unwrapped = stripOutputWrapper(cmd);
-  if (unwrapped !== cmd && SAFE_BASH.some((re) => re.test(unwrapped))) return "read";
+  if (unwrapped !== cmd && SAFE_BASH.some((re) => re.test(unwrapped))) {
+    return writesToDisk(unwrapped) ? "write" : "read";
+  }
   // A shell can do anything; an unrecognized command is gated, not assumed safe.
   return "unknown";
 }

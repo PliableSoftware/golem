@@ -24,7 +24,7 @@ import { z } from "zod";
 import type { AuthorizationServerMetadata, FetchLike } from "./discovery.js";
 import { PortalAuthError } from "./errors.js";
 import { refreshTokens } from "./exchange.js";
-import { isExpired, type PortalTokenSet, type PortalTokenStore } from "./tokens.js";
+import { isExpired, type PortalTokenSet, type PortalTokenStore, portalOrigin } from "./tokens.js";
 
 /**
  * Accept `null` from the wire wherever an absent field is acceptable, and
@@ -82,6 +82,12 @@ export interface PortalClient {
   request(path: string, init?: RequestInit): Promise<Response>;
   /** `GET /api/v1/me`, validated. */
   me(): Promise<PortalIdentity>;
+  /**
+   * Throw `origin_mismatch` / `insecure_url` / `not_linked` WITHOUT sending
+   * anything, when the stored token may not be used against this client's API
+   * base. Lets a CLI fail loudly up front.
+   */
+  assertBound?(): Promise<void>;
   readonly stats: PortalClientStats;
 }
 
@@ -156,7 +162,32 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
     return await options.reauthorize();
   }
 
+  /**
+   * The one choke point every credentialed request passes through: the token
+   * goes only to the origin it was linked for, over https (DUSTSEC.4). Runs
+   * before the request, and so before any refreshed or re-linked token is sent
+   * anywhere. Messages name origins, never the token.
+   */
+  function assertTokenBound(tokens: PortalTokenSet): void {
+    const target = portalOrigin(options.apiBaseUrl);
+    if (tokens.api_origin === undefined) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        `the stored portal token is not bound to an origin, so it will not be sent to ${target}. ` +
+          "Run `golem team link` to sign in again.",
+      );
+    }
+    if (tokens.api_origin !== target) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        `refusing to send the portal token to ${target}: it was issued for ${tokens.api_origin}. ` +
+          "Check `team.portal_url` / `portal.url`, or run `golem team link` for this portal.",
+      );
+    }
+  }
+
   async function send(path: string, init: RequestInit, tokens: PortalTokenSet): Promise<Response> {
+    assertTokenBound(tokens);
     stats.requests += 1;
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${tokens.access_token}`);
@@ -218,6 +249,9 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
   return {
     stats,
     request,
+    assertBound: async () => {
+      assertTokenBound(await current());
+    },
 
     me: async (): Promise<PortalIdentity> => {
       const response = await request("/api/v1/me");

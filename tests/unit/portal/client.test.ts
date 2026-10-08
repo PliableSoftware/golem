@@ -34,6 +34,7 @@ function tokenSet(over: Partial<PortalTokenSet> = {}): PortalTokenSet {
   return {
     issuer: ISSUER,
     client_id: "client_abc",
+    api_origin: API,
     access_token: "at-1",
     refresh_token: "rt-1",
     token_type: "Bearer",
@@ -330,6 +331,85 @@ describe("createPortalClient", () => {
           headers: { "content-type": "application/json" },
         });
       await expect(client(impl).me()).rejects.toThrow(/unexpected shape/);
+    });
+  });
+
+  describe("origin binding (DUSTSEC.4)", () => {
+    const EVIL = "https://attacker.example";
+
+    const evilClient = (fetchImpl: FetchLike, apiBaseUrl: string) =>
+      createPortalClient({
+        apiBaseUrl,
+        clientId: "client_abc",
+        metadata: async () => META,
+        tokens: store,
+        fetchImpl,
+        now: () => 1_000,
+      });
+
+    it("sends NO credentialed request to a portal URL other than the token's origin", async () => {
+      const fake = scriptedFetch([200]);
+      await expect(evilClient(fake.impl, EVIL).request("/api/v1/me")).rejects.toMatchObject({
+        kind: "origin_mismatch",
+      });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it("names both origins and never the token in the error", async () => {
+      const fake = scriptedFetch([200]);
+      let message = "";
+      try {
+        await evilClient(fake.impl, EVIL).request("/api/v1/me");
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain(EVIL);
+      expect(message).toContain(API);
+      expect(message).not.toContain("at-1");
+      expect(message).not.toContain("rt-1");
+    });
+
+    it("refuses an http:// portal URL, even if the token says the same origin", async () => {
+      store = memoryStore(tokenSet({ api_origin: "http://portal.example.test" }));
+      const fake = scriptedFetch([200]);
+      await expect(
+        evilClient(fake.impl, "http://portal.example.test").request("/api/v1/me"),
+      ).rejects.toMatchObject({ kind: "insecure_url" });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it("refuses a token stored without a bound origin (legacy) rather than guessing", async () => {
+      const { api_origin: _drop, ...legacy } = tokenSet();
+      store = memoryStore(legacy);
+      const fake = scriptedFetch([200]);
+      await expect(client(fake.impl).request("/api/v1/me")).rejects.toMatchObject({
+        kind: "origin_mismatch",
+      });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it("a 401 refresh keeps the binding and re-sends only to the same origin", async () => {
+      const fake = scriptedFetch([401, 200]);
+      await client(fake.impl).request("/api/v1/me");
+      expect(store.held()?.api_origin).toBe(API);
+      for (const call of fake.apiCalls()) expect(call.url.startsWith(API)).toBe(true);
+    });
+
+    it("a re-linked token bound to another origin is never sent", async () => {
+      const fake = scriptedFetch([401, 401, 200], { refreshFails: true });
+      const c = client(fake.impl, {
+        reauthorize: async () => tokenSet({ api_origin: EVIL, access_token: "at-evil" }),
+      });
+      await expect(c.request("/api/v1/me")).rejects.toMatchObject({ kind: "origin_mismatch" });
+      expect(fake.apiCalls().filter((x) => x.authorization === "Bearer at-evil")).toHaveLength(0);
+    });
+
+    it("assertBound throws without sending anything", async () => {
+      const fake = scriptedFetch([200]);
+      await expect(evilClient(fake.impl, EVIL).assertBound?.()).rejects.toMatchObject({
+        kind: "origin_mismatch",
+      });
+      expect(fake.calls).toHaveLength(0);
     });
   });
 });

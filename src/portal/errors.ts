@@ -38,7 +38,11 @@ export type PortalAuthErrorKind =
   /** The portal API answered with something other than success. */
   | "api_error"
   /** There is nowhere OS-backed to put the token on this machine. */
-  | "no_secure_store";
+  | "no_secure_store"
+  /** The request origin is not the origin the stored token was issued for. */
+  | "origin_mismatch"
+  /** A portal URL is not https (loopback excepted). */
+  | "insecure_url";
 
 export class PortalAuthError extends Error {
   readonly kind: PortalAuthErrorKind;

@@ -49,6 +49,14 @@ const tokenSetSchema = z.object({
   issuer: z.string().min(1),
   /** The OAuth client id it was minted for. */
   client_id: z.string().min(1),
+  /**
+   * Origin (scheme + host + port) of the portal API this token was linked
+   * against. The token is only ever attached to requests for exactly this
+   * origin (DUSTSEC.4): a committed `team.portal_url` cannot redirect it.
+   * Absent on tokens stored before the binding existed; those are refused
+   * until the next `golem team link`.
+   */
+  api_origin: z.string().min(1).optional(),
   access_token: z.string().min(1),
   refresh_token: z.string().min(1).optional(),
   token_type: z.string().min(1),
@@ -86,6 +94,34 @@ export function describeTokenSet(tokens: PortalTokenSet, now = Date.now()): Toke
 export function isExpired(tokens: PortalTokenSet, now = Date.now()): boolean {
   if (tokens.expires_at === undefined) return false;
   return now >= tokens.expires_at - EXPIRY_SKEW_MS;
+}
+
+/**
+ * The origin of a portal URL, https-only. Plain `http:` is accepted for
+ * loopback hosts alone (RFC 8252 section 8.3), the same exemption discovery
+ * makes so the flow can run against a local test server. Throws
+ * `insecure_url` otherwise; the message names the URL, never a token.
+ */
+export function portalOrigin(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new PortalAuthError("insecure_url", `the portal URL is not a valid URL: ${raw}`);
+  }
+  const loopback =
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "::1" ||
+    url.hostname === "[::1]" ||
+    url.hostname === "localhost";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new PortalAuthError(
+      "insecure_url",
+      `the portal URL must be https (got ${url.protocol.replace(":", "")}): ${raw}. ` +
+        "A portal token is never sent over an unencrypted connection.",
+    );
+  }
+  return url.origin;
 }
 
 export interface PortalTokenStore {

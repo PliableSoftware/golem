@@ -25,6 +25,7 @@
  */
 
 import { PortalAuthError } from "./errors.js";
+import { portalOrigin } from "./tokens.js";
 
 /** The `portal` settings section, structurally. */
 export interface PortalSettings {
@@ -62,6 +63,9 @@ export function resolvePortalConfig(settings: PortalSettings): PortalConfig {
     );
   }
   const issuer = settings.issuer.trim().replace(/\/+$/, "");
+  // https only (loopback excepted), for both URLs (DUSTSEC.4).
+  portalOrigin(apiBaseUrl);
+  if (issuer !== "") portalOrigin(issuer);
   return {
     apiBaseUrl,
     issuerUrl: issuer === "" ? apiBaseUrl : issuer,

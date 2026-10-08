@@ -127,6 +127,7 @@ describe("linkPortal", () => {
 
     const result = await linkPortal({
       issuerUrl: ISSUER,
+      apiBaseUrl: API,
       clientId: "client_abc",
       tokens,
       browser,
@@ -157,6 +158,7 @@ describe("linkPortal", () => {
     await expect(
       linkPortal({
         issuerUrl: ISSUER,
+        apiBaseUrl: API,
         clientId: "client_abc",
         tokens,
         browser: completingBrowser({ state: "forged-state" }),
@@ -183,6 +185,7 @@ describe("linkPortal", () => {
     await expect(
       linkPortal({
         issuerUrl: ISSUER,
+        apiBaseUrl: API,
         clientId: "client_abc",
         tokens,
         browser: spy,
@@ -203,6 +206,7 @@ describe("linkPortal", () => {
 
     const result = await linkPortal({
       issuerUrl: ISSUER,
+      apiBaseUrl: API,
       clientId: "client_abc",
       tokens,
       browser: completingBrowser(),
@@ -221,6 +225,7 @@ describe("linkPortal", () => {
     const said: string[] = [];
     await linkPortal({
       issuerUrl: ISSUER,
+      apiBaseUrl: API,
       clientId: "client_abc",
       tokens,
       browser: completingBrowser(),
@@ -249,6 +254,7 @@ describe("portalStatus and unlinkPortal", () => {
 
     await linkPortal({
       issuerUrl: ISSUER,
+      apiBaseUrl: API,
       clientId: "client_abc",
       tokens,
       browser: completingBrowser(),
@@ -317,5 +323,51 @@ describe("resolvePortalConfig", () => {
   it("treats whitespace as unset", () => {
     expect(() => resolvePortalConfig({ ...base, client_id: "   " })).toThrow(/client_id/);
     expect(() => resolvePortalConfig({ ...base, url: "   " })).toThrow(/portal\.url/);
+  });
+});
+
+describe("linkPortal origin binding (DUSTSEC.4)", () => {
+  it("records the API origin with the stored token", async () => {
+    const { impl } = authServer();
+    const { tokens } = await store();
+    const result = await linkPortal({
+      issuerUrl: ISSUER,
+      apiBaseUrl: `${API}/`,
+      clientId: "client_abc",
+      tokens,
+      browser: completingBrowser(),
+      fetchImpl: impl,
+      timeoutMs: 5_000,
+    });
+    expect(result.tokens.api_origin).toBe(API);
+    expect((await tokens.read({ issuer: ISSUER, clientId: "client_abc" }))?.api_origin).toBe(API);
+  });
+
+  it("refuses an http:// non-loopback portal URL before opening a browser", async () => {
+    const { impl } = authServer();
+    const { tokens } = await store();
+    const browser = completingBrowser();
+    await expect(
+      linkPortal({
+        issuerUrl: ISSUER,
+        apiBaseUrl: "http://portal.example.test",
+        clientId: "client_abc",
+        tokens,
+        browser,
+        fetchImpl: impl,
+        timeoutMs: 5_000,
+      }),
+    ).rejects.toMatchObject({ kind: "insecure_url" });
+    expect(browser.seen()).toBeNull();
+  });
+
+  it("resolvePortalConfig refuses http:// portal and issuer URLs", () => {
+    const base = { url: API, issuer: "", client_id: "c", link_timeout_ms: 1000 };
+    expect(() => resolvePortalConfig({ ...base, url: "http://portal.example.test" })).toThrow(
+      /https/,
+    );
+    expect(() => resolvePortalConfig({ ...base, issuer: "http://clerk.example.test" })).toThrow(
+      /https/,
+    );
   });
 });

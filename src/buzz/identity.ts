@@ -56,7 +56,12 @@ const execFileAsync = promisify(execFile);
 export const ORCHESTRATOR_ID = "golem";
 
 /** Buzz's Nostr keys are x-only 32-byte points rendered as 64 lowercase hex. */
-const HEX64_RE = /\b[0-9a-f]{64}\b/gu;
+const HEX64_RE = /\b[0-9a-f]{64}\b/u;
+
+/** Every 64-hex token in `text`, in order. A fresh global regex per call: no shared `lastIndex` state (DUSTSEC.6). */
+function allHex64(text: string): string[] {
+  return text.match(new RegExp(HEX64_RE.source, "gu")) ?? [];
+}
 
 /**
  * A stable, path-free key for one project's Buzz identities.
@@ -102,7 +107,7 @@ export interface Keypair {
  * Extending §19 with the verbatim sample when Stage 2 runs is the follow-up.
  */
 export function parseGenerateKeyOutput(stdout: string): Keypair {
-  const hexes: string[] = stdout.match(HEX64_RE) ?? [];
+  const hexes = allHex64(stdout);
   if (hexes.length < 2) {
     throw new Error(
       `buzz-admin generate-key did not print two 64-hex keys (found ${hexes.length}) — ` +
@@ -112,13 +117,37 @@ export function parseGenerateKeyOutput(stdout: string): Keypair {
   const pubLine = /^.*pub.*$/im.exec(stdout);
   const secretLine = /^.*sec.*$/im.exec(stdout);
   if (pubLine !== null && secretLine !== null) {
-    const pub = HEX64_RE.exec(pubLine[0]);
-    const sec = HEX64_RE.exec(secretLine[0]);
+    // The same line cannot be both labels' value (`pubkey=A secret=B` on one
+    // line would hand A to both); that is ambiguous, not parseable.
+    const pub = pubLine.index === secretLine.index ? null : HEX64_RE.exec(pubLine[0]);
+    const sec = pubLine.index === secretLine.index ? null : HEX64_RE.exec(secretLine[0]);
     if (pub !== null && sec !== null) {
-      return { pubkeyHex: pub[0], secretHex: sec[0] };
+      return checkedPair(pub[0], sec[0]);
     }
   }
-  return { pubkeyHex: hexes[0] as string, secretHex: hexes[1] as string };
+  // Positional fallback, only for UNLABELLED output with exactly two keys. A
+  // label line that carries a key but did not resolve above is a format we do
+  // not understand, and guessing there is how a secret becomes a pubkey.
+  const labelCarriesKey =
+    (pubLine !== null && HEX64_RE.test(pubLine[0])) ||
+    (secretLine !== null && HEX64_RE.test(secretLine[0]));
+  if (hexes.length !== 2 || labelCarriesKey) {
+    throw new Error(
+      "buzz-admin generate-key output is ambiguous (cannot tell the public key from the " +
+        "secret) — refused to guess; nothing was stored.",
+    );
+  }
+  return checkedPair(hexes[0] as string, hexes[1] as string);
+}
+
+function checkedPair(pubkeyHex: string, secretHex: string): Keypair {
+  if (pubkeyHex === secretHex) {
+    throw new Error(
+      "buzz-admin generate-key printed the same key twice — refused to store an identity " +
+        "whose public key equals its secret.",
+    );
+  }
+  return { pubkeyHex, secretHex };
 }
 
 /** A runner for `buzz-admin generate-key`: the PATH binary, or the same binary inside Docker. */
@@ -213,6 +242,13 @@ export async function runGenerateKey(): Promise<Keypair> {
   return parseGenerateKeyOutput(await runner.run());
 }
 
+/** Defence in depth for injected or future generators: never proceed with pubkey === secret. */
+function assertPubkeyIsNotSecret(pair: Keypair): void {
+  if (pair.pubkeyHex === pair.secretHex) {
+    throw new Error("refused to store an identity whose public key equals its secret.");
+  }
+}
+
 /** The subset of the store this module touches — injectable so tests never touch a keychain. */
 export type MintStore = Pick<CredentialStore, "resolve" | "store" | "forget">;
 
@@ -270,6 +306,7 @@ export async function mintIdentity(
 
   const generate = deps.generateKeypair ?? runGenerateKey;
   const pair = await generate();
+  assertPubkeyIsNotSecret(pair);
   await store.store(account, pair.secretHex);
   return { pubkeyHex: pair.pubkeyHex, account, minted: true };
 }
@@ -290,6 +327,7 @@ export async function rotateIdentity(
   await store.forget(account); // best-effort clean slate; store() overwrites anyway
   const generate = deps.generateKeypair ?? runGenerateKey;
   const pair = await generate();
+  assertPubkeyIsNotSecret(pair);
   await store.store(account, pair.secretHex);
   return { pubkeyHex: pair.pubkeyHex, account, minted: true };
 }

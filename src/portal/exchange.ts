@@ -169,6 +169,8 @@ function toTokenSet(
   return {
     issuer: binding.issuer,
     client_id: binding.clientId,
+    // A refresh stays bound to the origin the token was first linked for.
+    ...(previous?.api_origin === undefined ? {} : { api_origin: previous.api_origin }),
     access_token: response.access_token,
     ...(refresh === undefined ? {} : { refresh_token: refresh }),
     token_type: response.token_type,
