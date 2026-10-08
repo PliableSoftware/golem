@@ -98,3 +98,34 @@ describe("extractWikilinks", () => {
     expect(extractWikilinks("[[A]] then [[B]] then [[A]] again")).toEqual(["A", "B", "A"]);
   });
 });
+
+// DUST3.8 D12: list items were split on every comma, so a comma inside one split it in two.
+describe("frontmatter list items containing commas", () => {
+  const base = {
+    title: "T",
+    type: "concept" as const,
+    created: "2026-07-10",
+    updated: "2026-07-10",
+  };
+
+  it("parses a quoted item with a comma as one item", () => {
+    const raw = SAMPLE.replace("tags: [cache, prompts]", "tags: [\"a, b\", 'c, d', plain]");
+    expect(parseFrontmatter(raw).frontmatter.tags).toEqual(["a, b", "c, d", "plain"]);
+  });
+
+  it("round-trips items with commas, brackets and quotes", () => {
+    const fm = {
+      ...base,
+      tags: ["a, b", 'say "hi"', "x]y", "plain"],
+      sources: ["https://example.com/?q=1,2"],
+    };
+    const raw = `${serializeFrontmatter(fm)}\n\nbody\n`;
+    expect(parseFrontmatter(raw).frontmatter).toEqual(fm);
+  });
+
+  it("leaves plain lists serialised exactly as before", () => {
+    expect(serializeFrontmatter({ ...base, tags: ["a", "b"], sources: [] })).toContain(
+      "tags: [a, b]",
+    );
+  });
+});

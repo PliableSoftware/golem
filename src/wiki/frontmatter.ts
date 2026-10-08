@@ -22,7 +22,48 @@ function parseListValue(value: string): readonly string[] {
   }
   const inner = trimmed.slice(1, -1).trim();
   if (inner === "") return [];
-  return inner.split(",").map((item) => item.trim());
+  return splitListItems(inner);
+}
+
+/**
+ * Split a bracketed list's inner text on commas, keeping a comma that sits
+ * inside a single- or double-quoted item (DUST3.8 D12). Inside double quotes a
+ * backslash escapes the next character. An unquoted item is taken verbatim up to
+ * the next comma, so every page written before quoting existed parses as before.
+ */
+function splitListItems(inner: string): string[] {
+  const items: string[] = [];
+  let i = 0;
+  while (i <= inner.length) {
+    while (inner[i] === " " || inner[i] === "\t") i += 1;
+    const quote = inner[i] === '"' || inner[i] === "'" ? inner[i] : undefined;
+    let item = "";
+    if (quote !== undefined) {
+      i += 1;
+      while (i < inner.length && inner[i] !== quote) {
+        if (quote === '"' && inner[i] === "\\" && i + 1 < inner.length) i += 1;
+        item += inner[i];
+        i += 1;
+      }
+      i += 1; // closing quote
+      while (i < inner.length && inner[i] !== ",") i += 1; // tolerate junk after it
+    } else {
+      const next = inner.indexOf(",", i);
+      const end = next === -1 ? inner.length : next;
+      item = inner.slice(i, end).trim();
+      i = end;
+    }
+    items.push(item);
+    i += 1; // the comma
+  }
+  return items;
+}
+
+/** Quote an item only when a bare one would not parse back to itself. */
+function serializeListItem(item: string): string {
+  const needsQuotes = /[,\n]/.test(item) || /^[\s"']|\s$/.test(item);
+  if (!needsQuotes) return item;
+  return `"${item.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ")}"`;
 }
 
 /**
@@ -79,8 +120,8 @@ export function serializeFrontmatter(fm: WikiFrontmatter): string {
     FRONTMATTER_DELIMITER,
     `title: ${fm.title}`,
     `type: ${fm.type}`,
-    `tags: [${fm.tags.join(", ")}]`,
-    `sources: [${fm.sources.join(", ")}]`,
+    `tags: [${fm.tags.map(serializeListItem).join(", ")}]`,
+    `sources: [${fm.sources.map(serializeListItem).join(", ")}]`,
     `created: ${fm.created}`,
     `updated: ${fm.updated}`,
     FRONTMATTER_DELIMITER,
