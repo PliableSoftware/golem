@@ -210,8 +210,10 @@ export class GolemProxy {
     // The proxy used to log the routing decision it took BEFORE forwarding and
     // nothing after, so a request that died mid-stream left no trace: the
     // investigation of a live "Connection lost mid-response" had to be run from
-    // the client's transcript and the process table. Every terminal path below
-    // now reports what became of the request. Metadata only — never bodies.
+    // the client's transcript and the process table. Most terminal paths below
+    // report what became of the request; the upstream body-read and gunzip
+    // failures destroy the response without reporting. Metadata only — never
+    // bodies.
     const startedAt = Date.now();
     const method = req.method ?? "GET";
     // Query stripped: a query string can carry identifiers, and the path is
