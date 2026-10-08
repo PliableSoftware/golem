@@ -24,6 +24,6 @@ The prose around the skill. Four pieces:
 ## Out of scope
 
 - Any change to the method itself. If writing the page shows a gap in the skill, note it in the DUST4.4 dogfood record instead.
-- Marketing prose about Dust (DUST5.6).
+- Marketing prose about Dust (DUST5.5).
 - Rewriting the existing Dust debriefs.
 - Restating `DECISIONS.md` in the wiki page; link it.
