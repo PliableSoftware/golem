@@ -99,3 +99,10 @@ the full Decisions-Log rationale remain authoritative (`IMPLEMENTATION_PLAN.md`
 Related: [[Redaction Stage]] (runs before any translation — more valuable
 fronting a third party), [[Compression]] (why the caching classification gates
 the lossy stage per provider).
+
+## Rebaseline 2026-10-08
+
+- `golem account` is gone; the verb is `golem gateway` (`src/cli/commands/gateway.ts:35-222`). Settings were renamed: `proxy.active_account` to `inference.model`, `proxy.accounts` to `proxy.gateways` (`src/config/migrations.ts:42-63`).
+- "OS-keychain credential backend ... future": wrong now. Keychain is the default store for `gateway login` (`src/cli/commands/gateway.ts:92-95`; `file` is the explicit unencrypted opt-in). See Decision 46.
+- Frontmatter source `docs/wiki/decisions/ADR-0003-...` does not exist; ADRs live at `docs/decisions/ADR-0003-credential-storage-and-account-routing.md`.
+- "Anthropic byte-faithful" read as "lossless and prefix-stable at level <= 1" (decision C1, `docs/plan/audit/dust-1/DECISIONS.md:26`).
