@@ -123,3 +123,40 @@ moves from "defended by a clamp" to "unrepresentable".**
    leaves a schema leaf whose only purpose is to be applied and ignored.
 3. **Fold level 0 into `compression: off`.** Rejected above — it makes
    redaction-off reachable by a word that does not mention redaction.
+
+## Amendment (2026-10-08, DUST2.3)
+
+**Amended 2026-10-08 (DUST2.3; DECISIONS.md R2, R3, R4, R12; SUMMARY row
+1.1/r094).** The text above is unchanged and is history. When the DUST Phase 1
+audit read the code, "the only redaction-free path is the explicit `bypass_all`
+short-circuit" was false: two more existed. Both are now removed, so the
+invariant is true again.
+
+- **`POST /__golem/pipeline/<enabled>` is removed (R3, DUSTSEC.2).** The "Where
+  level 0 goes" section above describes `golem on`/`golem off` as an in-process
+  toggle flipped by that POST. The endpoint was unauthenticated, so an agent's Bash
+  tool could send the same simple request (a drive-by web page was suspected
+  in the audit but not browser-tested). `#pipelineEnabled`
+  is now fixed at construction from `proxy.bypass_all` and never changed
+  afterwards (`src/proxy/server.ts:106-113`; `src/cli/proxy-runtime.ts:316`).
+  Redaction-off therefore applies at the next proxy start, and a restart can no
+  longer silently revert it, because the setting is the only source.
+- **The `x-golem-bypass` request header is removed (R2, DUSTSEC.2).** A request
+  carrying it is redacted like any other. The header is still stripped so a stale
+  client never forwards a Golem control name to a provider
+  (`src/proxy/headers.ts:48-52`). The `golem-bypass` skill now points at
+  `bypass_all` (`src/cli/skills/basics.ts:73-74`).
+- **Agent Bash is denied `golem off` and any write of `proxy.bypass_all` (R4,
+  DUSTSEC.3).** "CLI-only" was a statement about the MCP surface; nothing
+  stopped an agent from running the CLI. A `PreToolUse` guard now denies it
+  (`src/hooks/bypass-guard.ts`, called from `src/hooks/pre-tool-use.ts:230`),
+  hardened by DUSTSEC.17 and DUSTSEC.18 for stdin-fed shells, `env -S`, shell
+  flag values and heredoc bodies. What is enforced is that denial of the tool
+  call, not a property of the CLI itself: a human at a terminal still runs it.
+- **Scope of "no tool call can change how much of the pipeline runs" (R12, USER
+  decision, decided 2026-10-08).** The rule binds model and MCP tool calls, and
+  this ADR already retired the `level` MCP tool. A human write of `compression.level`
+  through the panel or the remote surface is allowed. Redaction stays untouchable
+  from every surface: no value of any dial disables it, and `proxy.bypass_all`
+  is on the remote-denied list (`src/config/loader.ts:144-145`). Wording that
+  still says "no tool call" without this scope is stale.
