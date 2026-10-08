@@ -100,7 +100,8 @@ export interface BuildProxyOptions {
   /**
    * When present, the level is re-read from this store on EVERY request
    * instead of frozen at construction time — makes `level` /
-   * `golem slider` double as the live per-task toggle (Decision 25/30).
+   * `golem slider` double as the live per-task toggle (Decision 25/30; both
+   * since retired by ADR-0004).
    */
 
   /**
@@ -346,7 +347,7 @@ export function buildProxyFromSettings(
       : {}),
     onPipelineError: (err) => {
       proxyLog(
-        `pipeline error — forwarded request unchanged (passthrough): ${
+        `pipeline error — re-ran redaction alone on the original request and forwarded that (fails closed if it cannot): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

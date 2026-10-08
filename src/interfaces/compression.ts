@@ -10,7 +10,8 @@
  *
  * - At level 0 (Passthrough), `messagesOut` is the input, unchanged. At level 1
  *   (Lossless), transformations must be semantics-preserving, and SSE / tool-use
- *   structures pass through byte-faithful (CLAUDE.md hard rule).
+ *   structures pass through untouched (CLAUDE.md hard rule: lossless and
+ *   prefix-stable at level <= 1).
  * - Determinism for prompt-cache stability (verification-notes.md §14):
  *   re-compressing a previously-sent message prefix MUST reproduce byte-identical
  *   output — Anthropic cache hits require an exact prefix match, so

@@ -3,7 +3,8 @@
  *
  * R9.23: the daemon is always running once `golem init` finishes. `golem on`
  * and `golem off` set the master switch — no restart, no wire changes, no dead
- * sockets. `golem proxy` shows status; all other proxy subcommands are removed.
+ * sockets. `golem proxy` shows status; `golem proxy start|stop|restart|wire|unwire` manage the
+ * daemon and its Claude Code wiring.
  *
  * R11.3: WHAT the switch does lives in `pipeline-switch.ts`, because it is no
  * longer one admin POST — it persists `proxy.bypass_all` and then applies the
@@ -116,10 +117,10 @@ export async function restartProxyDetached(
 }
 
 /**
- * The SessionStart hook's auto-recovery: read the URL from the project's `.claude`
- * settings (either file — local shadows committed).
- * If it points at Golem's port and nothing is listening, restart the daemon.
- * Also defined here so `golem on` can share the same recovery path.
+ * Start the daemon if nothing is listening on `port` (shared by `golem on` and
+ * `golem off`). The SessionStart hook does NOT call this: `hook session-start` in
+ * `prompt-guidance.ts` carries its own recovery, which also honours the recorded
+ * desired state (`bypass` / `stopped`).
  */
 export async function ensureProxyRunning(
   dir: string,
@@ -211,7 +212,7 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
   // (`startDetached` sets the marker alongside the credentials). The injection
   // below is `??=`, so a second resolution's results were discarded anyway — it
   // was pure duplicated cost, and at the measured 6668ms it was most of an ~18s
-  // restart. A hand-run `golem proxy run` has no marker and resolves normally.
+  // restart. A hand-run `golem proxy start` has no marker and resolves normally.
   if (process.env[CREDENTIALS_INJECTED_ENV] === undefined) {
     for (const [name, secret] of Object.entries(await credentialEnvForProxy(dir))) {
       process.env[name] ??= secret;

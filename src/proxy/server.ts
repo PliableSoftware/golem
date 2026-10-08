@@ -9,8 +9,9 @@
  * (CLAUDE.md hard rule; verification-notes §15).
  *
  * Request bodies are buffered (they are bounded JSON documents) so the A3
- * pipeline seam ({@link RequestPipeline}) can operate on them; at A1 the
- * pipeline is the identity, so forwarded bytes equal received bytes.
+ * pipeline seam ({@link RequestPipeline}) can operate on them; with the default
+ * identity pipeline forwarded bytes equal received bytes, and with the real
+ * pipeline they are redacted (and, at level >= 1, losslessly compacted).
  * No zod here on purpose: the proxy never interprets payloads, so there is
  * no boundary to validate — validation would require a parse/re-serialize
  * cycle that the byte-fidelity rule forbids.

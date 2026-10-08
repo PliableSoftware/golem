@@ -437,8 +437,8 @@ export function renderCostBenchmark(report: CostBenchmarkReport): string {
   const s = report.golem_savings;
   const lines: string[] = [];
   lines.push(`Golem cost-governance benchmark (${scope}, ${windowLabel})`);
-  lines.push("  Golem's measured contribution:");
-  lines.push(`    requests measured:        ${s.requests}`);
+  lines.push("  Golem's contribution (token counts are estimates, about 4 characters per token):");
+  lines.push(`    rewritten requests:       ${s.requests}`);
   lines.push(
     `    CCR offload:              ${s.ccr_refs_stored} stored / ${s.ccr_refs_retrieved} retrieved`,
   );
@@ -446,7 +446,7 @@ export function renderCostBenchmark(report: CostBenchmarkReport): string {
     `    drafted locally (coder):  ${s.drafted_locally_chars} chars (~${s.drafted_locally_tokens_est} tokens)`,
   );
   lines.push(
-    `    avoided upstream:         ${s.avoided_upstream_input_tokens} in / ${s.avoided_upstream_output_tokens} out tokens`,
+    `    avoided upstream (est.):  ${s.avoided_upstream_input_tokens} in / ${s.avoided_upstream_output_tokens} out tokens`,
   );
   lines.push(`    net-of-cache eff. input:  ${s.net_of_cache_effective_input_tokens} tokens`);
 

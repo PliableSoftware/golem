@@ -195,9 +195,10 @@ export interface ProxyServerOptions {
   /** Request pipeline hook. Default: {@link identityPipeline}. */
   readonly pipeline?: RequestPipeline;
   /**
-   * Called when the pipeline throws and the proxy falls open to byte-faithful
-   * passthrough (the request is forwarded UNCHANGED). Observability only —
-   * it must not rethrow. Default: none.
+   * Called when the pipeline throws, before the proxy re-runs redaction alone on
+   * the original request and forwards that (or fails closed with a 502 if
+   * redaction cannot be re-applied; DUSTSEC.1). Observability only — it must
+   * not rethrow. Default: none.
    */
   readonly onPipelineError?: (err: unknown, request: ProxyRequest) => void;
   /**

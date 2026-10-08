@@ -151,7 +151,7 @@ export default function register(program: Command): void {
             : "";
           process.stdout.write(
             `registered target "${id}" (gateway: ${opts.gateway}).${note}\n` +
-              `Nothing routes on it yet — the registry is inert until proxy routing (R9.2) and coder dispatch (R9.3) land.\n`,
+              `Select it with \`golem target use ${id}\`, or name it explicitly when dispatching.\n`,
           );
         } catch (err) {
           _fail(err);

@@ -298,11 +298,12 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
  * key and the rename is handled in exactly one place.
  *
  * R9.23: `model` may reference a gateway id (e.g. `"openrouter"`) rather
- * than a full compound target id (e.g. `"openrouter:qwen/qwen3-14b"`). It may
- * also be a bare model name (e.g. `"qwen3"`) which is resolved via
- * {@link resolveModel}. When the selector does not match any target id directly,
- * it is resolved to the first target derived from that gateway. This preserves
- * backward compatibility for settings files that name a gateway.
+ * than a full compound target id (e.g. `"openrouter:qwen/qwen3-14b"`). When the
+ * selector does not match any target id directly, it is resolved to the first
+ * target derived from that gateway. A bare model name is NOT resolved here: a
+ * value that matches neither a target id nor a gateway id is returned unchanged
+ * and fails closed at {@link resolveTarget}. This preserves backward
+ * compatibility for settings files that name a gateway.
  */
 export function resolveDefaultTargetId(settings: TargetRegistrySettings): string {
   const raw = settings.model ?? defaultTargetId(settings.upstream_provider);

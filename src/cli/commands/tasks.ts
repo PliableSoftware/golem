@@ -291,7 +291,9 @@ export default function register(program: Command): void {
 
   taskCmd
     .command("done")
-    .description("Mark a task done")
+    .description(
+      "Mark a task done (refuses while delegated runs are unreviewed — see `golem task review`)",
+    )
     .argument("<id>", "task id or unique prefix")
     .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--note <text>", "short outcome note appended to the task body")

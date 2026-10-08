@@ -394,12 +394,12 @@ export function renderPage(snapshot: DashboardSnapshot): string {
 <div id="blocked-slot">${blockedBanner(snapshot.blocked)}</div>
 
   <div class="tiles">
-    <div class="tile"><div class="label">Tokens saved</div>
+    <div class="tile"><div class="label">Tokens saved (est., all-time)</div>
       <div class="value" id="tokens-saved">${s.tokens_saved}</div></div>
-    <div class="tile"><div class="label">Tokens before &rarr; after</div>
+    <div class="tile"><div class="label">Tokens before &rarr; after (est.)</div>
       <div class="value"><span id="tokens-before">${s.tokens_before}</span>
         <small>&rarr;</small> <span id="tokens-after">${s.tokens_after}</span></div></div>
-    <div class="tile"><div class="label">Requests</div>
+    <div class="tile"><div class="label">Rewritten requests</div>
       <div class="value" id="requests">${s.requests}</div></div>
     <div class="tile"><div class="label">Compression</div>
       <div class="value"><span id="compression-level">${escapeHtml(snapshot.compression.level)}</span>
@@ -412,8 +412,8 @@ export function renderPage(snapshot: DashboardSnapshot): string {
   <h2>Stage attribution</h2>
   <div class="scroll-x">
   <table>
-    <thead><tr><th>Stage</th><th class="num">Tokens before</th>
-      <th class="num">Tokens after</th><th class="num">Saved</th></tr></thead>
+    <thead><tr><th>Stage</th><th class="num">Tokens before (est.)</th>
+      <th class="num">Tokens after (est.)</th><th class="num">Saved (est.)</th></tr></thead>
     <tbody id="stages">
           ${stageRows(snapshot)}
     </tbody>

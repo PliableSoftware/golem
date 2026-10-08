@@ -99,7 +99,8 @@ export function registerWikiTools(server: McpServer, wiki: WikiStore, tel?: Tool
       description:
         "Create or refine a page in the project's committed wiki (spec Decisions " +
         "28/29, de-gated by Decision 44). Author freely — no prior approval needed; " +
-        "every write is committed to git, so it's reviewable and revertible. " +
+        "this writes files into the wiki directory and does not commit them, so " +
+        "the change is reviewable and revertible once you commit it. " +
         "Redaction-before-storage still applies and contradictions must be surfaced " +
         "to the human, never auto-resolved. If a page already exists at rel_path, " +
         "the new body is appended under a dated separator and tags/sources are " +

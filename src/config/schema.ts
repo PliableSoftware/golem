@@ -425,7 +425,7 @@ export const SETTINGS_LEAVES = {
      *
      * - `off` — redaction only; nothing else touches the request. Nameable for
      *   the first time in R11.1.
-     * - `1` — + lossless (byte-faithful) compression. The default.
+     * - `1` — + lossless, prefix-stable compression. The default.
      * - `2` / `3` — + the lossy semantic stages, which Decision 31 gates OFF on
      *   a prompt-caching upstream, so what RAN can still differ from what was
      *   SET (`resolveEffectiveCompression`, §103). Every surface says which.
@@ -1072,7 +1072,7 @@ export type ClaudeSettings = GolemSettings["claude"];
  * Built-in defaults (the lowest layer). Where the spec is silent the choice is
  * recorded in docs/plan/verification-notes.md §17:
  * - proxy.port 4653 / telemetry.dashboard_port 4654 ("GOLE" on a phone keypad).
- * - compression.level 1 (lossless-only: byte-faithful with real savings, spec P0 DoD).
+ * - compression.level 1 (lossless-only: lossless and prefix-stable with real savings, spec P0 DoD).
  * - upstream https://api.anthropic.com; Ollama http://localhost:11434.
  */
 export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({

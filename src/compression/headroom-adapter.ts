@@ -12,7 +12,7 @@
  *
  * Architecture (verification-notes §34): we do NOT chain `headroom proxy` (it is
  * a competing Anthropic forwarder); each worker calls into `headroom` in-process
- * and Golem keeps the redaction-first, byte-faithful forward. Workers are
+ * and Golem keeps the redaction-first, lossless forward. Workers are
  * launched via `uv run --with <pin>` by default — an OPT-IN dependency, never
  * in Golem's core install (CLAUDE.md: no heavyweight deps by default).
  *

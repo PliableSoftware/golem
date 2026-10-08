@@ -7,11 +7,12 @@
  * first**, before any content is transformed, stored, or forwarded; then the
  * lossless compression stage (A2) runs per the resolved PipelinePolicy.
  *
- * Byte-faithfulness (CLAUDE.md): the pipeline only rewrites the body of
- * `POST /v1/messages` requests carrying a JSON body. Anything else — other
- * paths, non-JSON bodies, or a request where no stage changed anything —
+ * Lossless and prefix-stable at level <= 1 (CLAUDE.md): the pipeline only rewrites
+ * the body of `POST /v1/messages` requests carrying a JSON body. Anything else —
+ * other paths, non-JSON bodies, or a request where no stage changed anything —
  * is returned unchanged (same object, original bytes), so streaming and
- * tool-use traffic and secret-free level-0 requests stay byte-identical.
+ * tool-use traffic and requests no stage touches stay byte-identical. A request
+ * a stage DOES rewrite (redaction, dedup/compaction) is lossless, not byte-identical.
  *
  * Prefix stability (verification-notes §14): at levels ≤1, redaction is a pure
  * function of the text and the lossless compression stage is deterministic per

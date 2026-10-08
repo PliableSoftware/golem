@@ -226,7 +226,7 @@ export default function register(program: Command): void {
           keepCredential: opts.keepCredential,
         });
         const credential = opts.keepCredential
-          ? `Its stored credential was KEPT'— remove it with: golem gateway logout ${id}.`
+          ? `Its stored credential was KEPT — remove it with: golem gateway logout ${id}.`
           : result.credential_removed.length > 0
             ? `Logged out first — credential removed from: ${result.credential_removed.join(", ")}.`
             : "No stored credential to remove.";

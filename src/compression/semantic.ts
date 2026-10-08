@@ -32,7 +32,7 @@ export interface SemanticCompressor {
   /**
    * Compress `messages` at the given mode. MUST fail open: resolve `null` (not
    * reject) when the backend is unavailable/misbehaving, so the pipeline can skip
-   * the stage and keep the byte-faithful lossless body.
+   * the stage and keep the lossless body.
    */
   compress(
     messages: ReadonlyArray<Readonly<Record<string, unknown>>>,

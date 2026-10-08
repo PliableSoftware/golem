@@ -243,6 +243,14 @@ export function registerCoderTool(
         /** R13.12 — the subagent this work belongs to, when one is configured. */
         delegate_to: z.string().optional(),
         delegate_model: z.string().optional(),
+        /** Set when the draft was dispatched to a registry target (non-local routes). */
+        target: z.string().optional(),
+        /** The dispatched target's trust level. */
+        trust: z.string().optional(),
+        /** Which step of the resolution chain picked the target (R10.8). */
+        route: z.string().optional(),
+        /** Redaction placeholders applied to the outbound context. */
+        redacted_count: z.number().int().nonnegative().optional(),
         ...(editEnabled
           ? {
               edit: z
@@ -267,6 +275,10 @@ export function registerCoderTool(
         refinement: z
           .object({
             rounds: z.number().int().nonnegative(),
+            /** Why refinement ended (e.g. judge-unavailable, unparseable, error). */
+            status: z.string().optional(),
+            /** Which role produced the critique: "judge", or "drafter" as fallback. */
+            critiqued_by: z.string().optional(),
             critique_summary: z.string().optional(),
             issues: z.array(z.object({ severity: z.string(), description: z.string() })).optional(),
           })

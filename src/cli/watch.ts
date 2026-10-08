@@ -112,11 +112,11 @@ export function renderWatchFrame(
   if (s.tokens_before > 0 && s.tokens_after <= s.tokens_before) {
     const pct = Math.round(((s.tokens_before - s.tokens_after) / s.tokens_before) * 100);
     L.push(
-      `  ${green(`saved ${pct}%`)}  ${s.tokens_before} → ${s.tokens_after}  ` +
-        dim(`(${s.requests} request(s))`),
+      `  ${green(`est. saved ${pct}%`)}  ${s.tokens_before} → ${s.tokens_after}  ` +
+        dim(`(${s.requests} rewritten request(s); token counts are estimates)`),
     );
   } else {
-    L.push(dim("  no savings recorded yet"));
+    L.push(dim("  no net savings recorded yet"));
   }
   L.push(`  CCR refs: ${s.ccr_refs_stored} stored / ${s.ccr_refs_retrieved} retrieved`);
 
