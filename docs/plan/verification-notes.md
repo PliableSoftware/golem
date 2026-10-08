@@ -11002,3 +11002,28 @@ WITHOUT `01` is redacted.
   unchanged there too.
 - An id embedded in a longer run (URL path, `key=` query value) is still rewritten; `.`, `:`,
   whitespace and newline are delimiters, so the id survives beside a separately redacted secret.
+
+## 2026-10-08 — Windows lock and rename contention (EPERM/EACCES/EBUSY, not EEXIST)
+
+**Source:** CI, windows-latest / node 24: `file-driver-integrity` "survives many interleaved
+concurrent writers" failed `EPERM ... open '...\chunks.lock'` (errno -4048); earlier
+`device-sessions` failed `EPERM ... rename '...hosted-sessions.json.<id>.tmp'`. **[OBSERVED IN CI,
+not reproduced locally — Linux cannot raise these codes for these calls]**
+
+**Rule applied** (`src/shared/win-fs-retry.ts`):
+- Lock acquisition (`acquireLock` in `file-driver.ts`, `acquire` in `hooks/state-lock.ts`):
+  contention is EEXIST everywhere; on win32 also EPERM, EACCES, EBUSY. Retried until the existing
+  deadline; the timeout behaviour is unchanged (driver throws, hook lock runs unlocked with a
+  stderr note). On non-win32 EPERM/EACCES stay fatal.
+- Temp-then-rename writes: on win32, `rename` retries EPERM/EBUSY/EACCES, 10 tries 50 ms apart
+  (~450 ms), then rethrows; the temp file is removed on final failure.
+- Lock ownership token and stale-break (rename aside, re-check token) are untouched.
+
+**Scope:** the shared helper `replaceViaTemp`/`writeAtomic` (`config/file-io.ts`, used by
+`host-registry.ts` for `hosted-sessions.json`), `file-driver.ts` flush, and `join-queue.ts` enqueue
+use it. About 17 other modules hand-roll `${file}.${pid}.tmp` + `rename` (spawn-gate,
+delegation-ledger, session-state, snooze-nudge, conversation-store, tasks/store, ...) and still
+have the bare rename; migrate them to `renameWithRetry` as a follow-up.
+
+**Not simulable here:** the real Windows error codes. Tests inject `platform` and the failing
+create/rename; only windows-latest CI confirms the real fix.
