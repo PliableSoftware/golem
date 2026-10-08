@@ -122,8 +122,10 @@ describe("proxy upstream error mapping", () => {
     }
   });
 
-  it("bypass requests still reach the upstream when the pipeline is broken", async () => {
+  it("x-golem-bypass no longer skips a broken pipeline: it fails closed like any request (DUSTSEC.2)", async () => {
+    let upstreamHits = 0;
     const upstream = await startUpstream((_req, res) => {
+      upstreamHits += 1;
       res.writeHead(200, { "content-type": "application/json" });
       res.end('{"ok":true}');
     });
@@ -138,9 +140,10 @@ describe("proxy upstream error mapping", () => {
         headers: { "x-golem-bypass": "true" },
         body: "{}",
       });
-      // Bypass never touches the pipeline, so it survives pipeline bugs.
-      expect(response.status).toBe(200);
-      expect(response.body.toString("utf8")).toBe('{"ok":true}');
+      // The header is not a bypass, so the pipeline ran, failed, and with no
+      // redaction-only fallback the request was refused (DUSTSEC.1).
+      expect(response.status).toBeGreaterThanOrEqual(500);
+      expect(upstreamHits).toBe(0);
     } finally {
       await proxy.close();
       await upstream.close();

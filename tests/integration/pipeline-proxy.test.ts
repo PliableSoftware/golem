@@ -99,7 +99,7 @@ describe("pipeline through the proxy", () => {
     }
   });
 
-  it("bypass header forces pure passthrough (secret forwarded untouched)", async () => {
+  it("x-golem-bypass header is NOT a bypass: the secret is still redacted (DUSTSEC.2)", async () => {
     const up = recordingUpstream();
     const upstream = await startUpstream(up.handler);
     const proxy = await startProxy({ upstreamBaseUrl: upstream.origin, pipeline: pipelineFor(1) });
@@ -113,8 +113,9 @@ describe("pipeline through the proxy", () => {
         headers: { "content-type": "application/json", "x-golem-bypass": "1" },
         body,
       });
-      // Bypass means the pipeline never runs — original bytes pass through.
-      expect(up.received.body).toBe(body);
+      // The header was retired: the pipeline runs and redacts like any request.
+      expect(up.received.body).not.toContain(AWS_SECRET);
+      expect(up.received.body).toContain("[REDACTED:aws-key:1]");
     } finally {
       await proxy.close();
       await upstream.close();

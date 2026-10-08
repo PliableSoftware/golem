@@ -1,6 +1,6 @@
 /**
- * WS-A A1 — header forwarding, x-golem-bypass semantics, and the request
- * pipeline seam.
+ * WS-A A1 — header forwarding, the retired x-golem-bypass header (DUSTSEC.2: it
+ * bypasses nothing), and the request pipeline seam.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,8 +15,8 @@ import {
 
 /**
  * Test-only pipeline that visibly mutates requests. The production default
- * is the identity; this exists to prove (a) the seam is invoked, and
- * (b) bypass skips it entirely.
+ * is the identity; this exists to prove the seam is invoked, and that no
+ * request header can skip it.
  */
 const markerPipeline: RequestPipeline = {
   name: "marker",
@@ -28,7 +28,7 @@ const markerPipeline: RequestPipeline = {
     }),
 };
 
-describe("proxy header forwarding and bypass", () => {
+describe("proxy header forwarding and the pipeline seam", () => {
   let upstream: FakeUpstream;
   let proxy: RunningProxy;
   let pipelined: RunningProxy;
@@ -104,27 +104,18 @@ describe("proxy header forwarding and bypass", () => {
     expect(echoed.bodyUtf8).toBe("original+pipeline");
   });
 
-  it("x-golem-bypass guarantees pure passthrough — pipeline skipped entirely", async () => {
-    const response = await rawRequest(pipelined.origin, "/v1/messages", {
-      method: "POST",
-      headers: { "x-golem-bypass": "true" },
-      body: "original",
-    });
-    const echoed = JSON.parse(response.body.toString("utf8"));
-    expect(echoed.headers["x-golem-pipeline"]).toBeUndefined();
-    expect(echoed.headers["x-golem-bypass"]).toBeUndefined();
-    expect(echoed.bodyUtf8).toBe("original");
-  });
-
-  it("treats an explicit negative bypass value as not bypassed", async () => {
-    const response = await rawRequest(pipelined.origin, "/v1/messages", {
-      method: "POST",
-      headers: { "x-golem-bypass": "false" },
-      body: "original",
-    });
-    const echoed = JSON.parse(response.body.toString("utf8"));
-    expect(echoed.headers["x-golem-pipeline"]).toBe("ran");
-    // The control header itself is still never forwarded.
-    expect(echoed.headers["x-golem-bypass"]).toBeUndefined();
+  it("x-golem-bypass no longer bypasses — the pipeline still runs (DUSTSEC.2), and the header is still stripped", async () => {
+    for (const value of ["true", "1", "false"]) {
+      const response = await rawRequest(pipelined.origin, "/v1/messages", {
+        method: "POST",
+        headers: { "x-golem-bypass": value },
+        body: "original",
+      });
+      const echoed = JSON.parse(response.body.toString("utf8"));
+      expect(echoed.headers["x-golem-pipeline"]).toBe("ran");
+      expect(echoed.bodyUtf8).toBe("original+pipeline");
+      // A retired control name is never forwarded to a provider.
+      expect(echoed.headers["x-golem-bypass"]).toBeUndefined();
+    }
   });
 });

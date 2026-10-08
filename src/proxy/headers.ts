@@ -7,7 +7,6 @@
  */
 
 import type { IncomingHttpHeaders } from "node:http";
-import { BYPASS_HEADER } from "./types.js";
 
 /** RFC 9110 §7.6.1 hop-by-hop headers — never forwarded in either direction. */
 const HOP_BY_HOP = new Set([
@@ -42,8 +41,15 @@ function connectionListedHeaders(headers: IncomingHttpHeaders): Set<string> {
 }
 
 /**
+ * The retired per-request bypass header (DUSTSEC.2). It no longer changes any
+ * behaviour — a request carrying it is redacted like any other — but it is still
+ * stripped, so a stale client never forwards a Golem control name to a provider.
+ */
+const RETIRED_BYPASS_HEADER = "x-golem-bypass";
+
+/**
  * Headers to forward upstream: incoming headers minus hop-by-hop headers,
- * proxy-owned request headers, and the `x-golem-bypass` control header.
+ * proxy-owned request headers, and the retired `x-golem-bypass` header.
  */
 export function forwardableRequestHeaders(
   headers: IncomingHttpHeaders,
@@ -53,7 +59,7 @@ export function forwardableRequestHeaders(
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
     if (HOP_BY_HOP.has(name) || REQUEST_STRIPPED.has(name) || alsoStripped.has(name)) continue;
-    if (name === BYPASS_HEADER) continue;
+    if (name === RETIRED_BYPASS_HEADER) continue;
     // Node joins duplicate headers; names are already lowercased.
     out[name] = value;
   }
@@ -76,16 +82,4 @@ export function forwardableResponseHeaders(
     out[lower] = value;
   }
   return out;
-}
-
-/**
- * Whether the request demands pure passthrough. Any value other than an
- * explicit negative ("false" / "0") counts as set, so `x-golem-bypass: true`
- * and a bare `x-golem-bypass: 1` both bypass.
- */
-export function isBypassRequest(headers: IncomingHttpHeaders): boolean {
-  const raw = headers[BYPASS_HEADER];
-  if (raw === undefined) return false;
-  const value = (Array.isArray(raw) ? (raw[raw.length - 1] ?? "") : raw).trim().toLowerCase();
-  return value !== "false" && value !== "0" && value !== "";
 }

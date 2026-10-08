@@ -407,8 +407,9 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
 
 export default function register(program: Command): void {
   // `golem on` / `golem off` — the master switch. R11.3: both PERSIST
-  // `proxy.bypass_all` and then apply it live, so the state survives a restart
-  // and every status surface can see it (see pipeline-switch.ts).
+  // `proxy.bypass_all`, so the state survives a restart and every status surface
+  // can see it; a running proxy takes it on `golem proxy restart` (DUSTSEC.2
+  // removed the live admin endpoint — see pipeline-switch.ts).
   program
     .command("on")
     .description("Enable the proxy pipeline (redaction, compression, brevity) — persists")
