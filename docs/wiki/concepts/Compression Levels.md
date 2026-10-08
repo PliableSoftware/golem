@@ -4,7 +4,7 @@ type: concept
 tags: [pipeline, compression, brevity, redaction, adr-0004, decision-31]
 sources: [src/interfaces/policy.ts, src/pipeline/brevity.ts, docs/decisions/ADR-0004-retire-the-slider.md, docs/plan/verification-notes.md]
 created: 2026-08-20
-updated: 2026-09-02
+updated: 2026-10-08
 ---
 
 # Compression Levels
@@ -17,7 +17,7 @@ Golem has **two dials**, set directly, and nothing above them:
 | `brevity.level` | `off` · `lite` · `full` · `ultra` | how terse the model's own replies are |
 
 ```
-golem compression 1     # lossless — byte-faithful
+golem compression 1     # lossless — prefix-stable
 golem brevity full      # telegraphic replies
 ```
 
@@ -29,9 +29,14 @@ them live. Neither needs a restart.
 | level | redaction | lossless | semantic | notes |
 | --- | --- | --- | --- | --- |
 | `off` | ✅ | — | — | redaction ONLY. Not a bypass. |
-| `1` | ✅ | ✅ | — | byte-faithful; meaning preserved exactly. The default. |
-| `2` | ✅ | ✅ | stale-turn drop | lossy; gated off on a caching upstream. |
-| `3` | ✅ | ✅ | max | lossy; gated off on a caching upstream. |
+| `1` | ✅ | ✅ | — | lossless and prefix-stable: duplicates become recoverable `hash=` markers and tool-result whitespace is compacted; meaning preserved. The default. |
+| `2` | ✅ | ✅ | stale-turn drop | lossy; gated off on a caching upstream; needs `compression.headroom_sidecar`, as level 3 does. |
+| `3` | ✅ | ✅ | max | lossy; gated off on a caching upstream; needs `compression.headroom_sidecar`. |
+
+**The dial governs the request pipeline only.** The PostToolUse hook's CCR swap
+of oversized tool output (see [[Compression]]) is dial-independent: it fires at
+`off` as well, because it never reads `compression.level`. "Off" means no
+request-pipeline compression, not no CCR swap.
 
 **Every level redacts.** That is a property of the type, not a rule someone
 remembered to enforce: no row of the stage table has `redaction: false`, so "a
@@ -78,7 +83,10 @@ whatever the level.
 
 ### Setting it vs shipping it
 
-Changing the **dial** takes effect on the next request, live, as above. Changing
+Changing the **dial** takes effect on the next request, live, as above. The
+rule that no *tool call* (model or MCP) may change pipeline depth binds those
+callers only; a human write of `compression.level` through the panel or remote
+is allowed (USER decision R12), and redaction is untouchable from every surface. Changing
 the **directive text** is a code change: it needs a rebuild and a proxy restart,
 and it invalidates the cached system prefix once — by design, since the prefix
 must stay byte-stable at a given level or the cache would flap and cost more
@@ -90,10 +98,19 @@ than the stage saves. See [[Configuration Surfaces]] for which layer wins.
 golem config set proxy.bypass_all true
 ```
 
-Forwards every request byte-faithfully — **redaction included in what is
+Forwards every request untouched — **redaction included in what is
 skipped**. It is never the default, it is settable only from the CLI (a tool
 call must not be able to switch redaction off), and every surface says so loudly
-while it is on.
+while it is on. A PreToolUse hook denies the documented agent spellings
+(`golem off`, `golem config set` naming `proxy.bypass_all`, a truthy
+`GOLEM_PROXY_BYPASS_ALL`, settings-file edits that set it;
+`src/hooks/bypass-guard.ts`, DUSTSEC.3). That is a deny, **not a sandbox**: an
+agent with arbitrary shell has process authority. There is no per-request header
+or HTTP endpoint that does this; both were removed (DUSTSEC.2).
+
+The bypass **shim** (what runs while the proxy is "stopped") is not the same
+thing: it runs redaction on and no compression (`SHIM_POLICY` is the `off`
+policy, `src/cli/proxy-runtime.ts:55`, DUSTSEC.12).
 
 It is deliberately NOT a value of `compression.level`. Compression and redaction
 are different guarantees, and folding them into one word is how someone turns

@@ -4,7 +4,7 @@ type: concept
 tags: [tokens, observability, proxy, context]
 sources: ["src/proxy/context-ledger.ts", "src/cli/context.ts", "docs/plan/verification-notes.md (§93, §95, §100)", "docs/wiki/debriefs/2026-07-30-r8.4-context-ledger.md"]
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-10-08
 ---
 
 # Context Ledger
@@ -55,7 +55,11 @@ that skill reasoned blind.
 - **Clock-free pipeline.** `ContextLedgerCore` is pure; the CLI layer stamps
   `capturedAt`. Same convention as `recordPipelineEvent` and for the same reason —
   the pipeline is under a standing obligation not to read the wall clock.
-- **Latest-only, fail-open.** One atomic temp+rename write per request to
+- **Latest-only, fail-open.** One atomic temp+rename write per **pipeline event** (not per request: a
+  request the pipeline leaves unchanged returns before the event is emitted, so
+  it writes nothing — `src/pipeline/pipeline.ts:766-769`, sink
+  `src/cli/proxy-build/telemetry-hooks.ts:49`, write
+  `src/proxy/context-ledger.ts:430-440`) to
   `.golem/state/context-ledger.json`, no history: per-request history is already
   covered by the savings/usage events, and a durable write per request for a
   value only the newest copy of which is useful is a bad trade. Errors are ignored,
@@ -63,8 +67,10 @@ that skill reasoned blind.
 - **Estimates, not a tokenizer.** `estimateTokens` (4 chars/token). Good enough to
   rank buckets; never quoted as a bill. The billed numbers come from the R1.1 usage
   sniffer.
-- **Never written at level 0** — passthrough is a full bypass, so there is nothing
-  to record.
+- **Never written under `proxy.bypass_all`** — a bypassed request never enters the
+  pipeline, so there is nothing to record. There is no "level 0": the dial is
+  `off | 1 | 2 | 3`, and `off` still runs the pipeline (redaction only), so it can
+  write a ledger whenever it emits an event.
 
 ## What it has already changed
 
@@ -80,8 +86,9 @@ building it rather than reasoning about context bloat from first principles.
 
 Also notable and not yet actionable: thinking blocks were 54,074 tokens (17.6%) in
 the §95 capture — a bucket nothing in Golem touches, and one that *cannot* be
-touched at levels ≤1, since [[Compression Levels]] requires thinking blocks to pass
-through byte-faithful. Anyone proposing to drop old thinking is proposing a
+touched at levels ≤1, since the lossless levels leave thinking blocks unchanged
+(see [[Compression Levels]]): the lossless stage only touches user-side text and
+`tool_result` text (`src/compression/native-lossless.ts:36-38`). Anyone proposing to drop old thinking is proposing a
 fidelity-rule change, not a tuning knob.
 
 ## Reading it honestly
