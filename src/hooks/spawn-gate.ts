@@ -51,6 +51,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { LimitPrediction } from "../proxy/limit-prediction.js";
 import { STALE_AFTER_MS } from "./snooze-nudge.js";
+import { withFileLock } from "./state-lock.js";
 
 /**
  * Claude Code's subagent-spawn tool, under both names it has shipped with
@@ -272,6 +273,19 @@ export async function writeSpawnGateState(
   const tmp = `${file}.${process.pid}.tmp`;
   await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   await rename(tmp, file);
+}
+
+/**
+ * Load -> `fn` -> save the spawn ledger under a lock, so concurrent hook
+ * processes cannot overwrite each other's update.
+ */
+export async function updateSpawnGateState(
+  projectDir: string,
+  fn: (state: SpawnGateState) => SpawnGateState,
+): Promise<void> {
+  await withFileLock(spawnGateStatePath(projectDir), async () => {
+    await writeSpawnGateState(projectDir, fn(await readSpawnGateState(projectDir)));
+  });
 }
 
 /**

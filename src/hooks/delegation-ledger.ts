@@ -56,6 +56,7 @@
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { withFileLock } from "./state-lock.js";
 
 /** One dispatched subagent, and whether its output has been reviewed. */
 export interface DelegationRecord {
@@ -127,6 +128,21 @@ export async function writeDelegationLedger(
   const tmp = `${file}.${process.pid}.tmp`;
   await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
   await rename(tmp, file);
+}
+
+/**
+ * Load -> append -> save under a lock. Concurrent spawns each run this in their
+ * own hook process; without the lock the later save overwrites the earlier one
+ * (a lost delegation is a lost review obligation) and both pick the same seq id.
+ */
+export async function recordDelegation(
+  projectDir: string,
+  entry: Omit<DelegationRecord, "id">,
+): Promise<void> {
+  await withFileLock(delegationLedgerPath(projectDir), async () => {
+    const ledger = await readDelegationLedger(projectDir);
+    await writeDelegationLedger(projectDir, appendDelegation(ledger, entry));
+  });
 }
 
 /** A short, collision-resistant-enough id for one delegation. */
