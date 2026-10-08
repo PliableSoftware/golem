@@ -2,9 +2,9 @@
 title: LSP Bridge
 type: concept
 tags: [lsp, ext, mcp, tools, tier-2, context-economy]
-sources: ["src/ext/lsp/", "src/mcp/server.ts", "src/ext/manifest.ts", "docs/plan/verification-notes.md (§109)", "docs/plan/tasks/R8.6.md"]
+sources: ["src/pkg/lsp/", "src/mcp/code-tool.ts", "src/pkg/manifest.ts", "docs/plan/verification-notes.md (§109)", "docs/plan/tasks/R8.6.md"]
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-10-08
 ---
 
 # LSP Bridge
