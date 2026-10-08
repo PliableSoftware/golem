@@ -1,5 +1,5 @@
 /**
- * `src/ext/lsp/` — the R8.6 language-server bridge.
+ * `src/pkg/lsp/` — the R8.6 language-server bridge.
  *
  * A tier-2 spawn target (Decision 53): the user installs the server, Golem
  * spawns it at need and degrades to a no-op without it. The four questions it
