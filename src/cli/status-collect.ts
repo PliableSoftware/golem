@@ -428,12 +428,13 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
     blocked: blockedView(resolveBlock(await readSessionState(projectDir))),
     warnings: [
       ...(cachedUpdate?.latest != null && semverGt(cachedUpdate.latest, options.version)
-        ? [...updateWarnings(cachedUpdate.latest), ...warnings]
-        : // R11.1: redaction-off is `proxy.bypass_all` now, not a level (ADR-0004).
-          // Same warning, keyed off the setting that actually does it.
-          settings.proxy.bypass_all
-          ? [...warnings, REDACTION_OFF_WARNING]
-          : warnings),
+        ? updateWarnings(cachedUpdate.latest)
+        : []),
+      ...warnings,
+      // R11.1: redaction-off is `proxy.bypass_all` now, not a level (ADR-0004).
+      // Same warning, keyed off the setting that actually does it. Independent of
+      // the update notice: an available update must never hide it (DUST3.4 S11).
+      ...(settings.proxy.bypass_all ? [REDACTION_OFF_WARNING] : []),
       ...(limits?.stale ? [LIMIT_STALE_WARNING] : []),
       // R9.4: a `worker_targets` key naming no worker would otherwise be silently
       // ignored — the failure mode the map shape trades per-key schema docs for.

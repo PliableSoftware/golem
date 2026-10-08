@@ -117,6 +117,24 @@ export async function restartProxyDetached(
 }
 
 /**
+ * The pipeline line of `golem proxy status` for a normal (non-shim) daemon.
+ * `proxy.bypass_all` runs a normal daemon with the pipeline disabled, so the
+ * process looks identical to a healthy one; the setting is the only evidence,
+ * and redaction is off with it (ADR-0004), so say so loudly (DUST3.4 S12).
+ */
+export function renderPipelineLine(bypassAll: boolean): string {
+  if (bypassAll) {
+    return (
+      "  ⚠ proxy.bypass_all is ON: the pipeline is OFF and REDACTION IS OFF — requests are forwarded raw,\n" +
+      "    secrets and PII reach the upstream unredacted (a daemon started before the setting changed\n" +
+      "    keeps redacting until `golem proxy restart`). `golem on` turns it back on.\n"
+    );
+  }
+  // R9.23: pipeline state is an in-process toggle, not a separate binary.
+  return "  Pipeline is active. Run `golem off` to disable (pass-through); `golem on` to re-enable.\n";
+}
+
+/**
  * Start the daemon if nothing is listening on `port` (shared by `golem on` and
  * `golem off`). The SessionStart hook does NOT call this: `hook session-start` in
  * `prompt-guidance.ts` carries its own recovery, which also honours the recorded
@@ -465,6 +483,7 @@ export default function register(program: Command): void {
           process.stdout.write(
             `${JSON.stringify({
               ...st,
+              bypass_all: (await loadConfig({ projectDir: opts.dir })).settings.proxy.bypass_all,
               upstream,
               wiring: wiring.owner,
               wiring_base_url: wiring.baseUrl,
@@ -494,10 +513,8 @@ export default function register(program: Command): void {
         process.stdout.write(
           `golem proxy: running (pid ${st.pid ?? "?"}) on port ${st.port ?? port} -> ${upstream}\n`,
         );
-        // R9.23: pipeline state is an in-process toggle, not a separate binary.
-        process.stdout.write(
-          "  Pipeline is active. Run `golem off` to disable (pass-through); `golem on` to re-enable.\n",
-        );
+        const { settings } = await loadConfig({ projectDir: opts.dir });
+        process.stdout.write(renderPipelineLine(settings.proxy.bypass_all));
         const gap = wiringGap(wiring, ourBaseUrl);
         if (gap !== null) {
           process.stdout.write(

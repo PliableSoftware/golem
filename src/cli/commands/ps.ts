@@ -10,7 +10,7 @@
  *   - mcp serve: session registry under <project>/.golem/state/hosted-sessions.json
  *   - statusline: machine-wide `node.exe` scan for `@pliable/golem ... statusline`
  *     candidates, each proven live/dead via the same parentage walk as mcp/proxy
- *   - dashboard: not yet tracked (no pidfile)
+ *   (The dashboard has no pidfile, so `ps` does not list it.)
  *
  * `golem ps --prune` removes ONLY processes Golem can prove are its own AND
  * are not serving a live session. Parentage is the evidence — walk to the
@@ -35,7 +35,7 @@ function _fail(err: unknown): never {
 /** Represents a Golem-owned process. */
 export interface GolemProcess {
   readonly pid: number;
-  readonly kind: "proxy" | "mcp" | "statusline" | "dashboard";
+  readonly kind: "proxy" | "mcp" | "statusline";
   readonly projectDir: string;
   readonly startedAt: string;
   readonly rssMb: number;
@@ -775,9 +775,7 @@ async function pruneProcesses(
 export default function register(program: Command): void {
   program
     .command("ps")
-    .description(
-      "List Golem-owned processes on this machine (proxy, mcp serve, statusline, dashboard)",
-    )
+    .description("List Golem-owned processes on this machine (proxy, mcp serve, statusline)")
     .option("--dir <path>", "project directory (limits to this project)", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .option("--prune", "remove stale/idle processes Golem owns and can prove are not live", false)

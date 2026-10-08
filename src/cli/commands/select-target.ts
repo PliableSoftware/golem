@@ -16,9 +16,10 @@
 
 import { loadConfig } from "../../config/index.js";
 import { resolveUpstreamDisplay } from "../../providers/index.js";
-import { collectGateways, credentialEnvForProxy, useGateway } from "../gateways.js";
+import { collectGateways, useGateway } from "../gateways.js";
 import { InitError } from "../init.js";
-import { portInUse, startDetached, stopProxy, waitForPortFree } from "../proxy-daemon.js";
+import { portInUse } from "../proxy-daemon.js";
+import { restartProxyDetached } from "./proxy.js";
 
 /**
  * The port (and display upstream) this project's proxy uses. Moved here from
@@ -40,20 +41,6 @@ export async function resolvePort(
     upstream: resolveUpstreamDisplay(settings.proxy).baseUrl,
     compression: settings.compression.level,
   };
-}
-
-/** Stop, wait for the port, and start a fresh detached proxy. */
-export async function restartProxyDetached(
-  dir: string,
-  portOpt?: string,
-): Promise<{ pid: number; port: number; upstream: string }> {
-  const { port, upstream } = await resolvePort(dir, portOpt);
-  await stopProxy(dir);
-  await waitForPortFree(port);
-  const credEnv = await credentialEnvForProxy(dir);
-  const pid = await startDetached(dir, port, process.argv[1] ?? "", credEnv);
-  if (pid === null) throw new InitError(`proxy did not come up on port ${port}`);
-  return { pid, port, upstream };
 }
 
 /**
