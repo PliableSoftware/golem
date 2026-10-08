@@ -22,7 +22,7 @@ import { contentHashIndex } from "../knowledge/web-cache.js";
 
 import { createGolemPipeline } from "../pipeline/index.js";
 import type { LoadedPlugins } from "../plugins/index.js";
-import { listTargets, type UpstreamProvider } from "../providers/index.js";
+import { listTargets, resolveDefaultTargetId, type UpstreamProvider } from "../providers/index.js";
 import { GolemProxy } from "../proxy/index.js";
 import { FileJoinQueue } from "../session/join-queue.js";
 import { LiveConversationRegistry } from "../session/live-conversations.js";
@@ -36,6 +36,12 @@ import {
 } from "./proxy-build/telemetry-hooks.js";
 import { buildUpstreamWiring, resolveProxyUpstream } from "./proxy-build/upstream-resolution.js";
 import { createRouteResolver, type VisionLookup } from "./route-resolver.js";
+
+/** True when the selected default target id matches no entry in the registry. */
+function unknownDefaultTarget(proxy: Parameters<typeof listTargets>[0]): boolean {
+  const id = resolveDefaultTargetId(proxy);
+  return !listTargets(proxy).some((t) => t.id === id);
+}
 
 /**
  * The bypass shim's fixed policy (Decision 56(c)): compression `off` — redaction
@@ -315,11 +321,14 @@ export function buildProxyFromSettings(
     ...(mapUpstreamHeaders !== undefined ? { mapUpstreamHeaders } : {}),
     ...(translateUpstream !== undefined ? { translateUpstream } : {}),
     // R9.2: serve every configured target, selected per request by an explicit
-    // act. Enabled only when the registry holds more than the synthetic default
-    // — with one target the resolver would decide the same thing on every
-    // request, so leaving it absent keeps the single-upstream path byte-for-byte
-    // the code it has always been.
-    ...(listTargets(proxyWithDefault).length > 1 && build.shim !== true
+    // act. Enabled when the registry holds more than the synthetic default, OR
+    // when the selected default names no target at all (DUSTSEC.15 / V2): an
+    // unknown default always fails closed, and the resolver is the one place
+    // that refuses. Otherwise, with one target the resolver would decide the
+    // same thing on every request, so leaving it absent keeps the
+    // single-upstream path byte-for-byte the code it has always been.
+    ...((listTargets(proxyWithDefault).length > 1 || unknownDefaultTarget(proxyWithDefault)) &&
+    build.shim !== true
       ? {
           resolveRoute: createRouteResolver({
             settings: proxyWithDefault,
