@@ -39,6 +39,7 @@ import {
   type TargetDispatcherOptions,
 } from "../inference/target-dispatcher.js";
 import { persistSnoozeNote } from "../mcp/snooze-note.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { perGatewayEnvVar, withDefaultTarget } from "../providers/index.js";
 import { readLimitState } from "../proxy/limit-prediction.js";
 import { decideInFlight, decidePreflight, deferralChannelMessage } from "./limit-guard.js";
@@ -231,6 +232,9 @@ export async function runAcpTurn(input: RunAcpTurnInput): Promise<TurnResult> {
 
 async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
   const now = input.deps?.now ?? (() => Date.now());
+  // DUSTSEC.17 / R6: this process redacts and dispatches prompts to remote
+  // targets, so it needs the project's plugin rules. Never throws; built-ins stay.
+  await ensurePluginRedactionRules(input.projectDir);
   const { settings } = await loadConfig({
     projectDir: input.projectDir,
     ...(input.deps?.userDir !== undefined ? { userDir: input.deps.userDir } : {}),

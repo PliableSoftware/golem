@@ -13,6 +13,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runAcpTurn } from "../../../src/buzz/acp-turn.js";
 import { appendNote } from "../../../src/cli/notes.js";
 import { type HookIo, runPostToolUseHook, runWebFetchPost } from "../../../src/hooks/index.js";
 import { WebCache, webCacheDir } from "../../../src/knowledge/web-cache.js";
@@ -198,5 +199,61 @@ describe("a plugin rule redacts on the hook, vibe, join-queue and note paths", (
     await writeProject({});
     const entry = await appendNote(projectDir, `remember ${TOKEN}`, "2026-10-08T00:00:00.000Z");
     expect(entry.text).toContain(TOKEN);
+  });
+});
+
+describe("golem acp (DUSTSEC.17)", () => {
+  async function dispatchedBody(settings: Record<string, unknown>): Promise<string> {
+    await mkdir(path.join(projectDir, ".golem"), { recursive: true });
+    await writeFile(
+      path.join(projectDir, ".golem", "settings.json"),
+      `${JSON.stringify(settings)}\n`,
+      "utf8",
+    );
+    await writeFile(path.join(projectDir, "acme-plugin.mjs"), PLUGIN_SRC, "utf8");
+    let body = "";
+    const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+      body += String(init?.body ?? "");
+      return new Response(JSON.stringify({ model: "m", content: [{ type: "text", text: "ok" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    await runAcpTurn({
+      projectDir,
+      personaId: "echo",
+      promptText: `ping ${TOKEN}`,
+      emit: () => {},
+      deps: {
+        userDir: path.join(base, "user"),
+        dispatcherOverrides: { fetchImpl, env: {}, resolveKey: () => "fake-key" },
+      },
+    });
+    return body;
+  }
+
+  const ACP_SETTINGS = {
+    proxy: {
+      upstream_provider: "anthropic",
+      upstream_base_url: "https://api.anthropic.com",
+      gateways: [
+        { id: "vendorgw", provider: "anthropic", base_url: "https://api.example.invalid" },
+      ],
+      targets: [
+        { id: "cheap", gateway: "vendorgw", model: { name: "cheap-sonnet" }, trust: "vendor" },
+      ],
+    },
+    inference: { personas: { echo: { model: "cheap" } } },
+  };
+
+  it("a plugin redaction rule applies to a prompt dispatched by the ACP turn", async () => {
+    const body = await dispatchedBody({ ...ACP_SETTINGS, ...WITH_PLUGIN });
+    expect(body).toContain("ping ");
+    expect(body).not.toContain(TOKEN);
+  });
+
+  it("control: with no plugin configured the token reaches the target (the probe is real)", async () => {
+    const body = await dispatchedBody(ACP_SETTINGS);
+    expect(body).toContain(TOKEN);
   });
 });
