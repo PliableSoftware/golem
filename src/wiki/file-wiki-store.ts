@@ -8,14 +8,31 @@
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pipelineRedact, stripKnownSecrets } from "../hooks/redact.js";
 import type { WikiFrontmatter, WikiPage, WikiStore, WikiUpsertInput } from "../interfaces/index.js";
 import { UnknownWikiPageError, WikiWriteConflictError } from "../interfaces/index.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { extractWikilinks, parseFrontmatter, serializeFrontmatter } from "./frontmatter.js";
 
 export interface FileWikiStoreOptions {
   readonly wikiDir: string;
   /** Today's date as YYYY-MM-DD; injected for tests. */
   readonly now?: () => string;
+  /**
+   * Project directory whose plugin redaction rules apply to writes (DUSTSEC.8).
+   * Omit and only the built-in rules run; they always run.
+   */
+  readonly projectDir?: string;
+}
+
+/** The pipeline stage first, the built-in secret-strip floor on top (hooks/redact.ts). */
+function redact(text: string): string {
+  return stripKnownSecrets(pipelineRedact(text));
+}
+
+/** `foo` and `foo.md` name the same page; readPage has always appended the suffix. */
+function withMdSuffix(relPath: string): string {
+  return relPath.endsWith(".md") ? relPath : `${relPath}.md`;
 }
 
 function toPosix(p: string): string {
@@ -37,9 +54,11 @@ function union(base: readonly string[], extra: readonly string[]): readonly stri
 export class FileWikiStore implements WikiStore {
   private readonly wikiDir: string;
   private readonly now: () => string;
+  private readonly projectDir: string | undefined;
 
   constructor(options: FileWikiStoreOptions) {
     this.wikiDir = options.wikiDir;
+    this.projectDir = options.projectDir;
     this.now = options.now ?? (() => new Date().toISOString().slice(0, 10));
   }
 
@@ -122,7 +141,20 @@ export class FileWikiStore implements WikiStore {
       .map((p) => p.relPath);
   }
 
-  async upsertPage(input: WikiUpsertInput): Promise<WikiPage> {
+  async upsertPage(rawInput: WikiUpsertInput): Promise<WikiPage> {
+    // Redact BEFORE anything is compared or stored: the page lands in a
+    // committed tree, and the result handed back to the caller is this page.
+    if (this.projectDir !== undefined) await ensurePluginRedactionRules(this.projectDir);
+    const input: WikiUpsertInput = {
+      relPath: withMdSuffix(rawInput.relPath),
+      frontmatter: {
+        ...rawInput.frontmatter,
+        title: redact(rawInput.frontmatter.title),
+        tags: rawInput.frontmatter.tags.map(redact),
+        sources: rawInput.frontmatter.sources.map(redact),
+      },
+      body: redact(rawInput.body),
+    };
     const existing = await this.readAt(input.relPath);
     const today = this.now();
 

@@ -149,7 +149,10 @@ export default function register(program: Command): void {
         let knowledge: KnowledgeBase | undefined;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled
-          ? new FileWikiStore({ wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir) })
+          ? new FileWikiStore({
+              wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir),
+              projectDir: opts.dir,
+            })
           : undefined;
         if (settings.knowledge.enabled) {
           try {
