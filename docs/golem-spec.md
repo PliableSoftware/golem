@@ -74,7 +74,7 @@ The tier boundaries are the code's (`tierForMemoryMiB`, `src/inference/capabilit
 
 ## 2. Architecture Overview
 
-A **hub-and-worker** design with three integration surfaces sharing one core engine.
+A **hub-and-worker** design with three integration surfaces sharing one logical engine. *(Rebaseline 2026-10-08: two surfaces ship — the proxy and the MCP server; the SDK box below is not built, §12. The "hub" is two local processes, see §2.1. The LAN worker boxes are the fleet module, DUST2.25: today a LAN machine is an Ollama URL, not a Golem worker agent.)*
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -85,7 +85,7 @@ A **hub-and-worker** design with three integration surfaces sharing one core eng
 ┌──────▼──────────────▼──────────────────▼────────────────┐
 │  GOLEM HUB (one machine, always on)                     │
 │  ┌────────────┐ ┌───────────┐ ┌──────────────────────┐  │
-│  │ API Proxy  │ │ MCP Server│ │ Python/TS SDK        │  │
+│  │ API Proxy  │ │ MCP Server│ │ SDK (not built)      │  │
 │  └─────┬──────┘ └─────┬─────┘ └─────────┬────────────┘  │
 │        └──────────────┼──────────────────┘              │
 │              ┌────────▼─────────┐                       │
@@ -113,22 +113,22 @@ A **hub-and-worker** design with three integration surfaces sharing one core eng
 
 ### 2.1 Integration surfaces
 
-**DECIDED (v0.2): single process, two doors, one-command install.** Golem ships as one local service exposing the proxy and the MCP server simultaneously, sharing one engine/cache/index. Install and adoption flow:
+**DECIDED (v0.2), corrected to the shipped shape: two processes, two doors, one logical engine, one-command install.** The proxy is a detached daemon (`src/cli/proxy-daemon.ts:451`). The MCP server is a per-session stdio child, `golem mcp serve` (`.mcp.json` → `src/cli/commands/mcp-serve.ts:141-143`), with a streamable-HTTP transport also available (`src/mcp/serve.ts:17,68`). They share on-disk state (knowledge index, CCR store, telemetry, `.golem/state/`), not memory. "One engine" means one codebase and one set of seams, not one process (DECISIONS.md A2/X1, doc follows code). Install and adoption flow:
 
-1. `npx @pliable/golem init` (MVP; later: single static binary / `brew install golem-run`)
-2. Init auto-detects Claude Code, sets `ANTHROPIC_BASE_URL=http://localhost:<port>`, runs `claude mcp add golem` — done.
-3. P0 lossless savings begin immediately, **no GPU and no model download required**.
-4. On first GPU-gated feature use, Golem detects Ollama (or offers to install it) and pulls the tier-appropriate models.
+1. `npx @pliable/golem init`, or the tiered installers `install/install.sh` / `install/install.ps1` (npm global, else a Bun-compiled standalone binary, else bootstrap Node; Decision 41). There is no Homebrew formula (`install.sh` uses brew only to install Node).
+2. Init detects Claude Code, writes the proxy wiring (`ANTHROPIC_BASE_URL=http://localhost:<port>`) into the gitignored `.claude/settings.local.json` (Decision 58), registers the MCP server, installs skills, hooks and guidance rules — done.
+3. Redaction and the lossless level (`compression.level` 1, the default) are active immediately, **no GPU and no model download required**. (Savings on cached Anthropic traffic are ~0%, Decision 23.)
+4. Ollama is never installed or pulled implicitly: `golem ollama setup` is the only call site, behind an explicit consent gate, and it pulls the tier's `drafter` model (`src/cli/ollama.ts:196`; Decision 26, DECISIONS.md A10 — the promise is narrowed to that model; embedding models are not pulled by it).
 
-Rationale: the proxy is the only mechanism that sees *every* request (Claude Code hooks only intercept tool I/O, not the model request stream), giving Headroom-style savings with zero client changes; MCP is the standard, documented way to give Claude instructable tools. The two compose: the proxy compresses, and Claude can call `get_original(ref)` via MCP to reverse it when needed.
+Rationale: the proxy is the only mechanism that sees *every* request (Claude Code hooks only intercept tool I/O, not the model request stream), giving Headroom-style savings with zero client changes; MCP is the standard, documented way to give Claude instructable tools. The two compose: the proxy compresses, and Claude can call the `expand` tool (or `/golem-expand`) to reverse a CCR reference when needed.
 
 | Surface | Mechanism | Primary use |
 |---|---|---|
-| **Transparent proxy** | `ANTHROPIC_BASE_URL` pointed at GOLEM HUB; hub forwards to `api.anthropic.com` | Automatic pre/post-processing for *any* client that honors the env var (Claude Code, all Anthropic SDKs). Claude Desktop/app cannot repoint its base URL → it gets MCP-only, which is acceptable: token pain concentrates in agentic workflows |
-| **MCP server** | stdio (local) + streamable HTTP (LAN) | Claude explicitly calls tools: `search_local`, `summarize_local`, `cache_lookup`, `delegate_task`, `index_path` |
-| **SDK** | Thin wrapper over Anthropic SDK | Your own apps get pipeline + tools programmatically |
+| **Transparent proxy** | `ANTHROPIC_BASE_URL` pointed at the Golem proxy; it forwards to `api.anthropic.com` by default, or to any gateway/target in the registry (`golem gateway`, `golem target`; ten providers, Decisions 22/32/46–48) | Automatic pre/post-processing for *any* client that honors the env var (Claude Code, all Anthropic SDKs). Claude Desktop/app cannot repoint its base URL → it gets MCP-only, which is acceptable: token pain concentrates in agentic workflows |
+| **MCP server** | stdio (local) + streamable HTTP | Claude explicitly calls the 11 registered tools: `code`, `coder`, `devices`, `snooze`, `search`, `fetch`, `ingest`, `expand`, `stats`, `wiki_read`, `wiki_upsert` (`src/mcp/*.ts` `registerTool`; names per Decisions 27/35; `summarize_local`, `cache_lookup` and `delegate_task` never shipped under any name) |
+| **SDK** | *(not built)* `src/index.ts` exports only the frozen interfaces and `VERSION`; any Anthropic-SDK client already gets the pipeline through the proxy | listed in §12 (no task) |
 
-The proxy handles *implicit* savings (compression, dedup, caching). MCP handles *explicit* delegation (Claude chooses to retrieve 5 relevant chunks instead of ingesting 50 files). Both share the same engine, caches, and indexes.
+The proxy handles *implicit* savings (compression, dedup, caching). MCP handles *explicit* delegation (Claude chooses to retrieve 5 relevant chunks instead of ingesting 50 files). Both share the same caches and indexes (on disk, across the two processes).
 
 **The layering rule between tools and skills (R9.11, 2026-08-13): skills orchestrate, tools execute — a skill never reimplements a capability an MCP tool already provides.**
 
@@ -143,18 +143,20 @@ The converse is the other half of the rule: a capability that is **rare, procedu
 
 Enforced by `tests/contract/skills-tools-layering.contract.test.ts`, which flags a `golem <verb>` invocation in any installed `SKILL.md` whose verb names a tool capability. A deliberate exception is declared in the skill as `<!-- golem:layering-exception <verb> — <reason> -->` and must carry a reason; the `bypass` skill's `off` verb uses it, because `proxy.bypass_all` turns redaction off and therefore must not be reachable from any tool call (ADR-0004).
 
-**No tool is demoted without a call count to justify it.** Asked of live telemetry on this project (2026-08-13, all-time window): `coder` 45, `search` 44, `wiki_read` 1, `ingest` 1, everything else zero — but the zeros were an **instrument gap, not evidence**. `expand`, `stats`, `level` and `devices` never called `instrumented()`, so three of the four demotion candidates could not be measured at all. R9.11 therefore cut nothing and fixed the instrument instead; the question is answerable next time, on numbers.
+**No tool is demoted without a call count to justify it.** Asked of live telemetry on this project (2026-08-13, all-time window): `coder` 45, `search` 44, `wiki_read` 1, `ingest` 1, everything else zero — but the zeros were an **instrument gap, not evidence**. `expand`, `stats`, `level` and `devices` never called `instrumented()`, so three of the four demotion candidates could not be measured at all. R9.11 therefore cut nothing and fixed the instrument instead; the question is answerable next time, on numbers. *(Rebaseline: the live set is now 11 tools, with `level` retired by ADR-0004 and `code`, `snooze`, `wiki_read`, `wiki_upsert` added. `devices` and `code` call `instrumented()`; `snooze` appears not to (a grep of `src/mcp/devices-snooze.ts` finds one call) — UNVERIFIED, not confirmed by running it.)*
 
 ### 2.2 Device registry & job scheduler
+*(Rebaseline 2026-10-08: **mostly not built.** Shipped: hardware tier detection and `golem devices` / the `devices` tool (`src/mcp/devices-snooze.ts`), and a device registry for *paired phones/companions* (ADR-0006 mTLS, `src/cli/commands/device.ts:51`), which is a different meaning of "device" from the GPU worker below. Not built: the worker agent reporting GPU/VRAM/load, the capability table and task→tier routing, hub↔worker mTLS (DUST2.25, open fleet question, §10). "Worker" in the code (`src/inference/workers.ts`) means a persona lane, not a LAN machine.)*
 - Workers run a lightweight agent that reports: GPU model, VRAM, current load, installed models, disk space.
 - Hub maintains a capability table and routes jobs by **task → minimum capability tier** (tiers map to the hardware profiles above):
   - **Tier 0 (CPU-only ok):** exact-match caching, dedup, redaction, chunking
-  - **Tier 1 (≥6GB VRAM / 16GB unified):** embeddings, reranking, OCR, Whisper transcription, 3–4B LLM
-  - **Tier 2 (≥12GB VRAM / 24GB unified):** 7–8B LLM (summarization, extraction, semantic compression, routing)
-  - **Tier 3 (≥24GB VRAM / 48GB unified, optional):** 14B LLM (drafting, judging, complex extraction) — a bonus tier, never assumed
-- Graceful degradation: if a tier is unavailable, tasks fall back one tier with a quality note, or to Claude Haiku via API if the user allows, or the stage is skipped.
+  - **Tier 1 (`< 8` GiB):** embeddings, ~3B LLM roles
+  - **Tier 2 (8–16 GiB):** ~7B LLM roles
+  - **Tier 3 (`> 16` GiB, optional):** ~14B LLM roles — a bonus tier, never assumed
+  - (Thresholds follow `tierForMemoryMiB`, §1; the 6 / 12 / 24 GB figures were superseded, DECISIONS.md A9. Reranking is the opt-in chat-judge; OCR and Whisper are not built.)
+- Graceful degradation (as intended): a missing capability disables or skips the stage. The "drop one tier with a quality note, or Haiku via API" ladder is not implemented as a general mechanism (SUMMARY 1.6/r031; UNVERIFIED beyond the `FallbackPolicy.allowHaiku` field in `src/inference/service.ts`).
 - **Single-machine mode is the default and primary deployment** (hub + worker co-located). Multi-machine LAN workers are an optional extension.
-- **LAN "lab" hardware is architected in from P0, delivered incrementally:** every backing service is URL-addressable in config from day one — inference endpoint (`OLLAMA_HOST` on a lab GPU box), Qdrant (embedded → server mode on a lab box or NAS), and the CCR/blob store (local dir → any S3-compatible endpoint, e.g. MinIO on a NAS). That makes *manual* offload of storage and processing pure configuration long before P4's fleet module adds discovery, health checks, and automatic scheduling. mTLS + token auth on all LAN-exposed services; localhost-only by default.
+- **LAN "lab" hardware is architected in from P0, delivered incrementally:** the inference endpoint is URL-addressable (`inference.ollama_base_url`, `src/config/schema.ts:281`). The Qdrant server mode and an S3-compatible blob store are **not implemented**: `knowledge.vector_db_url` throws `NotImplementedYetError` (`src/knowledge/index.ts:177-180`; DECISIONS.md K4), and `LocalDirBlobStore` is the only `BlobStore` (`src/compression/local-blob-store.ts:39`; the S3 swap exists only as the interface's stated intent, `src/interfaces/storage.ts:5-6`). Manual offload of *inference* is therefore configuration today; storage offload is not. P4's fleet module (DUST2.25) would add discovery, health checks and scheduling. mTLS ships for the device write surface only (`src/proxy/loopback-cert.ts`, ADR-0006; DECISIONS.md X7); everything is localhost-only by default.
 
 ---
 
