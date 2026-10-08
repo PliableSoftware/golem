@@ -51,7 +51,7 @@ explicit ask and syncs whatever is pending.
 
 The cap is deliberately **not** applied to the first-run or embedder-change full
 build: a project with no index has no search at all, and those builds announce
-themselves (see `planBuildEmbedder`'s notices in [[Knowledge Base]]).
+themselves (see `planBuildEmbedder`'s notices, `src/cli/auto-index.ts:328`, described under "Embedder identity on build" in [[Knowledge Base]]).
 
 ## One project, one collection
 

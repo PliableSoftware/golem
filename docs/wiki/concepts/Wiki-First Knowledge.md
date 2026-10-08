@@ -2,9 +2,9 @@
 title: Wiki-First Knowledge
 type: concept
 tags: [knowledge-base, architecture]
-sources: [docs/plan/proposals/wiki-knowledge-pivot.md, src/wiki/federated-wiki-reader.ts]
+sources: [src/wiki/federated-wiki-reader.ts, src/mcp/search.ts, src/cli/promote.ts, src/wiki/file-wiki-store.ts, docs/golem-spec.md#28]
 created: 2026-07-10
-updated: 2026-07-12
+updated: 2026-10-08
 ---
 
 # Wiki-First Knowledge
@@ -19,22 +19,24 @@ opaque, per-machine, unshareable, and lost with the index. Pages, by contrast, d
 as human documentation, travel with the repo, and make agent-written knowledge
 auditable and correctable in review.
 
-Key mechanics: plan-gated agent writes, required frontmatter with `sources`,
+Key mechanics: agent writes with no prior-approval gate (Decisions 44 and 54 removed the plan-gate; the commit history is the review), required frontmatter with `sources`,
 distilled source notes instead of raw mirrors (see
 [[llm-wiki-second-brain-obsidian]]), and a strict link-don't-restate rule against
 duplicating what code or docs already record.
 
-Design and phasing: docs/plan/proposals/wiki-knowledge-pivot.md (workstream WS-W).
+The original design proposal (workstream WS-W) is no longer in the repo; spec Decision 28
+is the surviving record, amended by Decisions 44 and 54.
 
 ## Retrieval order (implemented, T5)
 
 The `search` MCP tool runs both tiers on every call, cheapest first:
 
-1. **Graph-first** (`graphFirstWikiHits`, `src/mcp/server.ts`): exact/case-insensitive
+1. **Graph-first** (`graphFirstWikiHits`, `src/mcp/search.ts:164`; re-exported from `src/mcp/server.ts`): exact/case-insensitive
    match of the query against a wiki page title, then a 1-hop expansion along that
    page's outgoing wikilinks (`extractWikilinks`). No embedding call — one
-   `listPages()` scan per invocation. Matches score above any vector hit, so a query
-   that names a page (or is one hop from it) always surfaces that page first.
+   `listPages()` scan per invocation. Matches get a synthetic score of 2 (title) or 1.6
+   (linked page), `search.ts:124-125`, above any vector hit, so a query that names a page
+   (or is one hop from it) surfaces that page first.
 2. **Vector search** (`knowledge.search`): runs unconditionally, so free-text queries
    that don't name a page still work.
 
@@ -58,11 +60,12 @@ Raw capture never enters the wiki directly. The path in:
    entry into a wiki-shaped draft under `.golem/distill/<slug>.md` — still
    zone 1, still not committed, but already carrying real frontmatter and a
    summary in the model's own words instead of a raw mirror.
-3. **Promote**, zone 2, human-gated: an agent reviews the draft, proposes it
-   to the user, and only on approval calls `wiki_upsert` to commit it under
-   `sources/` (or another zone). This is the same plan-gate every zone-2
-   write goes through (Decision 29) — distillation produces a better-shaped
-   proposal, it does not skip the gate.
+3. **Promote**, zone 2: `golem wiki promote` (or the agent, calling `wiki_upsert`
+   directly) commits the draft under `sources/` (or another zone). Agent
+   writes to the wiki carry no prior-approval gate (Decisions 44 and 54). The
+   CLI keeps its own consent step: in a TTY it shows the draft and asks, and a
+   non-interactive run refuses without `--yes` (`src/cli/promote.ts:152-164`).
+   That is a CLI consent convention, not the retired plan-gate.
 
 Full detail on each stage: [[Distillation Pipeline]].
 
@@ -78,13 +81,16 @@ project wiki via `golem wiki init --user`.
 `FederatedWikiReader` (`src/wiki/federated-wiki-reader.ts`) merges the
 project `WikiReader` and the user-scope one into a single read-only surface:
 user-wiki `relPath`s are prefixed `user:` to avoid colliding with project
-paths, a title collision favors the project page, and `backlinks()` is
+paths, `readPage` and `resolveLink` favor the project page on a title collision, and `backlinks()` is
 computed over the merged page set so a wikilink can cross between the two
-wikis. Writes are never federated — `wiki_upsert` always targets the single
+wikis. **Contradiction left open (D1):** `listPages()` puts user pages last
+(`federated-wiki-reader.ts:39`) and graph-first builds its title map with
+`Map.set` (`src/mcp/search.ts:172-173`), so under `search` a title collision
+surfaces the **user** page, the opposite of the `readPage` rule. Writes are never federated — `wiki_upsert` always targets the single
 project `WikiStore`; only `search`/`fetch` see the merged view, via a new
 `wikiSearch` field on `GolemMcpServerDeps` that defaults to the project
 `wiki` when federation is off. Because the graph-first search machinery
-(`graphFirstWikiHits`, `pageToHit`, `isUnderWikiDir`) only depends on the
+(`graphFirstWikiHits`, `pageToHit`, `isUnderWikiDir`; all in `src/mcp/search.ts`) only depends on the
 generic `WikiReader` interface and treats `relPath` as opaque, federating in
 a second wiki required zero changes to that machinery — only the two wiring
 points (the deps field, and its one call site in `golem mcp serve`) needed
