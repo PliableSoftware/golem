@@ -4,9 +4,10 @@
  * and `getChunk` must find a chunk in a collection this instance never opened.
  */
 
-import { readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { acquireLock } from "../../../src/knowledge/file-driver.js";
 import type { StoredChunk } from "../../../src/knowledge/index.js";
 import { collectionDir, FileVectorDriver } from "../../../src/knowledge/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
@@ -77,5 +78,92 @@ describe("FileVectorDriver.getChunk on an unopened collection (D7)", () => {
     const fresh = new FileVectorDriver(base);
     expect((await fresh.getChunk("abc"))?.text).toBe("abc");
     expect(await fresh.getChunk("nope")).toBeNull();
+  });
+});
+
+describe("unreadable store is never treated as empty", () => {
+  it("a read error other than ENOENT aborts the mutation and leaves the store intact", async () => {
+    const d = new FileVectorDriver(base);
+    await d.upsert("p", [rec("p", "precious")]);
+    const dir = collectionDir(base, "p");
+    const chunksFile = path.join(dir, "chunks.jsonl");
+    const original = await readFile(chunksFile, "utf8");
+    const metaBefore = await readFile(path.join(dir, "meta.json"), "utf8");
+    // EISDIR on read: a non-ENOENT failure, like EBUSY/EPERM on a locked file.
+    await rm(chunksFile);
+    await mkdir(chunksFile);
+    const other = new FileVectorDriver(base);
+    await expect(other.upsert("p", [rec("p", "new")])).rejects.toThrow();
+    await expect(other.deleteBySourcePaths("p", ["precious.md"])).rejects.toThrow();
+    expect((await stat(chunksFile)).isDirectory()).toBe(true);
+    expect(await readFile(path.join(dir, "meta.json"), "utf8")).toBe(metaBefore);
+    expect((await readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+    await rm(chunksFile, { recursive: true });
+    await writeFile(chunksFile, original);
+    expect(await ids(base, "p")).toEqual(["precious"]);
+  });
+});
+
+describe("lock ownership and heartbeat", () => {
+  it("release does not remove a lock another owner now holds", async () => {
+    const lockPath = path.join(base, "x.lock");
+    const release = await acquireLock(lockPath);
+    await writeFile(lockPath, "someone-else\n"); // lock was broken and re-taken
+    await release();
+    expect((await readFile(lockPath, "utf8")).trim()).toBe("someone-else");
+  });
+
+  it("release removes its own lock", async () => {
+    const lockPath = path.join(base, "y.lock");
+    await (await acquireLock(lockPath))();
+    await expect(stat(lockPath)).rejects.toThrow();
+  });
+
+  it("a holder that outlives the stale threshold keeps its lock (heartbeat)", async () => {
+    const lockPath = path.join(base, "z.lock");
+    const release = await acquireLock(lockPath, { staleMs: 150 });
+    await new Promise((r) => setTimeout(r, 500));
+    await expect(acquireLock(lockPath, { staleMs: 150, waitMs: 100 })).rejects.toThrow(/timeout/);
+    await release();
+  });
+
+  it("a genuinely stale lock (no heartbeat) is taken over", async () => {
+    const lockPath = path.join(base, "s.lock");
+    await writeFile(lockPath, "dead-process\n");
+    await new Promise((r) => setTimeout(r, 120));
+    const release = await acquireLock(lockPath, { staleMs: 50, waitMs: 2000 });
+    await release();
+  });
+});
+
+describe("in-memory swap and dim crash window", () => {
+  it("a concurrent search never sees an emptied collection during a write", async () => {
+    const d = new FileVectorDriver(base);
+    await d.upsert(
+      "p",
+      Array.from({ length: 200 }, (_, i) => rec("p", `c${i}`)),
+    );
+    let min = Number.POSITIVE_INFINITY;
+    let done = false;
+    const poll = (async () => {
+      while (!done) {
+        min = Math.min(min, (await d.search("p", [1, 0], 5)).length);
+        await new Promise((r) => setImmediate(r));
+      }
+    })();
+    for (let i = 0; i < 15; i += 1) await d.upsert("p", [rec("p", `n${i}`)]);
+    done = true;
+    await poll;
+    expect(min).toBe(5);
+  });
+
+  it("chunks of another dimension than meta.json (crash between renames) are dropped, not mixed", async () => {
+    const dir = collectionDir(base, "p");
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "meta.json"), '{"schemaVersion":1,"dim":3,"count":1}\n');
+    await writeFile(path.join(dir, "chunks.jsonl"), `${JSON.stringify(rec("p", "old", [1, 0]))}\n`);
+    const d = new FileVectorDriver(base);
+    await d.upsert("p", [rec("p", "new", [1, 0, 0])]);
+    expect(await ids(base, "p")).toEqual(["new"]);
   });
 });

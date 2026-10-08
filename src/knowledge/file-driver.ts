@@ -24,7 +24,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
 import type { Chunk } from "../interfaces/knowledge.js";
@@ -123,37 +123,86 @@ export async function readCollectionDim(
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 60_000;
 
+export interface LockOptions {
+  /** A lock whose mtime is older than this is presumed orphaned. Default 30s. */
+  readonly staleMs?: number;
+  /** Give up acquiring after this long. Default 60s. */
+  readonly waitMs?: number;
+}
+
 /**
- * Exclusive-create lockfile (`wx`). A lock older than {@link LOCK_STALE_MS} is
- * assumed orphaned by a crashed process and taken over. Throws after
- * {@link LOCK_WAIT_MS} rather than writing unlocked.
+ * Exclusive-create lockfile (`wx`) carrying a unique owner token.
+ *
+ * - Release removes the file only if it still holds OUR token, so a holder whose
+ *   lock was broken never deletes the next owner's.
+ * - A heartbeat refreshes the mtime while held, so a long flush is never mistaken
+ *   for a crashed holder.
+ * - A stale lock is broken by RENAMING it to a unique name (atomic: only one
+ *   breaker wins the rename), then retrying the exclusive create. If the renamed
+ *   file turns out to be fresh (we raced a new owner), it is put back.
+ * - Throws after `waitMs` rather than writing unlocked.
+ *
+ * Exported for tests only; not part of the knowledge barrel.
  */
-async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
-  const deadline = Date.now() + LOCK_WAIT_MS;
+export async function acquireLock(
+  lockPath: string,
+  options: LockOptions = {},
+): Promise<() => Promise<void>> {
+  const staleMs = options.staleMs ?? LOCK_STALE_MS;
+  const deadline = Date.now() + (options.waitMs ?? LOCK_WAIT_MS);
+  const token = `${process.pid}.${randomBytes(12).toString("hex")}`;
   for (;;) {
     try {
-      await writeFile(lockPath, `${process.pid}\n`, { flag: "wx" });
-      return () => rm(lockPath, { force: true });
+      await writeFile(lockPath, `${token}\n`, { flag: "wx" });
+      const beat = setInterval(
+        () => {
+          const now = new Date();
+          void utimes(lockPath, now, now).catch(() => {});
+        },
+        Math.max(5, Math.floor(staleMs / 3)),
+      );
+      beat.unref();
+      return async () => {
+        clearInterval(beat);
+        try {
+          if ((await readFile(lockPath, "utf8")).trim() === token)
+            await rm(lockPath, { force: true });
+        } catch {
+          // already gone — nothing of ours to release
+        }
+      };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
     try {
       const st = await stat(lockPath);
-      if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
-        await rm(lockPath, { force: true });
+      if (Date.now() - st.mtimeMs > staleMs) {
+        const moved = `${lockPath}.stale.${token}`;
+        await rename(lockPath, moved);
+        const fresh = Date.now() - (await stat(moved)).mtimeMs <= staleMs;
+        if (fresh) {
+          // Lost a race with a new owner: give the lock back if the slot is free.
+          const content = await readFile(moved, "utf8");
+          await writeFile(lockPath, content, { flag: "wx" }).catch(() => {});
+        }
+        await rm(moved, { force: true });
         continue;
       }
     } catch {
-      continue; // released between the create and the stat — retry now
+      continue; // released/broken between the create and the stat — retry now
     }
     if (Date.now() > deadline) throw new Error(`vector store lock timeout: ${lockPath}`);
     await new Promise((r) => setTimeout(r, 15 + Math.floor(Math.random() * 25)));
   }
 }
 
+function isEnoent(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
 interface Collection {
   readonly dir: string;
-  readonly records: Map<string, StoredChunk>;
+  records: Map<string, StoredChunk>;
   /** Embedding dimension seen so far (0 until the first non-empty vector). */
   dim: number;
 }
@@ -174,8 +223,11 @@ export class FileVectorDriver implements DeletableVectorDriver {
   /** collection dir -> tail of the in-process mutation queue. */
   readonly #queues = new Map<string, Promise<void>>();
 
-  constructor(baseDir: string) {
+  readonly #lock: LockOptions;
+
+  constructor(baseDir: string, lock: LockOptions = {}) {
     this.#baseDir = baseDir;
+    this.#lock = lock;
   }
 
   #dirFor(projectId: string): string {
@@ -186,50 +238,66 @@ export class FileVectorDriver implements DeletableVectorDriver {
     if (this.#collections.has(projectId)) return;
     const dir = this.#dirFor(projectId);
     const col: Collection = { dir, records: new Map(), dim: 0 };
-    await this.#reload(projectId, col);
+    try {
+      this.#adopt(projectId, col, await this.#readDisk(dir));
+    } catch {
+      // Unreadable right now: serve empty for reads. Mutations re-read strictly
+      // and refuse to write rather than overwrite what they could not read.
+    }
     this.#collections.set(projectId, col);
   }
 
-  /**
-   * Replace a collection's in-memory state with what is on disk right now.
-   * Version mismatch or no collection leaves it empty (the next write overwrites
-   * stale-schema data, so it is never served).
-   */
-  async #reload(projectId: string, col: Collection): Promise<void> {
+  /** Swap a freshly read state into `col` in one assignment and re-point the id index. */
+  #adopt(
+    projectId: string,
+    col: Collection,
+    next: { records: Map<string, StoredChunk>; dim: number },
+  ): void {
     for (const id of col.records.keys()) this.#chunkIndex.delete(id);
-    col.records.clear();
-    col.dim = 0;
-    try {
-      const metaRaw = await readFile(path.join(col.dir, "meta.json"), "utf8");
-      const meta = JSON.parse(metaRaw) as Partial<PersistedMeta>;
-      if (meta.schemaVersion === KNOWLEDGE_SCHEMA_VERSION) {
-        col.dim = typeof meta.dim === "number" ? meta.dim : 0;
-        await this.#loadChunks(col.dir, projectId, col);
-      }
-    } catch {
-      // No existing collection on disk — start empty.
-    }
+    col.records = next.records;
+    col.dim = next.dim;
+    for (const id of next.records.keys()) this.#chunkIndex.set(id, projectId);
   }
 
-  async #loadChunks(dir: string, projectId: string, col: Collection): Promise<void> {
+  /**
+   * Read a collection's state from disk. Only a missing file (ENOENT) or a stale
+   * schema version means "empty"; any other failure (EBUSY, EPERM, EISDIR, a meta
+   * parse error ...) THROWS, so a caller about to rewrite the store never mistakes
+   * "could not read" for "nothing there" and wipes it.
+   */
+  async #readDisk(dir: string): Promise<{ records: Map<string, StoredChunk>; dim: number }> {
+    const records = new Map<string, StoredChunk>();
+    let metaRaw: string;
+    try {
+      metaRaw = await readFile(path.join(dir, "meta.json"), "utf8");
+    } catch (err) {
+      if (isEnoent(err)) return { records, dim: 0 };
+      throw err;
+    }
+    const meta = JSON.parse(metaRaw) as Partial<PersistedMeta>;
+    if (meta.schemaVersion !== KNOWLEDGE_SCHEMA_VERSION) return { records, dim: 0 };
+    const dim = typeof meta.dim === "number" ? meta.dim : 0;
     let raw: string;
     try {
       raw = await readFile(path.join(dir, "chunks.jsonl"), "utf8");
-    } catch {
-      return; // meta without chunks — treat as empty
+    } catch (err) {
+      if (isEnoent(err)) return { records, dim }; // meta without chunks — empty
+      throw err;
     }
     for (const line of raw.split("\n")) {
       if (line.trim() === "") continue;
       try {
         const rec = JSON.parse(line) as StoredChunk;
-        if (rec.chunk?.chunkId !== undefined && Array.isArray(rec.vector)) {
-          col.records.set(rec.chunk.chunkId, rec);
-          this.#chunkIndex.set(rec.chunk.chunkId, projectId);
-        }
+        if (rec.chunk?.chunkId === undefined || !Array.isArray(rec.vector)) continue;
+        // A crash between the meta and chunks renames can leave records from a
+        // different embedder space than meta.json records; those are unqueryable.
+        if (dim > 0 && rec.vector.length > 0 && rec.vector.length !== dim) continue;
+        records.set(rec.chunk.chunkId, rec);
       } catch {
         // Skip a corrupt line (e.g. a torn final write); the rest still loads.
       }
     }
+    return { records, dim };
   }
 
   /**
@@ -249,11 +317,17 @@ export class FileVectorDriver implements DeletableVectorDriver {
     const prev = this.#queues.get(col.dir) ?? Promise.resolve();
     const run = prev.then(async () => {
       await mkdir(col.dir, { recursive: true });
-      const release = await acquireLock(path.join(col.dir, "chunks.lock"));
+      const release = await acquireLock(path.join(col.dir, "chunks.lock"), this.#lock);
       try {
-        await this.#reload(projectId, col);
-        const out = change(col);
-        if (out.flush) await this.#flush(col);
+        // Work on a detached copy of what is on disk NOW; readers keep seeing the
+        // old state until the finished copy is swapped in, and a failed read or
+        // flush leaves both the files and the in-memory state untouched.
+        const work: Collection = { dir: col.dir, ...(await this.#readDisk(col.dir)) };
+        const out = change(work);
+        if (out.flush) {
+          await this.#flush(work);
+          this.#adopt(projectId, col, work);
+        }
         return out.result;
       } finally {
         await release();
@@ -279,13 +353,11 @@ export class FileVectorDriver implements DeletableVectorDriver {
       // Reset the collection to the new space rather than corrupt it.
       const incomingDim = records.find((r) => r.vector.length > 0)?.vector.length ?? 0;
       if (incomingDim > 0 && col.dim > 0 && incomingDim !== col.dim) {
-        for (const id of col.records.keys()) this.#chunkIndex.delete(id);
         col.records.clear();
         col.dim = incomingDim;
       }
       for (const rec of records) {
         col.records.set(rec.chunk.chunkId, rec);
-        this.#chunkIndex.set(rec.chunk.chunkId, projectId);
         if (col.dim === 0 && rec.vector.length > 0) col.dim = rec.vector.length;
       }
       return { flush: true, result: undefined };
@@ -298,23 +370,27 @@ export class FileVectorDriver implements DeletableVectorDriver {
     // over the live one so a crash mid-write never leaves a half-truncated
     // collection and two writers never share a temp.
     const suffix = `${process.pid}.${randomBytes(6).toString("hex")}`;
-    const tmp = path.join(col.dir, `chunks.jsonl.${suffix}.tmp`);
-    const dest = path.join(col.dir, "chunks.jsonl");
-    try {
-      await this.#writeRecordsStreamed(tmp, col.records.values());
-      await rename(tmp, dest);
-    } catch (err) {
-      await rm(tmp, { force: true });
-      throw err;
-    }
+    // meta.json FIRST: a crash between the two renames then leaves the new dim
+    // with old-dim chunks (dropped on load by the dim check) rather than new-dim
+    // chunks under the old dim (which the next upsert would clear as a "change").
     const meta: PersistedMeta = {
       schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
       dim: col.dim,
       count: col.records.size,
     };
     const metaTmp = path.join(col.dir, `meta.json.${suffix}.tmp`);
-    await writeFile(metaTmp, `${JSON.stringify(meta)}\n`, "utf8");
-    await rename(metaTmp, path.join(col.dir, "meta.json"));
+    const tmp = path.join(col.dir, `chunks.jsonl.${suffix}.tmp`);
+    const dest = path.join(col.dir, "chunks.jsonl");
+    try {
+      await writeFile(metaTmp, `${JSON.stringify(meta)}\n`, "utf8");
+      await this.#writeRecordsStreamed(tmp, col.records.values());
+      await rename(metaTmp, path.join(col.dir, "meta.json"));
+      await rename(tmp, dest);
+    } catch (err) {
+      await rm(tmp, { force: true });
+      await rm(metaTmp, { force: true });
+      throw err;
+    }
   }
 
   /**
