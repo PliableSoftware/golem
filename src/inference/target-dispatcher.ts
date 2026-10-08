@@ -109,7 +109,11 @@ import {
   TargetDispatchError,
 } from "../proxy/rate-limit-retry.js";
 import type { PersonaConfig } from "./personas.js";
-import { workerTargetFromPersona } from "./personas.js";
+import {
+  assertWorkerDispatchable,
+  PersonaNotDispatchableError,
+  workerTargetFromPersona,
+} from "./personas.js";
 import { workerTarget } from "./workers.js";
 
 /** Hosts for which `trust: "local"` is believable — context never leaves the machine. */
@@ -719,6 +723,16 @@ export function selectTarget(
 ): { readonly id: string; readonly route: DispatchRoute } {
   if (request.targetId !== undefined && request.targetId !== "") {
     return { id: request.targetId, route: "explicit" };
+  }
+  // owner: user binds the worker lane (DUSTSEC.11): refuse before ANY worker route,
+  // including worker_targets, and never fall through to the default target.
+  if (request.worker !== undefined) {
+    try {
+      assertWorkerDispatchable(options.personas ?? {}, request.worker);
+    } catch (err) {
+      if (err instanceof PersonaNotDispatchableError) throw new TargetDispatchError(err.message);
+      throw err;
+    }
   }
   // First worker_targets (live, highest after explicit), then personas[worker].model
   const fromWorkerRaw =

@@ -180,9 +180,34 @@ export function personaModel(
 }
 
 /**
- * Read a persona's model for the WORKER lane (no owner check — worker lane
- * ignores the permission axis). Used by `workerTarget` to derive the target
- * id from `inference.personas[worker].model` when `worker_targets` is not set.
+ * Raised when the worker lane is asked to run an `owner: user` persona — a role
+ * only a human fills (DUSTSEC.11, USER decision R9). Callers translate it into
+ * their own error type; none may fall back to a default target instead.
+ */
+export class PersonaNotDispatchableError extends Error {
+  constructor(readonly persona: string) {
+    super(
+      `persona "${persona}" is owner: user — a role only a human fills, so the worker lane ` +
+        "will not dispatch it. Set inference.personas." +
+        `${persona}.owner = "agent" to allow dispatch.`,
+    );
+    this.name = "PersonaNotDispatchableError";
+  }
+}
+
+/** Throws {@link PersonaNotDispatchableError} when `worker` is declared `owner: user`. */
+export function assertWorkerDispatchable(
+  personas: Readonly<Record<string, PersonaConfig>>,
+  worker: string,
+): void {
+  if (personas[worker]?.owner === "user") throw new PersonaNotDispatchableError(worker);
+}
+
+/**
+ * Read a persona's model for the WORKER lane. `owner: user` is refused with
+ * {@link PersonaNotDispatchableError} — the permission axis binds this lane too.
+ * Used by `workerTarget` to derive the target id from
+ * `inference.personas[worker].model` when `worker_targets` is not set.
  *
  * Returns the raw model/target string if the persona exists and has a model set.
  * The caller is responsible for resolving it via the target registry.
@@ -193,6 +218,7 @@ export function workerTargetFromPersona(
 ): string | undefined {
   const config = personas[worker];
   if (config === undefined) return undefined;
+  assertWorkerDispatchable(personas, worker);
   return config.model !== undefined && config.model !== "" ? config.model : undefined;
 }
 

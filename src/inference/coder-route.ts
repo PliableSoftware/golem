@@ -34,7 +34,11 @@
 
 import { listTargets, resolveTarget, type TargetRegistrySettings } from "../providers/index.js";
 import type { PersonaConfig } from "./personas.js";
-import { workerTargetFromPersona } from "./personas.js";
+import {
+  assertWorkerDispatchable,
+  PersonaNotDispatchableError,
+  workerTargetFromPersona,
+} from "./personas.js";
 import { workerTarget } from "./workers.js";
 
 /**
@@ -95,6 +99,13 @@ function looksLikeModelId(value: string): boolean {
  * cannot mean anything.
  */
 export function resolveCoderRoute(input: CoderRouteInput): CoderRoute {
+  // owner: user binds the worker lane (DUSTSEC.11) — refuse before worker_targets too.
+  try {
+    assertWorkerDispatchable(input.personas ?? {}, "coder");
+  } catch (err) {
+    if (err instanceof PersonaNotDispatchableError) throw new CoderRouteError(err.message);
+    throw err;
+  }
   // First check deprecated worker_targets (has precedence) - direct map lookup
   const fromWorkerTargets = input.workerTargets?.coder;
   if (fromWorkerTargets !== undefined && fromWorkerTargets !== "") {
@@ -153,6 +164,8 @@ export function resolveCoderRoute(input: CoderRouteInput): CoderRoute {
  * would be the wrong kind of correct.
  */
 export function coderRouteConflict(input: CoderRouteInput): string | undefined {
+  // An owner: user coder is refused by resolveCoderRoute; there is no route to conflict.
+  if (input.personas?.coder?.owner === "user") return undefined;
   const fromWorker = workerTarget(input.workerTargets, "coder", input.personas);
   const fromPersonaWorker = workerTargetFromPersona(input.personas ?? {}, "coder");
   const configured = input.defaultCoder?.trim();
