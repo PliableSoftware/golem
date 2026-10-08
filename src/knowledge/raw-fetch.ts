@@ -8,11 +8,11 @@
  * fetch: `fetch()` → dispatch on content-type → HTML/PDF text extraction.
  *
  * The returned {@link RawPageHeaders} carry the HTTP validators so the caller
- * can seed the web cache's revalidation metadata from a real fetch (today they
- * only populate after a separate conditional GET).
+ * can seed the web cache's revalidation metadata from the PreToolUse hook's
+ * fetch.
  *
  * Dependency-free besides the shared extractors. Never called on the
- * latency-sensitive proxy path — only from the store-only PostToolUse hook.
+ * latency-sensitive proxy path — only from the PreToolUse WebFetch hook.
  */
 
 import { extractHtmlText, extractPdfText } from "./extractors.js";

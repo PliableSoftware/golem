@@ -38,7 +38,7 @@ export class PdfExtractionUnavailableError extends Error {
   constructor() {
     super(
       "PDF text extraction needs the optional `unpdf` package — install it " +
-        "(`npm install unpdf`) or see `golem ext status`. Skipping this file.",
+        "(`npm install unpdf`) or see `golem pkg`. Skipping this file.",
     );
     this.name = "PdfExtractionUnavailableError";
   }
@@ -46,8 +46,7 @@ export class PdfExtractionUnavailableError extends Error {
 
 /**
  * Whether `.pdf` extraction is currently possible on this machine — i.e.
- * whether `unpdf` resolves. Used by the `golem ext` registry to report the
- * capability without attempting an extraction.
+ * whether `unpdf` resolves, without attempting an extraction.
  */
 export async function isPdfExtractionAvailable(): Promise<boolean> {
   return (await loadUnpdf()) !== null;
