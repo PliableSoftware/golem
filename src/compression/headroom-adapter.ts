@@ -536,6 +536,7 @@ export const KNOWN_HEADROOM_CONFIG_FIELDS: readonly string[] = [
   "kompress_model",
   "savings_profile",
   "lossless_only",
+  "router",
 ];
 
 /**

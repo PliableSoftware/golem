@@ -131,13 +131,25 @@ export async function quizzable(
   return (await loadCandidates(store)).filter((c) => c.state === "open" && c.seen >= threshold);
 }
 
-/** Mark a candidate confirmed. The caller writes it into the guide. */
+/**
+ * Mark a candidate confirmed. The caller writes it into the guide.
+ *
+ * A `rejected` key is a tombstone — the user declined it — so confirming it
+ * throws unless `force` is set (an explicit change of mind).
+ */
 export async function confirmCandidate(
   store: VibeStore,
   key: string,
   nowIso: string,
   note?: string,
+  options: { readonly force?: boolean } = {},
 ): Promise<Candidate | null> {
+  const existing = (await loadCandidates(store)).find((c) => c.key === key);
+  if (existing?.state === "rejected" && options.force !== true) {
+    throw new Error(
+      `candidate ${key} was rejected; confirming it would undo that decision — pass --force to confirm it anyway`,
+    );
+  }
   return await transition(store, key, "confirmed", nowIso, note);
 }
 

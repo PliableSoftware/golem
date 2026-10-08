@@ -303,6 +303,51 @@ describe("golem acp — scripted ACP client (Stage 1 gate)", () => {
       connection.close();
     }
   });
+
+  it("a session/cancel with no turn in flight does not silence the next turn (DUST3.16 D7)", async () => {
+    const fixture = await makeFixture(workerLaneSettings());
+    const turnDeps: RunAcpTurnDeps = {
+      userDir: fixture.userDir,
+      dispatcherOverrides: {
+        fetchImpl: fakeFetch("fresh reply"),
+        env: {},
+        resolveKey: () => "fake-key",
+      },
+    };
+    const agentApp = createGolemAcpAgent({
+      projectDir: fixture.projectDir,
+      personaId: "echo",
+      turnDeps,
+    });
+    const updates: unknown[] = [];
+    const clientApp = client({ name: "test-client" }).onNotification(
+      "session/update",
+      ({ params }) => {
+        updates.push(params);
+      },
+    );
+    const connection = clientApp.connect(agentApp);
+    try {
+      await connection.agent.request("initialize", { protocolVersion: 1 });
+      const newSession = await connection.agent.request("session/new", {
+        cwd: fixture.projectDir,
+        mcpServers: [],
+      });
+      // Idle cancel: nothing is running, so there is nothing to cancel.
+      await connection.agent.notify("session/cancel", { sessionId: newSession.sessionId });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const result = await connection.agent.request("session/prompt", {
+        sessionId: newSession.sessionId,
+        prompt: [{ type: "text", text: "hi" }],
+      });
+
+      expect(result.stopReason).not.toBe("cancelled");
+      expect(updates.length).toBeGreaterThan(0);
+    } finally {
+      connection.close();
+    }
+  });
 });
 
 describe("R14.3 lane transparency — worker vs agent lane, same turn shape", () => {

@@ -60,6 +60,24 @@ for (const rel of PKGS) {
   process.stdout.write(`release: ${rel} ${current} -> ${target}\n`);
 }
 
+// package-lock.json carries the root version twice (top level and packages[""]).
+// Left alone it drifts from package.json until someone hand-syncs it.
+{
+  const lockRel = "package-lock.json";
+  const lockPath = join(root, lockRel);
+  const lockRaw = await readFile(lockPath, "utf8").catch((err) => {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  });
+  if (lockRaw !== null) {
+    const lock = JSON.parse(lockRaw);
+    lock.version = target;
+    if (lock.packages?.[""] !== undefined) lock.packages[""].version = target;
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+    process.stdout.write(`release: ${lockRel} ${current} -> ${target}\n`);
+  }
+}
+
 // Regenerate the compiled-in constant from the just-bumped package.json.
 execFileSync(process.execPath, [join(root, "scripts", "sync-version.mjs")], { stdio: "inherit" });
 

@@ -727,7 +727,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
             tokensAfter: substituted.tokensAfter,
           };
           avoidedUpstreamInputTokens = substituted.tokensBefore - substituted.tokensAfter;
-          ccrRefsStored += substituted.substitutions;
+          ccrRefsStored += substituted.ccrRefsStored;
           changed = true;
         }
       }
