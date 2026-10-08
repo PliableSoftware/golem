@@ -272,6 +272,11 @@ async function pullModel(
 /** The chat roles with a live call site; each has its own model on every tier. */
 const LIVE_PULL_ROLES = ["drafter", "summarizer", "judge"] as const;
 
+/** Every distinct model {@link pullRoleModels} will pull for the tier, drafter first. */
+export function roleModelsFor(tier: HardwareTier): string[] {
+  return [...new Set(LIVE_PULL_ROLES.map((role) => chatModelFor(tier, role)))];
+}
+
 /**
  * Pulls every live role's model for the tier (drafter first), each distinct
  * model once. Without the summarizer and judge, `distill` and rerank fail with
@@ -285,7 +290,7 @@ export async function pullRoleModels(
     readonly reachableTimeoutMs?: number;
   } = {},
 ): Promise<PullResult[]> {
-  const models = [...new Set(LIVE_PULL_ROLES.map((role) => chatModelFor(tier, role)))];
+  const models = roleModelsFor(tier);
   const results: PullResult[] = [];
   for (const [i, model] of models.entries()) {
     const onProgress = opts.onProgress;

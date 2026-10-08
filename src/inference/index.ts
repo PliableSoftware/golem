@@ -42,6 +42,7 @@ export {
   pullDrafterModel,
   pullRoleModels,
   resolveInstallPlan,
+  roleModelsFor,
   smokeTestModel,
 } from "./ollama-bootstrap.js";
 export type { OllamaClientOptions } from "./ollama-client.js";

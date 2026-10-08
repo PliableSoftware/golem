@@ -25,6 +25,7 @@ import {
   type PullResult,
   pullRoleModels,
   resolveInstallPlan,
+  roleModelsFor,
   smokeTestModel,
 } from "../inference/index.js";
 import type { HardwareTier } from "../interfaces/inference.js";
@@ -70,6 +71,8 @@ export async function collectOllamaStatus(opts: OllamaStatusOptions): Promise<Ol
     detectCapability(deps.probe),
   ]);
   const targetModel = chatModelFor(facts.tier, "drafter");
+  // The catalog carries no download sizes, so none is claimed; every model is named.
+  const allModels = roleModelsFor(facts.tier).join(", ");
   const reachable = await native.isReachable();
   const modelPulled = reachable ? await native.hasModel(targetModel) : false;
 
@@ -176,13 +179,13 @@ export async function runOllamaSetup(opts: SetupOptions): Promise<SetupResult> {
     if (!isTTY) {
       throw new SetupRefusedError(
         "stdin is not a TTY — re-run with --yes to install Ollama and pull " +
-          `${targetModel} non-interactively`,
+          `${allModels} non-interactively`,
       );
     }
     const confirm = opts.confirm ?? defaultConfirm;
     const question =
       `This will ${alreadyInstalled ? "" : `${planSummary}, then `}` +
-      `pull the ${targetModel} model and the summarizer/judge models (multi-GB downloads) if they aren't already present. Continue?`;
+      `pull these models (multi-GB downloads; sizes vary, the judge is the largest) if they aren't already present: ${allModels}. Continue?`;
     const accepted = await confirm(question);
     if (!accepted) return { kind: "cancelled" };
   }

@@ -139,6 +139,37 @@ describe("runOllamaSetup — consent gating", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
+  it("names every model that will be pulled in the non-TTY refusal and the consent prompt", async () => {
+    const native = new OllamaNativeClient();
+    vi.spyOn(native, "isReachable").mockResolvedValue(true);
+    vi.spyOn(native, "hasModel").mockResolvedValue(true);
+    const all = ["qwen2.5-coder:7b", "qwen2.5:7b", "qwen2.5:14b"];
+
+    const refusal = await runOllamaSetup({
+      projectDir,
+      userDir,
+      yes: false,
+      isTTY: false,
+      deps: fakeSetupDeps({ native }),
+    }).catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(SetupRefusedError);
+    for (const m of all) expect((refusal as Error).message).toContain(m);
+
+    let question = "";
+    await runOllamaSetup({
+      projectDir,
+      userDir,
+      yes: false,
+      isTTY: true,
+      confirm: (q) => {
+        question = q;
+        return Promise.resolve(false);
+      },
+      deps: fakeSetupDeps({ native }),
+    });
+    for (const m of all) expect(question).toContain(m);
+  });
+
   it("cancels cleanly (not an error) when a TTY user declines", async () => {
     const confirm = vi.fn(() => Promise.resolve(false));
     const deps = fakeSetupDeps();
