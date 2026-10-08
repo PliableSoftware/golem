@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { golemToolCensus } from "../../../src/tools/index.js";
 
-// The 7 Decision 27/35 tools plus devices + snooze, the two wiki tools, and
+// The 6 remaining Decision 27/35 tools (`level` is retired) plus devices + snooze, the two wiki tools, and
 // R8.5's `code` — which is ONE tool with a `mode` parameter, never one tool per
 // capability, because a definition bills on every request (§88/§100).
 const EXPECTED_TOOLS = [
@@ -41,9 +41,10 @@ describe("golemToolCensus", () => {
       census.tools.reduce((n, t) => n + t.descriptionTokens, 0),
     );
     expect(census.definitionTokens).toBe(census.tools.reduce((n, t) => n + t.definitionTokens, 0));
-    // §88 measured ~902 description tokens by hand on 2026-07-30 and this
-    // reproduces it. The band is wide on purpose: it should catch a description
-    // doubling in size (as `level` accidentally did), not fail on a typo fix.
+    // §88 measured ~902 description tokens by hand on 2026-07-30; the live figure
+    // on 2026-10-08 is ~1140 across 11 tools. The band is wide on purpose: it
+    // should catch a description doubling in size (as the retired `level` tool
+    // accidentally did), not fail on a typo fix.
     expect(census.descriptionTokens).toBeGreaterThan(700);
     expect(census.descriptionTokens).toBeLessThan(1200);
   });
