@@ -2,9 +2,9 @@
 title: Team Layer
 type: concept
 tags: [portal, team, config, precedence, skills, oauth, golem.run]
-sources: [docs/plan/verification-notes.md#149, src/config/loader.ts, src/cli/managed-files.ts, docs/plan/tasks/project-team-binding.md, docs/plan/tasks/team-settings-layer.md, docs/plan/tasks/team-skills-sync.md, docs/plan/tasks/team-portal-auth.md]
+sources: [docs/plan/verification-notes.md#149, src/config/loader.ts, src/portal/team-layer.ts, src/portal/config.ts, src/cli/team-skills.ts, src/cli/managed-files.ts, docs/plan/tasks/project-team-binding.md, docs/plan/tasks/team-settings-layer.md, docs/plan/tasks/team-skills-sync.md, docs/plan/tasks/team-portal-auth.md]
 created: 2026-09-04
-updated: 2026-09-07
+updated: 2026-10-08
 ---
 
 # Team Layer
@@ -125,8 +125,21 @@ deliberately separate functions:
 - **`golem team sync`** — and `golem init`'s team step — talk to the portal:
   `GET /api/v1/orgs/{orgId}/settings`, then write
   `~/.golem/teams/<org_id>.json`.
-- **every config load** reads that file and nothing else. No socket, no
-  keychain, no failure mode.
+- **a config load that asks for the team layer** reads that file and nothing else.
+  No socket, no keychain, no failure mode.
+
+**Not every config load asks.** The team origin is applied only by
+`loadConfigWithTeamLayer` (`src/portal/team-layer.ts:596`), and only two production
+callers use it: the proxy foreground (`src/cli/commands/proxy.ts:191`) and
+`golem status` (`src/cli/status-collect.ts:145`). Plain `loadConfig` never populates
+the `team` origin, and that is what `golem config list/get/set`, the panel and
+`config schema` call (`src/cli/config.ts:60,89`). This page used to say "every config
+load"; that was never the shipped behaviour. Whether enforced team policy must also
+apply on those surfaces (and on hook processes) is **open** (Phase 1 contradiction G3,
+a security-class question left for the user) and this page does not decide it. The
+`unlinked` short-circuit still holds everywhere: an unlinked project does one load and
+no second pass. UNVERIFIED: the full list of non-proxy processes (hooks, MCP server)
+that call plain `loadConfig`; only the two callers above were confirmed by grep.
 
 Collapsing them would put a network round trip behind every `golem` command and
 every proxy request. It would also make an offline machine *slower* than an
@@ -161,6 +174,11 @@ clears the stamp, so re-subscribing needs no repair. See verification-notes §16
 
 ## The failure rule
 
+An **invalid team value** skips the layer rather than stopping the proxy: the whole
+team payload is dry-run, dropped all-or-nothing with one `team layer SKIPPED` warning,
+and the proxy starts (USER decision G2, DUSTSEC.14, `src/config/loader.ts:324-361`;
+see [[Settings Cascade]]). A malformed binding degrades the same way with a notice.
+
 > A team link is an **enhancement to a local-first tool. Nothing about it may
 > stop the proxy from starting.**
 
@@ -178,6 +196,11 @@ someone removed at 09:00 still holds a valid token at 09:05.
 
 `403 not_a_member` is deliberately indistinguishable from an org that does not
 exist, so the API cannot be used to enumerate organizations.
+
+The sign-in token is **bound to where it was issued**, not to whatever a settings
+file names later: it is only ever sent to the portal API origin recorded at link time,
+and its refresh token only to a token endpoint on the issuer origin recorded then;
+token POSTs and discovery refuse redirects. Detail in [[Project Team Binding]].
 
 Sign-in is authorization code + PKCE (`S256`) over a loopback redirect, because
 the harness ships as source and cannot hold a secret. **There is no device grant**,
@@ -202,7 +225,19 @@ stale. `golem team unlink` clears both shapes anyway — see
 **Managed means deletions propagate**: a skill absent from the portal's list is
 removed locally, which is what makes it a sync rather than a one-way copy. That
 is `pruneRetiredSkills` pointed at a remote list — and it inherits the same rule,
-that provenance decides and an edited file is kept.
+that provenance decides and an edited file is kept (reported as a `conflict`,
+`removeIfOurs`, `src/cli/team-skills.ts:260-312`; the same holds when a subscription
+lapses).
+
+**There are two policies for an edited team skill, and they differ** (Decision P6,
+default rule: document both as shipped). *Portal-side removal* (sync pruning, a lapsed
+subscription) **keeps** an edited skill as the user's own file. *`golem team unlink`*
+**removes** every `golem-team-*` directory under `.claude/skills/` unconditionally,
+edited or not, with no provenance check (`removeTeamSkills`, `src/portal/binding.ts:368`,
+`rm` with `recursive`). The reasons differ too: pruning answers "the team took this
+away", unlink answers "this project no longer belongs to the team" and a stale team
+instruction is worse than a lost edit. Neither policy is being decided here; a user who
+has edited a team skill and wants to keep it should copy it out before `unlink`.
 
 Which makes `skill-provenance-on-clone` load-bearing here: managed files that
 arrive via git used to have no provenance record — it lived in gitignored

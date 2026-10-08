@@ -2,9 +2,9 @@
 title: Project Team Binding
 type: concept
 tags: [team, portal, config, project-scope, entitlement, local-first, unlink]
-sources: [docs/golem-spec.md, docs/plan/tasks/project-team-binding.md, docs/plan/verification-notes.md, src/portal/binding.ts, src/portal/entitlement.ts, src/cli/init-team.ts]
+sources: [docs/golem-spec.md, docs/plan/tasks/project-team-binding.md, docs/plan/verification-notes.md, src/portal/binding.ts, src/portal/entitlement.ts, src/portal/config.ts, src/portal/client.ts, src/portal/tokens.ts, src/portal/exchange.ts, src/portal/discovery.ts, src/cli/commands/team.ts, src/cli/init-team.ts, docs/plan/audit/dust-1/DECISIONS.md]
 created: 2026-09-07
-updated: 2026-09-07
+updated: 2026-10-08
 ---
 
 # Project Team Binding
@@ -46,10 +46,58 @@ the keychain says who you are, and the two are combined at sync time. A
 per-project copy of a token is a credential in a repository waiting to happen.
 
 `portal_url` exists for the machine that has *not* configured a portal: at link
-time it is necessarily the same as `portal.url`, but committing it is what lets a
-clone reach its team's portal without every member setting one by hand. It is the
-API base only — the authorization server is still `portal.issuer` (see
-verification-notes §158 for why those are two settings).
+time it is written from the portal API base the link was run against
+(`bindProjectTeam({ portalUrl: config.apiBaseUrl })`, `src/cli/commands/team.ts`),
+and committing it is what lets a clone *name* its team's portal without every member
+setting one by hand. It is the API base only — the authorization server is still
+`portal.issuer` (see verification-notes §158 for why those are two settings).
+
+**But a committed `portal_url` cannot receive your token.** `teamApiBaseUrl` still
+prefers `team.portal_url` over `portal.url` when choosing where a sync talks
+(`src/portal/binding.ts:131`), and that value is a text file anyone with commit
+access can edit. So the credential is not sent where the file says; it is sent where
+it was *issued*. See the next section.
+
+## The token is bound to the origin it was issued for (DUSTSEC.4)
+
+USER decision P5/S4, shipped in DUSTSEC.4, .17 and .18. At link time the token set is
+stored with two recorded origins, `api_origin` and `issuer_origin`
+(`src/portal/tokens.ts:59,67`, written at `src/portal/link.ts:108-109`):
+
+- **Access token: API origin only.** Every credentialed request passes through one
+  choke point, `assertTokenBound` (`src/portal/client.ts:172-188`), which compares the
+  request's origin with `api_origin` *before* anything is sent. A different origin is
+  `origin_mismatch`; a token stored before the binding existed (no `api_origin`) is
+  refused outright until the next `golem team link`. So an edited
+  `team.portal_url` or `portal.url` makes sync fail loudly; it never redirects the
+  credential.
+- **Refresh token: recorded issuer origin only.** `assertRefreshBound`
+  (`client.ts:194-213`) requires the discovered `token_endpoint` to sit on
+  `issuer_origin` before the refresh POST. A refreshed token set keeps the original
+  recorded origins (`src/portal/exchange.ts:185-187`), so a refresh can never migrate
+  the binding to another host. A token without `issuer_origin` cannot be refreshed,
+  only re-linked.
+- **https only.** `portalOrigin` (`tokens.ts:113-133`) rejects a non-https URL with
+  `insecure_url`; plain `http:` is allowed solely for loopback hosts (RFC 8252 §8.3),
+  which is what lets tests and a local portal run. `resolvePortalConfig` applies it
+  to both `portal.url` and `portal.issuer` (`src/portal/config.ts:66-68`).
+- **No redirects.** The token-endpoint POST (`exchange.ts:123`) and the discovery fetch
+  (`src/portal/discovery.ts:101`) use `redirect: "manual"` and treat a 3xx as an
+  error, so a `307`/`308` cannot replay a `code_verifier` or refresh token to another
+  host.
+
+**What `golem team link` will not take from the repository.** Because link *records* the
+origins it is given, a committed `portal.url` or `portal.issuer` would bind your token
+to an attacker's host from the first minute. So `assertLinkConfigTrusted`
+(`config.ts:93-108`) throws `untrusted_config` when either value's provenance is the
+`project`, `team` or `local` layer; `local` is included because a git-tracked
+`settings.local.json` ships with the repo regardless of `.gitignore` (DUSTSEC.18).
+Accepted sources are user-scope config, `GOLEM_PORTAL_*`, defaults, or the explicit
+flags `golem team link --portal-url <url>` and `--issuer <url>`
+(`src/cli/commands/team.ts:266-267`; `applyLinkOverrides`, `config.ts:115-138`, makes
+the flag replace the value and its provenance, and validates https-or-loopback).
+Only `link` has this refusal; the token-binding checks above are what protect the other
+commands.
 
 ## The project, not the machine
 
@@ -85,7 +133,8 @@ verification-notes §159.
 
 ## `golem team link` and `golem team unlink`
 
-`link` signs in if needed (delegating to `team-portal-auth`), reads
+`link` first refuses a repository-supplied portal (previous section), then signs in
+if needed (delegating to `team-portal-auth`), reads
 `GET /api/v1/me`, and **writes the binding at project scope**. One team links
 silently; several prompt, or take `--org <id-or-slug>`; `--no-bind` signs in
 without touching the project. A team whose subscription has lapsed is still
@@ -102,10 +151,18 @@ skills, and it **keeps** `~/.golem/teams/<org_id>.json`:
 
 | thing | `unlink` does | why |
 |---|---|---|
-| `team.org_id` (project file) | removes | it is the binding |
-| `.claude/skills/golem-team-*` | removes | a team that no longer applies must not leave instructions the agent still follows |
+| `team.org_id` and `team.portal_url` (project file) | removes both | they are the binding (`unbindTeam`, `src/portal/binding.ts`) |
+| `.claude/skills/golem-team-*` | removes, **edited or not** | a team that no longer applies must not leave instructions the agent still follows |
 | `~/.golem/teams/<org_id>.json` | **keeps** | machine scope vs project scope: another project may still be linked to that team, and deleting it would take away *that* project's offline policy |
 | the OS-keychain token | untouched | one machine, one identity, many projects — forgetting it would unlink every repo on the machine |
+
+**Two edited-skill policies, both shipped** (Decision P6, default rule: document what the
+code does). Removal initiated by the *portal* (a skill deleted upstream, a lapsed
+subscription) goes through `removeIfOurs` (`src/cli/team-skills.ts:260-312`) and
+**keeps** an edited skill, reporting a `conflict`. Removal initiated by `unlink` goes
+through `removeTeamSkills` (`src/portal/binding.ts:368`), which `rm`s each
+`golem-team-*` directory with no provenance check, so a hand-edited team skill is
+**deleted**. The page does not pick between them; [[Team Layer]] has the same note.
 
 `unlink` is **no longer an alias for `logout`**. Until this task shipped it was;
 the two undo different things at different scopes, and one word cannot mean both.

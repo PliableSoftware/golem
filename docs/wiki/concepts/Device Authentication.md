@@ -3,7 +3,7 @@ title: Device Authentication
 type: concept
 tags: [r13, adr-0007, security, mtls, passcode, devices, write-surface]
 sources: ["docs/decisions/ADR-0007-remote-conversation-and-hosted-sessions.md", "docs/plan/verification-notes.md §146", "docs/plan/tasks/R13.4.md", "https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredentialCreationOptions"]
-updated: 2026-08-29
+updated: 2026-10-08
 created: 2026-08-29
 ---
 
@@ -85,11 +85,40 @@ Re-ask the question at R13.10, where a real domain exists.
   sooner;
 - **step-up** (`security.step_up_max_age_minutes`, default 2) — high-risk acts
   (gate-map item 5: originating a session) measure against when the passcode was
-  *typed*, not last activity. "I unlocked twelve minutes ago" is enough to keep
-  reading a stream and is not enough to start an agent session in a repository.
+  *typed* (`unlockedAt`, `src/security/user-factor.ts:286-293`), not last activity.
+  "I unlocked twelve minutes ago" is enough to keep reading a stream and is not
+  enough to start an agent session in a repository.
 
 Checking the factor does **not** extend the idle timer; a poll that refreshed it
 would mean the timer measured the poller rather than the person.
+
+### What is actually wired (checked against code, 2026-10-08)
+
+The three numbers above are the schema defaults (`src/config/schema.ts:1168-1170`);
+which of them a setting can change is narrower than the schema suggests.
+
+- **Absolute window: honoured.** `golem device unlock` passes
+  `security.unlock_window_minutes` to `unlock()` (`src/cli/commands/device.ts:180-182`),
+  and that is the only caller.
+- **Idle relock: honoured only for display.** `golem status` and `golem device status`
+  pass `security.idle_relock_minutes` to `checkFactor`
+  (`src/cli/status-collect.ts:508`, `device.ts:289`). The write server's own
+  authorization call (`src/security/write-server.ts:236-242`) passes no `idleMinutes`,
+  so the request path uses the compiled-in 5 (`DEFAULT_IDLE_RELOCK_MINUTES`,
+  `user-factor.ts:60`) whatever the setting says.
+- **Step-up age: compiled-in 2 on the request path.** Likewise `stepUpMaxAgeMinutes` is
+  not passed by `startWriteServer`, so `security.step_up_max_age_minutes` is not read
+  there (`DEFAULT_STEP_UP_MAX_AGE_MINUTES`, `user-factor.ts:68`). Raising or lowering
+  the setting changes nothing today. (This is a finding of the Phase 1 audit's
+  neighbourhood, not a recorded decision; no task is cited here.)
+- **Step-up applies to exactly one route, and only on one server.** `stepUpPaths` is
+  passed by the session host (`src/cli/commands/session-host.ts:292`) as
+  `[START_CONVERSATION_PATH]` (`/api/conversations`,
+  `src/session/device-sessions.ts:74`). The standalone `golem device serve` write surface
+  passes none (`device.ts:241-252`), so on it no route demands a fresh passcode. The
+  wiki's earlier "gate-map item 5" framing is therefore true of hosted sessions, not
+  of every write surface. The other gate-map items (1-9 as real controls) were not
+  re-verified here: UNVERIFIED.
 
 ## Commands
 

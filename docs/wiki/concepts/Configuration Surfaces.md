@@ -2,9 +2,9 @@
 title: Configuration Surfaces
 type: concept
 tags: [config, settings, tui, vscode, control-surface, toggle, ui]
-sources: [src/config/ui-model.ts, src/config/control-surface.ts, src/config/schema.ts, src/tui/, vscode-extension/render.js]
+sources: [src/config/ui-model.ts, src/config/control-surface.ts, src/config/control-surface-runtime.ts, src/config/control-surface-settings.ts, src/config/schema.ts, src/cli/panel-args.ts, src/cli/main.ts, src/tui/, vscode-extension/render.js, docs/plan/audit/dust-1/DECISIONS.md]
 created: 2026-07-30
-updated: 2026-08-21
+updated: 2026-10-08
 ---
 
 # Configuration Surfaces
@@ -49,11 +49,20 @@ why the VS Code panel could only ever expose the compression dial and the accoun
   colour is just a validated string.
 - **`SECTION_META`** — title, summary, and display order per section.
 
-`ownedBy` is the anti-duplication rule: `proxy.active_account` is omitted from the
-settings groups because a runtime control edits the same key with a better
-affordance. Nothing is editable from two rows at once. (`slider.level` was the
-other entry here until ADR-0004 retired it; both dials are now plain settings
-rows, which is the point — a dial IS its stored value.)
+`ownedBy` is the anti-duplication hook: `settingControlGroups` skips any leaf whose
+meta sets it (`src/config/control-surface-settings.ts:50`). **No `SETTING_META` entry
+sets it today** — the field is declared (`src/config/ui-model.ts:149`) and filtered on,
+but never populated, so the filter is inert and the `ownedBy` unit test passes
+vacuously. The shipped consequence is that some keys are editable from two rows: the
+runtime controls `runtime:compression` and `runtime:account` (the latter writes
+`inference.model`) sit beside the ordinary `setting:compression.level` and
+`setting:inference.model` rows (`src/config/control-surface-runtime.ts:33-82`). Both
+rows write the same key through the same writer, so they cannot disagree about the
+stored value; they only duplicate the affordance. Decision G4 (DUST Phase 1, default
+rule: doc follows code) records this as the shipped behaviour rather than a rule to
+restore. (`proxy.active_account` and `slider.level`, the entries earlier drafts of
+this page named, are gone: the first is migrated to `inference.model`
+(`src/config/migrations.ts:43`), the second was retired by ADR-0004.)
 
 ### 2. `src/config/control-surface.ts` — one list, three stores
 
@@ -61,7 +70,10 @@ rows, which is the point — a dial IS its stored value.)
 `id`, `kind`, `value`, `layer`/`source`, `writableScopes`, `locked`, `danger`,
 `restart`, `advanced` — grouped into tabs, with the `golem status` report as the
 header. `applyControl(id, value, scope)` routes writes back to the **existing**
-implementations (`setConfig`, `writeGuidanceRule`, `useAccount`, `startDetached`).
+implementations (`setConfig`, `writeGuidanceRule`, `useGateway`, `startDetached` —
+`src/config/control-surface-settings.ts:15`, `control-surface-guidance.ts:88`,
+`control-surface-runtime.ts:184,222`; the gateway writer was `useAccount` before the
+gateway rename).
 It adds no persistence logic of its own, so a UI cannot bypass a
 validation or a side effect the CLI performs.
 
@@ -69,14 +81,27 @@ Two rules every front end inherits:
 
 - **Env-supplied controls are locked.** A value from the `env` layer is shown but
   refuses writes, with the reason — writing a file layer that env overrides would
-  report success and change nothing.
+  report success and change nothing. (The `ENV_LOCKED` copy says env "overrides
+  every file layer", which has been untrue since ADR-0008: a file's `!important`
+  declaration beats `env`, see [[Settings Cascade]]. The lock itself is right for the
+  normal band, which is the only band env can declare in.)
+- **A locked control is refused only for `env`.** `applySetting` throws solely when
+  the effective layer is `env` (`control-surface-settings.ts:140-142`). An
+  important-locked or opaque row is *rendered* locked (`:98-104`) but the API will
+  still write it; the `applyControl` doc comment ("throws for … a locked control",
+  `control-surface.ts:123`) overstates this. A front end hides the widget; it is
+  not a server-side refusal.
 - **`danger` needs a confirm.** Only in the risky direction: `proxy.bypass_all` is
   the full bypass with redaction OFF (ADR-0004), so *turning it on* asks; coming
   back never does.
 
 Control ids (`setting:<section>.<key>`, `guidance:<name>`, `runtime:<name>`) are a
 stable contract — a webview round-trips them, so they must not change between
-releases.
+releases. One deliberate exception has already happened: ADR-0004 / R11.1 renamed
+the runtime dial's id from `runtime:slider` to **`runtime:compression`**
+(`control-surface-runtime.ts:33-60`). The current runtime ids are
+`runtime:compression`, `runtime:account` and `runtime:proxy`; anything still posting
+`runtime:slider` gets the "unknown control" error from `applyControl`.
 
 ## The three front ends
 
@@ -104,7 +129,10 @@ change and no version skew.
 panel has one entry point and gets the fast path instead of commander's ~810ms).
 It accepts `--dir <path>`, `--no-pet`, and `--advanced`.
 
-Routing lives in `src/cli/main.ts` (`parsePanelArgs`), and the accept/reject boundary
+Routing is decided in `src/cli/main.ts`, but `parsePanelArgs` itself lives in
+`src/cli/panel-args.ts` (`main.ts` reaches it through a dynamic `import()`; the file is
+split out because `main.ts` self-executes as the `bin` entry and must stay free of
+static imports). The accept/reject boundary
 is deliberate: **any unrecognised flag falls through to commander**, so a mistyped
 flag is reported by the code that owns flag parsing rather than silently opening a
 UI. `--help`, `--version`, and every named command go to commander too. A bare
@@ -125,7 +153,9 @@ the control list, and a key-hint footer.
 verification-notes §86). Three rules keep it honest:
 
 - **`src/cli/main.ts` is a dependency-free shim.** It reads argv and dynamically
-  imports exactly one of `../tui/index.js` or `./program.js` — because ESM hoists
+  imports `./panel-args.js` (string handling only), then `./fast-path.js` for the hook
+  events and status line, and then exactly one heavy branch — `../tui/index.js`
+  (the panel) or `./program.js` (commander). Nothing is statically imported — because ESM hoists
   imports, so the routing decision cannot live in a module that statically imports
   either branch. A bare `golem` therefore never loads commander or any other
   command's dependencies (~790ms saved).
@@ -158,7 +188,7 @@ ink and React were subsequently **removed** (spec Decision 51): they were ~85% o
 panel's load and nothing in them could be deferred. `src/tui/` now renders itself —
 `render.ts` (layout), `screen.ts` (diffed repaint), `keys.ts` (key decoding),
 `ansi.ts` (colour degradation), `width.ts` (ANSI/wide-char measurement) — with the
-same layout, keys, and colours, and `golem-run` back to 6 runtime dependencies.
+same layout, keys, and colours, and `@pliable/golem` (then published as `golem-run`) back to 6 runtime dependencies.
 **The panel now paints a fully-populated first frame in ~170ms**, so the pre-paint
 splash was deleted too: there is nothing left to cover.
 
@@ -193,6 +223,25 @@ one. The pet is therefore drawn in a fixed-width box, so a double-wide render ca
 shift that glyph without pushing the header text out of alignment. `ui.pet false`
 (or `golem --no-pet`) turns it off, which is also the escape hatch for legacy
 Windows consoles on codepage 437/850, where the block glyphs can't be drawn.
+
+### Default write scope and team policy
+
+**Default write scope.** The panel opens on the `project` scope
+(`src/tui/state.ts:120`), while `golem config set/unset` default to `--scope local`
+(`src/cli/commands/config.ts:199`). Decision D58(f), the recorded decision that
+fixed the CLI default, covers the CLI only. Decision G5 (default rule: doc follows
+code) documents `project` as the shipped panel default. Flagged rather than settled:
+a panel edit lands in the committed `.golem/settings.json`, where a CLI edit lands in
+the gitignored local file.
+
+**Team policy is not shown here.** `golem config list/get/set` (and so the panel, which
+routes through the same writers) read settings with plain `loadConfig`
+(`src/cli/config.ts:60,89`), which never populates the `team` origin. Only the proxy
+foreground and `golem status` use `loadConfigWithTeamLayer` (see [[Team Layer]]), so
+`team` values and `team!` locks do not render on this surface. Whether they should is
+open (Phase 1 contradiction G3); this page does not decide it. UNVERIFIED: that the
+VS Code webview and `config schema --json` take the same plain-`loadConfig` path
+(inferred from `src/cli/commands/config.ts:81,266` delegating to the same module).
 
 ### VS Code
 
@@ -257,4 +306,4 @@ suppressing it; `context_warn_fraction` only fires when the catalog knows the wi
 
 ## Related
 
-[[Guidance Rules]] · [[Compression Levels]] · [[Architecture]] · [[Dogfooding Golem]]
+[[Guidance Rules]] · [[Compression Levels]] · [[Architecture]] · [[Dogfooding Golem]] · [[Settings Cascade]] · [[Team Layer]]
