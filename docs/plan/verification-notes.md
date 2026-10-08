@@ -10935,3 +10935,33 @@ inventing a second one — see [[Spawn Headroom Gate]].
 - Everything that needs a live relay, unchanged from §19/§20.
 - **The permission posture in §5 is a user decision, not a research gap.** No
   further reading resolves it.
+
+## 2026-10-08 — DUSTSEC.10: no "relay channel connected" signal at the PermissionRequest hook
+
+Task DUSTSEC.10 step 1 (R8, USER decision: the R12.12 deny applies only when a relay channel is
+connected). **Finding: no reliable signal exists. The task stops here; the deny is unchanged.**
+Evidence is the repo plus the dated notes above (the live hooks/channels pages were NOT re-fetched
+in this pass — re-check them before overturning this):
+
+1. **Hook payload.** The subset `src/hooks/permission-request.ts` reads (`cwd`, `tool_name`,
+   `tool_input`; `permission_suggestions` deliberately ignored) and the documented
+   `PermissionRequest` input recorded in §141 carry no channel/relay field. **[DOCUMENTED, per
+   earlier notes]**
+2. **Env var.** `grep -rn "claude/channel\|CLAUDE_CODE_.*CHANNEL\|--channels" src` finds nothing.
+   Channels are enabled by launch flag only (`--channels` /
+   `--dangerously-load-development-channels`, see "Preview constraints"), and no env var set by
+   Claude Code for it is documented. **[NOT FOUND]**
+3. **Golem-owned marker.** Golem ships no channel server, so there is nothing of its own to write a
+   connected/cleared marker on connect/disconnect. The channel is a third-party MCP server; Golem
+   cannot observe its connection state. **[NOT FOUND]**
+4. **Indirect inference rejected.** `.mcp.json` presence does not imply the session loaded the
+   channel (flag required), and Claude Code gives no delivery/connection acknowledgement
+   (channels reference, "no delivery acknowledgement"). The brief forbids inventing a heuristic.
+
+**R12.13 remains unconfirmed** (owner: user, needs a live interactive session): nobody has observed
+whether the PermissionRequest deny pre-empts the relay. "R12.13's blocker is resolved" in SUMMARY
+means only the R12.12-shipped half.
+
+**Open for the user:** accept the deny-for-everyone behaviour as-is (amend ADR-0002 via DUST2.3),
+or build a Golem-owned channel/pairing server that writes a connected marker (cleared on
+disconnect/crash) so the signal exists.
