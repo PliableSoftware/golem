@@ -29,7 +29,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { findProjectDir } from "../config/index.js";
 import { defaultUserDir } from "../config/paths.js";
-import { redactStandaloneText } from "../pipeline/redaction.js";
+import { redactIdentifierText, redactStandaloneText } from "../pipeline/redaction.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { BRIEF_MAX_BYTES, isGolemProject, type VibePaths, vibePaths } from "./paths.js";
 
@@ -141,9 +141,18 @@ export class VibeStore {
    * plus the project's plugin rules, loaded into this process first. Never
    * throws; a plugin load failure leaves the built-ins in force.
    */
-  protected async redact(text: string): Promise<string> {
+  async redact(text: string): Promise<string> {
     await ensurePluginRedactionRules(this.projectDir);
     return redactStandaloneText(text);
+  }
+
+  /**
+   * Same, for an identifier that must stay usable as a key (a path): the rule
+   * table without the entropy sweep, which would mangle ordinary long paths.
+   */
+  async redactIdentifier(text: string): Promise<string> {
+    await ensurePluginRedactionRules(this.projectDir);
+    return redactIdentifierText(text);
   }
 
   /** The always-loaded brief, or null when the guide has not been started. */
@@ -257,7 +266,13 @@ export class VibeStore {
   }
 
   /** Add or refresh one source. Keyed on path, so a re-seed updates in place. */
-  async recordSource(entry: VibeSource): Promise<void> {
+  async recordSource(raw: VibeSource): Promise<void> {
+    // DUSTSEC.9 (R7): `path` is the only string-valued field that can carry a
+    // secret (the rest are an enum, timestamps and a count). It is display-and-
+    // dedupe only — nothing re-reads a source from this file — so it is stored
+    // redacted by the rule table (no entropy sweep: that would mangle real paths)
+    // and keyed on the redacted value, so a re-seed still updates in place.
+    const entry: VibeSource = { ...raw, path: await this.redactIdentifier(raw.path) };
     const current = await this.sources();
     const others = current.sources.filter((s) => s.path !== entry.path);
     const next: VibeSources = {

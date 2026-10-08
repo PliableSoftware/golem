@@ -170,6 +170,23 @@ export function redactStandaloneText(text: string): string {
   return redactText(text, new PlaceholderTable()).text;
 }
 
+/**
+ * Rule table only — every built-in and plugin rule, in order, but NOT the
+ * high-entropy sweep. For an identifier field that must stay usable as a key
+ * (a filesystem path): the entropy detector treats any long run of
+ * `[A-Za-z0-9/_-]` as a candidate secret, so it would mangle ordinary paths.
+ * Provider-shaped secrets (AWS keys, tokens, PEM blocks...) are still caught.
+ * Free text must use {@link redactStandaloneText}.
+ */
+export function redactIdentifierText(text: string): string {
+  const table = new PlaceholderTable();
+  let current = text;
+  for (const rule of activeRedactionRules()) {
+    current = applyRule(current, rule, table)[0];
+  }
+  return current;
+}
+
 /** A redaction whose placeholders can be put back afterwards. */
 export interface ReversibleRedaction {
   /** The redacted text — this is what may leave the machine. */
