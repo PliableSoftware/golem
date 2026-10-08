@@ -100,9 +100,8 @@ export interface Keypair {
  *
  * The output format is documented only as "prints a public/secret keypair as
  * hex" (§19) — no verbatim sample exists in the notes — so the parser is
- * tolerant in a bounded way: labelled `pub`/`sec` lines win when present;
- * otherwise the two 64-hex tokens in order are public-then-secret, which
- * matches the documented phrasing. Anything else raises rather than guessing:
+ * tolerant in a bounded way: a `pub`/`sec`-labelled line that carries the hex
+ * decides which key is which; position never does. Anything else raises rather than guessing:
  * storing the wrong hex as a secret would burn an identity silently.
  * Extending §19 with the verbatim sample when Stage 2 runs is the follow-up.
  */
@@ -114,30 +113,34 @@ export function parseGenerateKeyOutput(stdout: string): Keypair {
         "refused to store a half-parsed identity.",
     );
   }
-  const pubLine = /^.*pub.*$/im.exec(stdout);
-  const secretLine = /^.*sec.*$/im.exec(stdout);
-  if (pubLine !== null && secretLine !== null) {
-    // The same line cannot be both labels' value (`pubkey=A secret=B` on one
-    // line would hand A to both); that is ambiguous, not parseable.
-    const pub = pubLine.index === secretLine.index ? null : HEX64_RE.exec(pubLine[0]);
-    const sec = pubLine.index === secretLine.index ? null : HEX64_RE.exec(secretLine[0]);
-    if (pub !== null && sec !== null) {
-      return checkedPair(pub[0], sec[0]);
+  // Classify by LABEL only, on lines that actually carry a hex. A label line
+  // with no hex (a bech32 `npub:`/`nsec:` line) is skipped; a line carrying
+  // both labels, or none, is unclassifiable. Position is never consulted: guessing
+  // is how a secret becomes the committed pubkey.
+  let pub: string | null = null;
+  let sec: string | null = null;
+  let clash = false;
+  for (const line of stdout.split(/\r?\n/u)) {
+    const hex = HEX64_RE.exec(line);
+    if (hex === null) continue;
+    const isPub = /pub/iu.test(line);
+    const isSec = /sec/iu.test(line);
+    if (isPub === isSec) continue;
+    if (isPub) {
+      clash ||= pub !== null;
+      pub ??= hex[0];
+    } else {
+      clash ||= sec !== null;
+      sec ??= hex[0];
     }
   }
-  // Positional fallback, only for UNLABELLED output with exactly two keys. A
-  // label line that carries a key but did not resolve above is a format we do
-  // not understand, and guessing there is how a secret becomes a pubkey.
-  const labelCarriesKey =
-    (pubLine !== null && HEX64_RE.test(pubLine[0])) ||
-    (secretLine !== null && HEX64_RE.test(secretLine[0]));
-  if (hexes.length !== 2 || labelCarriesKey) {
+  if (pub === null || sec === null || clash) {
     throw new Error(
-      "buzz-admin generate-key output is ambiguous (cannot tell the public key from the " +
-        "secret) — refused to guess; nothing was stored.",
+      "buzz-admin generate-key output is ambiguous (no labelled public/secret hex lines — " +
+        "cannot tell the public key from the secret) — refused to guess; nothing was stored.",
     );
   }
-  return checkedPair(hexes[0] as string, hexes[1] as string);
+  return checkedPair(pub, sec);
 }
 
 function checkedPair(pubkeyHex: string, secretHex: string): Keypair {
