@@ -251,6 +251,17 @@ export async function provisionBuzz(opts: ProvisionOptions): Promise<ProvisionRe
   }
 
   const content = renderManifest({ version: 1, agents: records });
+  // Defence in depth (ADR-0003): the manifest is COMMITTED, so nothing written
+  // to it may be a stored secret. Checked before any write, for every persona.
+  for (const record of records) {
+    const stored = await store.resolve(accountFor(opts.projectDir, record.persona));
+    if (stored !== null && stored.secret !== "" && content.includes(stored.secret)) {
+      throw new Error(
+        `refused to write the Buzz manifest: the record for "${record.persona}" contains its secret key. ` +
+          "Nothing was written.",
+      );
+    }
+  }
   if (opts.write !== false) {
     await mkdir(path.dirname(buzzManifestPath(opts.projectDir)), { recursive: true });
     await writeFile(buzzManifestPath(opts.projectDir), content, "utf8");
