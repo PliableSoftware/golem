@@ -1,6 +1,3 @@
-export { ContextGuard } from "./context-guard.js";
-export { ContextMonitor } from "./context-monitor.js";
-
 import type { GatewayEntry, LegacyUpstream, UpstreamProvider } from "../providers/index.js";
 
 export type { GatewayEntry, LegacyUpstream, UpstreamProvider };
@@ -45,7 +42,6 @@ export {
   defaultTargetId,
   defaultTrustFor,
   listTargets,
-  resolveModel,
   targetWarnings,
 } from "../providers/targets.js";
 export { buildContextLedger, readContextLedger, writeContextLedger } from "./context-ledger.js";
@@ -76,8 +72,6 @@ export type { ContextBucket, ContextLedger, ContextToolsBlock, ToolOrigin };
 
 import type { LimitPrediction } from "./limit-prediction.js";
 
-export { getContextGuard } from "./context-guard.js";
-export { getContextMonitor, parseModelDescriptor } from "./context-monitor.js";
 export { GolemProxy } from "./server.js";
 export type {
   ProxyRequest,
