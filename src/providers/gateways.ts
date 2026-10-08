@@ -13,8 +13,12 @@
  *   from a per-gateway env var {@link perGatewayEnvVar}; the legacy single
  *   account uses `GOLEM_UPSTREAM_API_KEY`.
  * - **Fail-closed / no silent cross-account fallback.** A `model` that
- *   names an unknown id does NOT silently use a different gateway — it falls back
- *   to the user's own top-level (legacy) config and reports a warning. A missing
+ *   names an unknown id does NOT silently use a different gateway. This resolver
+ *   still returns the top-level (legacy) config, but only so the proxy has an
+ *   upstream to construct; it reports a warning, and the proxy refuses every
+ *   request (400, Golem-attributed) via the route resolver, single-target
+ *   included (DUSTSEC.15). Nothing is ever sent to the legacy upstream on the
+ *   strength of an unknown id. A missing
  *   credential is surfaced downstream (the request 401s), never swapped for
  *   another gateway's key.
  */
@@ -88,7 +92,7 @@ export interface ResolveResult {
  * (`inference.model`, renamed from `active_account` in R9.1)
  * unset -> the legacy top-level config. Set + found -> that gateway (secret from
  * its per-gateway env var). Set + NOT found -> legacy config + a warning (never a
- * different gateway — ADR-0003 fail-closed).
+ * different gateway — ADR-0003 fail-closed); the proxy refuses requests then.
  */
 export function resolveActiveUpstream(
   input: {
@@ -121,7 +125,7 @@ export function resolveActiveUpstream(
       resolved: legacyResolved,
       warning:
         `inference.model "${input.activeAccount}" is in neither proxy.gateways nor ` +
-        "proxy.targets — using the top-level upstream config instead (no silent switch).",
+        "proxy.targets — requests will be refused (fail closed); no substitute upstream is used.",
     };
   }
 

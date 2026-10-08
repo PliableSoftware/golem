@@ -440,7 +440,7 @@ export async function startDetached(
 ): Promise<number | null> {
   const args = ["proxy", "start", "--dir", projectDir, "--port", String(port)];
   // Decision 56: the bypass shim is the same daemon with the pipeline pinned to
-  // level 1, so it is a flag rather than a second entry point — one lifecycle,
+  // compression off (redaction only), so it is a flag rather than a second entry point — one lifecycle,
   // one pid file, one port.
   if (opts.shim === true) args.push("--shim");
   // R9.8: keep the daemon's diagnostics instead of discarding them. Falls back
