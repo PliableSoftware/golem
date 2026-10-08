@@ -9,19 +9,19 @@ Run on 2026-10-08 in this worktree (`git tag --sort=-v:refname`, `git tag --cont
 - Tags in the v0.54 line: `v0.54.0` (`b949fd3`, PR #182, 2026-09-07) and `v0.54.3` (`1719982`, PR #200, 2026-09-23). `v0.54.3` is the newest tag. There is no `v0.54.1` or `v0.54.2` tag.
 - The release commits `54f089a` (`chore(release): v0.54.1`, 2026-09-16) and `43ac834` (`chore(release): v0.54.2`, 2026-09-20) exist and are both contained in `v0.54.3`.
 - `npm view @pliable/golem versions`, read-only on 2026-10-08, returned exactly one version: `0.54.2`. This read does not show `0.54.3` on the registry, and it does not show what was installed from any other channel. Whether `v0.54.3` was ever published is not established by this draft.
-- **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 branch commits). Every fix is on `development` only, or, for DUSTSEC.19, on an unmerged branch.
+- **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 commits). Every fix is on `development` only.
 
 So: **every tagged build, `v0.54.0` and `v0.54.3` alike, and the `0.54.2` build on npm (built before the fixes existed), lacks all of the DUSTSEC fixes.** Anyone running a build from this line should treat the weaknesses in the security section as present in it, with one caveat: for each item the section says which tagged builds were checked directly and which were not. No wording in this draft says that current releases are protected. <!-- B-29; git tag --contains over the fix shas; 1719982; b949fd3 -->
 
 ## Unreleased (on `development`, in no tag)
 
-### Security fixes: DUSTSEC.1-9 and 11-18 merged, DUSTSEC.19 in progress, DUSTSEC.10 open
+### Security fixes: DUSTSEC.1-9 and 11-19 merged (all unreleased), DUSTSEC.10 open
 
 These came out of Dust Phase 1, a set of eleven read-only audits by project agents (the audit is `docs/plan/audit/dust-1/SUMMARY.md`; the choices are the USER decisions in `docs/plan/audit/dust-1/DECISIONS.md`). They were then reviewed twice by independent project agents (the first review returned VERDICT: block, the second VERDICT: concerns with no High). That is review by agents inside this project, not an outside audit or certification. DUSTSEC.18 got no third review. <!-- B-27; B-28; debrief 2026-10-08-DUSTSEC-security-batch.md; merged PRs #213-#219, #221-#224, #227, #228 -->
 
 Severity below is the label the Phase 1 audit gave. "Reach" says what an attacker or accident needed. No step-by-step reproduction is given on purpose.
 
-**Why this is not "no known issues".** The bypass guard (DUSTSEC.3) is a guard on common spellings, not a sandbox. The reviews found follow-ups, which are DUSTSEC.17 and DUSTSEC.18. DUSTSEC.19 and DUSTSEC.10 are not closed. <!-- C-07; B-28 -->
+**Why this is not "no known issues".** The bypass guard (DUSTSEC.3) is a guard on common spellings, not a sandbox. The reviews found follow-ups, which are DUSTSEC.17 and DUSTSEC.18. DUSTSEC.19 closed one gap and its review found others that are still open (below), and DUSTSEC.10 is not closed. <!-- C-07; B-28 -->
 
 #### The HIGH items
 
@@ -94,14 +94,15 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 
 **DUSTSEC.15: an unknown `default_target` could fall through.** It now always fails closed, single-target setups included. Behaviour change: a config that named an unknown target and worked before now fails. A follow-up corrected a warning that said the shim refuses requests (DUSTSEC.17, `76c866f`, PR #224). Status: `fd5b1dd`, PR #218; `76c866f`, PR #224. In no tag. <!-- fd5b1dd; 30aea0a; 76c866f; 4aa8d5a -->
 
-#### In progress
+#### DUSTSEC.19: redaction covered only `POST /v1/messages`. Merged, unreleased.
 
-**DUSTSEC.19: only `POST /v1/messages` bodies were redacted. IN PROGRESS, NOT MERGED, NOT FIXED ON `development`.**
-- What is wrong: redaction runs on the JSON body of `POST /v1/messages`. Other paths and non-JSON bodies are not rewritten by that stage, so a request to another path, such as a token-count or batch route, is forwarded as it arrived. This is the ledger's own caveat on the redaction claim. It was found while the claims ledger was being built.
+- What was wrong: redaction ran on the JSON body of `POST /v1/messages` only. A request to another path, such as the token-count route or the batches route, was forwarded as it arrived. It was found while the claims ledger was being built, and it is a hard-rule gap because the proxy's promise is that secrets are redacted before they reach the upstream.
 - Reach: a client sending such a request through the proxy.
-- Affected released builds: all of them, by the ledger wording (C-01), which is read at the current `development` head. This draft did not trace it tag by tag.
-- Status: a change exists on the local branch `dustsec19/redact-all-json-bodies` (`109f32b` code, `d52dbf8` task doc, `96d9b81` test). `git merge-base --is-ancestor` shows none of the three is in `development`, and no tag contains them. Until it is reviewed and merged this is open. Do not describe it as fixed.
-<!-- C-01; 109f32b; d52dbf8; 96d9b81 -->
+- Affected released builds: all of them, by the evidence of the tags (no tag contains the fix). This draft did not trace it tag by tag.
+- Status: fixed on `development` in PR #265 (code `109f32b`, task doc `d52dbf8`, test `96d9b81`). Every JSON object or array body on any route now gets the same redaction rules, in the same order, with plugin rules, and the fail-safe path covers the same routes. Level `off` still redacts; `bypass_all` is unchanged. No tag contains it.
+- What it does NOT cover, found by the independent review of the change and tracked as separate work: a JSON body sent with a content encoding such as gzip, or one that begins with a byte-order mark, fails to parse and is forwarded unredacted; a body that is not JSON (multipart uploads, plain text) is forwarded unchanged and a test now pins that; the redaction walk is synchronous with no size cap on the request body.
+- A related defect that already existed on the main messages route, not introduced here: the redaction's long-token rule also rewrites some 33 and 34 character API ids (server tool and batch ids), which the API then rejects, and this change extends that behaviour to the token-count and batches routes. It is tracked as its own task.
+<!-- C-01; 109f32b; d52dbf8; 96d9b81; 68580a4 -->
 
 #### Open
 
@@ -152,5 +153,5 @@ PR #182. Everything after it up to `v0.54.3` is the list above plus these, all c
 
 - Whether `v0.54.3` was published to npm is not established (the registry read lists `0.54.2` only).
 - Per-tag presence of defects was checked directly only for DUSTSEC.2 (endpoint and header at `v0.53.0`, `v0.54.0`, `v0.54.3`), DUSTSEC.16 (name at `v0.54.0` and `v0.54.3`) and DUSTSEC.6 (code at `v0.54.3`, absent at `v0.54.0`). For the rest, the audit baseline is the only evidence.
-- DUSTSEC.19 is unmerged. DUSTSEC.10 is open.
+- DUSTSEC.19 is merged but unreleased, and its follow-up gaps are open. DUSTSEC.10 is open.
 - This draft changes no source and edits no roadmap, shipped log or task state.
