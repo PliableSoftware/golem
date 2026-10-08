@@ -45,6 +45,22 @@ const WRITE_TOOLS = new Set([
 /** Tools that reach OUTSIDE the machine / are hard to reverse. Always gated. */
 const OUTWARD_TOOLS = new Set(["mcp__golem__wiki_upsert"]);
 
+/**
+ * `git branch` listing forms only. A ref after `--contains`/`--merged`/... is a
+ * filter, and `--sort` takes a key; neither creates or deletes anything. A bare
+ * name, `-m`, `-f`, `-d`/`-D` never match, so they stay gated or destructive.
+ */
+const GIT_REF = String.raw`[\w./@^~][\w./@^~-]*`;
+const GIT_BRANCH_LIST_FLAG = [
+  String.raw`-a|-r|-v|-vv|-i|--all|--remotes|--verbose|--list|-l|--show-current`,
+  String.raw`--(?:no-)?(?:contains|merged)(?:\s+${GIT_REF})?`,
+  String.raw`--points-at\s+${GIT_REF}`,
+  String.raw`--sort(?:=|\s+)-?[\w:.-]+`,
+].join("|");
+const GIT_BRANCH_LIST_RE = new RegExp(
+  String.raw`^git\s+branch(?:\s+(?:${GIT_BRANCH_LIST_FLAG}))*\s*$`,
+);
+
 /** Bash commands safe to treat as read-only (exact leading-token / phrase match). */
 const SAFE_BASH = [
   /^ls(\s|$)/,
@@ -58,7 +74,7 @@ const SAFE_BASH = [
   /^git\s+(status|diff|log|show|remote\s+-v)(\s|$)/,
   // `git branch` creates, renames and deletes branches, so only the listing
   // forms are read. Anything else (`-D`, `-m`, a bare branch name) is gated.
-  /^git\s+branch(\s+(-a|-r|-v|-vv|--all|--remotes|--verbose|--list|-l|--show-current|--merged|--no-merged|--contains|--no-contains))*\s*$/,
+  GIT_BRANCH_LIST_RE,
   /^npm\s+(test|run\s+(test|lint|typecheck|format:check))(\s|$)/,
   /^(npx\s+)?(tsc|vitest|biome)(\s|$)/,
   /^node\s+--version/,
@@ -115,16 +131,20 @@ const SHELL_COMPOSITION_RE = /[;&|>`\n\r]|\$\(/;
 /**
  * Flags that make an otherwise read-only safe-listed command WRITE to disk:
  * linter autofix (`biome check --write`, `--fix`, `--apply`), snapshot update
- * (`vitest -u`), and `--output=<path>` on the git diff family. Checked on the
- * quote-blanked form, only for commands that matched {@link SAFE_BASH}; the
+ * (`vitest -u`), and `--output=<path>` on the git diff family. Checked with a
+ * build tool's quotes removed (data quotes blanked otherwise), only for commands that matched {@link SAFE_BASH}; the
  * result is `write`, never `read`.
  */
 const WRITE_FLAG_RE =
   /(?:^|\s)(?:--write|--fix|--fix-type|--apply|--apply-unsafe|--unsafe|--output|--output-file|--outfile|--out-dir|--outdir|--update|--update-snapshots?|--updateSnapshot)(?=[\s=]|$)/i;
-const VITEST_UPDATE_RE = /^(?:npx\s+)?vitest\b.*\s-u(?=\s|$)/;
+const VITEST_UPDATE_RE = /^(?:npx\s+)?(?:vitest|npm\s+(?:run\s+)?test)\b.*\s-u(?=\s|$)/;
+/** Commands whose arguments are all flags/paths for a build tool, so a quoted flag still reaches it. */
+const TOOL_COMMAND_RE = /^(?:npx\s+)?(?:tsc|vitest|biome|npm|git)(?:\s|$)/;
 function writesToDisk(cmd: string): boolean {
-  const unquoted = blankQuoted(cmd);
-  return WRITE_FLAG_RE.test(unquoted) || VITEST_UPDATE_RE.test(unquoted);
+  // A tool sees `"--write"` as `--write` (the shell strips the quotes), so for a
+  // build tool the flag is judged with quotes removed; for `cat '--write'` it is data.
+  const seen = TOOL_COMMAND_RE.test(cmd) ? cmd.replace(/["']/g, "") : blankQuoted(cmd);
+  return WRITE_FLAG_RE.test(seen) || VITEST_UPDATE_RE.test(seen);
 }
 
 function bashCommand(input: unknown): string | null {
