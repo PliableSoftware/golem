@@ -327,6 +327,8 @@ export function buildProxyFromSettings(
     // that refuses. Otherwise, with one target the resolver would decide the
     // same thing on every request, so leaving it absent keeps the
     // single-upstream path byte-for-byte the code it has always been.
+    // The shim is exempt on purpose (DUSTSEC.15): it never installs the resolver,
+    // so an unknown default does not refuse there and the stopped port keeps serving.
     ...((listTargets(proxyWithDefault).length > 1 || unknownDefaultTarget(proxyWithDefault)) &&
     build.shim !== true
       ? {

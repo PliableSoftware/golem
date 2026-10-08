@@ -59,6 +59,20 @@ describe("selectTarget", () => {
       ),
     ).toThrow(/owner: user/);
   });
+  it("refuses an owner: user worker even when the caller names an explicit target", () => {
+    expect(() =>
+      selectTarget({ ...base, personas: USER_OWNED }, { worker: "coder", targetId: "cheap" }),
+    ).toThrow(/owner: user/);
+  });
+  it("explicit target with no worker, or an owner: agent worker, still routes explicit", () => {
+    expect(selectTarget({ ...base, personas: USER_OWNED }, { targetId: "cheap" })).toEqual({
+      id: "cheap",
+      route: "explicit",
+    });
+    expect(
+      selectTarget({ ...base, personas: AGENT_OWNED }, { worker: "coder", targetId: "cheap" }),
+    ).toEqual({ id: "cheap", route: "explicit" });
+  });
   it("still routes an owner: agent persona", () => {
     expect(selectTarget({ ...base, personas: AGENT_OWNED }, { worker: "coder" })).toEqual({
       id: "cheap",
