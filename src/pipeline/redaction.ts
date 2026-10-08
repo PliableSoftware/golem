@@ -328,8 +328,9 @@ export interface RedactBodyResult {
 
 /**
  * Redact a parsed request body in place-preserving fashion. Runs over the
- * ENTIRE JSON (system prompt, every message, tool definitions, tool_result
- * content) — a secret anywhere must be stripped before it leaves the machine
+ * ENTIRE JSON: every string value (system prompt, every message, tool
+ * definitions, tool_result content). Object keys are not redacted (S9 is
+ * open). A secret anywhere must be stripped before it leaves the machine
  * or is handed to compression's CCR store.
  */
 export function redactRequestBody(body: unknown): RedactBodyResult {

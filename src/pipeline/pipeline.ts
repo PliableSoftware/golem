@@ -18,7 +18,7 @@
  * function of the text and the lossless compression stage is deterministic per
  * A2's contract, so re-processing a previously-sent prefix reproduces identical
  * bytes and Anthropic prompt-cache hits survive. The OPTIONAL semantic stage
- * (slider ≥2, {@link SemanticCompressor}) is lossy and NOT prefix-stable, so it
+ * (`compression.level` ≥2, {@link SemanticCompressor}) is lossy and NOT prefix-stable, so it
  * is gated OFF on Anthropic-style caching upstreams (Decision 31) and only runs
  * against non-caching gateways; it always fails open (a null result leaves the
  * losslessly-compressed body untouched).
@@ -160,7 +160,7 @@ export interface GolemPipelineOptions {
   readonly compression: CompressionService;
   /**
    * Resolve the active policy per request (e.g. from live settings). May
-   * return a promise so callers can re-read a persisted slider level on
+   * return a promise so callers can re-read the persisted compression level on
    * every request instead of freezing it at construction time.
    */
   readonly policy: () => PipelinePolicy | Promise<PipelinePolicy>;
@@ -207,7 +207,7 @@ export interface GolemPipelineOptions {
    */
   readonly onJoinInjected?: (messages: readonly JoinQueueMessage[], conversationId: string) => void;
   /**
-   * OPTIONAL semantic compressor (slider ≥3). When present and the policy's
+   * OPTIONAL semantic compressor (`compression.level` ≥2). When present and the policy's
    * `semanticCompression` is not "off", it runs after lossless compression.
    * It is lossy and fails open — a null result skips the stage. Provided by the
    * Headroom sidecar (headroom-adapter.ts); absent by default.
@@ -285,7 +285,7 @@ export interface GolemPipelineOptions {
    * short-circuits the whole request: `respondDirectly` is set on the
    * returned {@link ProxyRequest} and every later stage is skipped, since
    * there is no upstream call left to compress for. Independent of
-   * `slider.level` (Decision 31) and of the caching-upstream gate that
+   * the compression dial (Decision 31) and of the caching-upstream gate that
    * governs the semantic/context-substitution stages — this stage never
    * forwards a byte upstream, so there is no cached prefix to preserve or
    * break. Absent → stage does not run (today's behavior).
@@ -505,7 +505,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       }
 
       // Stage 1.5 — local-answer sub-mode (R2.3, opt-in, independent of
-      // slider level). Runs on the already-redacted body — the redaction
+      // compression level). Runs on the already-redacted body — the redaction
       // hard rule applies here same as anywhere else. Only attempted for
       // requests eligibleLocalAnswerText() accepts; a confident result
       // short-circuits the whole request, so no compression stage below has
@@ -743,7 +743,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       // the caching-upstream rule that governs stages 3–4: this stage does not
       // rewrite history, it appends a byte-stable constant, so the cached prefix
       // survives (it is invalidated once when the LEVEL changes, then stable).
-      // `policy.brevity` is already resolved — "off" at slider 0 and, by
+      // `policy.brevity` is already resolved — "off" when the compression dial is off and, by
       // default, at every level until the operator opts in (see policy.ts).
       if (policy.brevity !== "off") {
         const brevity = applyBrevity(body, policy.brevity);

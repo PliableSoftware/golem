@@ -339,7 +339,7 @@ const INTEGRITY_HASH_RE = /^(sha1|sha224|sha256|sha384|sha512|md5)-/i;
  * blanket-excluding `/` (standard-base64 secrets legitimately contain it).
  * Single-chunk tokens (no delimiter at all) are left to the entropy check.
  *
- * verification-notes §137 extends this for a path that embeds a UUID/SHA
+ * verification-notes §140 extends this for a path that embeds a UUID/SHA
  * segment (a scratchpad dir like `…/f70383e6-a18c-…/scratchpad`, or
  * `.claude/worktrees/agent-<uuid>`): such a segment (`f70383e6`, `9c3e`)
  * mixes digits and hex letters, so it is neither purely alphabetic nor purely
@@ -408,7 +408,7 @@ function isPathLikeToken(token: string): boolean {
  *   traffic and are not secrets. Hex-shaped provider secrets are covered by
  *   the pattern rules above.
  * - path-like candidates ({@link isPathLikeToken}): repo paths and versioned
- *   filenames/ADR names (§49), and — as of §137 — a path whose chunks embed a
+ *   filenames/ADR names (§49), and — as of §140 — a path whose chunks embed a
  *   UUID/SHA segment (a scratchpad dir, `.claude/worktrees/agent-<uuid>`),
  *   because this function's pure-hex check above already excludes that exact
  *   material when it stands alone; the path case only makes the two agree.
