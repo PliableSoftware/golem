@@ -18,6 +18,7 @@
 import { BASICS_SKILLS } from "./skills/basics.js";
 import { CLOSE_OUT_SKILLS } from "./skills/close-out.js";
 import { DEVELOP_SKILLS } from "./skills/develop.js";
+import { DUST_SKILLS } from "./skills/dust.js";
 import { FOOTGUN_SKILLS } from "./skills/footguns.js";
 import { HYGIENE_SKILLS } from "./skills/hygiene.js";
 import { PACE_SKILLS } from "./skills/pace.js";
@@ -36,4 +37,5 @@ export const P0_SKILLS: Readonly<Record<string, string>> = {
   ...PACE_SKILLS,
   ...REVIEW_SKILLS,
   ...VIBE_SKILLS,
+  ...DUST_SKILLS,
 };
