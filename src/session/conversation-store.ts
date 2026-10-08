@@ -5,8 +5,8 @@
  * `session-tree.ts` (R8.S3) deliberately stores *content hashes, no prompt
  * content* — this is the deliberate, argued exception to that, made by
  * ADR-0007 §6 (a USER DECISION, spec Decision 60): scrollback ("see the
- * previous messages") and continuation (R13.8) both need real turn text on
- * disk, which hashes cannot provide. What changed: prompt content is now
+ * previous messages") needs real turn text on disk, which hashes cannot provide
+ * (continuation, R13.8, shipped without consuming this store). What changed: prompt content is now
  * persisted, here, and only here. What did NOT change: `session-tree.ts`
  * keeps recording hashes only, for its own branch-detection purpose; this
  * store does not replace it, does not read it, and does not weaken its
