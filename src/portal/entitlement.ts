@@ -134,11 +134,10 @@ export function classifyPortalResponse(status: number, code?: string): TeamLayer
     return { kind: "not_entitled", code: resolved, status, detail: detailForCode(resolved) };
   }
 
-  if (code !== undefined && NOT_ENTITLED_CODES.has(code)) {
-    const resolved = code as NotEntitledCode;
-    return { kind: "not_entitled", code: resolved, status, detail: detailForCode(resolved) };
-  }
-
+  // Only 402 and 403 are entitlement verdicts. Any other 4xx (400, 404, 409,
+  // 422, 429...) is a fault in the request or the route, whatever code its body
+  // carries, and stamping the cache denied on it would withdraw a paid team's
+  // policy from every later config load.
   return { kind: "api_error", status, detail: `the portal answered ${status}` };
 }
 
@@ -263,7 +262,8 @@ export function describeTeamOutcome(
     case "api_error":
       return (
         `Team ${team}: the portal answered ${disposition.status}, which this version of Golem ` +
-        `does not understand — team settings are NOT being applied. Using local configuration.`
+        `does not understand — this sync did NOT apply team settings, and nothing was recorded ` +
+        `against the team. Using local configuration for now.`
       );
   }
 }
