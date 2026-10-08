@@ -1,7 +1,7 @@
 ---
 task: DUST3.1
 title: "Dead code (proxy, providers): delete the unreferenced context guard/monitor, resolveModel and ResolvedTarget.contextSize"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "golem verify exit 0 before AND after (exit code, not tailed output); suit
 depends_on: []
 touches: [src/proxy/context-guard.ts, src/proxy/context-monitor.ts, src/proxy/index.ts, src/providers/targets.ts]
 created: 2026-10-08
+updated: 2026-10-08T18:33:41.651Z
 ---
 
 ## What this is
@@ -57,3 +58,7 @@ the proposal below.
 - The `persona_worker` branch in `selectTarget`: the audit lists it as dead, but DUST3.10's
   route-label fix (C-c) makes it reachable. Do not delete it here.
 - Stale comments in these dirs (DUST3.18).
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

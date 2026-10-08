@@ -1,7 +1,7 @@
 ---
 task: DUST3.14
 title: "Portal and team sync honesty: init reports the real team outcome, `team sync` works unlinked, only 402/403 stamp not-entitled, the api_error notice says what is true"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/cli/init.ts, src/cli/init-team.ts, src/cli/commands/team.ts, src/portal/entitlement.ts, src/portal/team-layer.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:48.615Z
 ---
 
 ## What this is
@@ -42,3 +43,7 @@ test first, commit as you go.
 - Where enforced team policy applies (G3/S18) and `security.*` remote denial (S17/P4): open
   USER decisions, in the index.
 - Stale "has not shipped yet" comments in `init-team.ts:80,163-164`: DUST3.18.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

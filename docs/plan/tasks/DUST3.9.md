@@ -1,7 +1,7 @@
 ---
 task: DUST3.9
 title: "Compression accounting and hook config: honour read_skeleton_enabled on the fast path, accept Headroom `router`, count only stored CCR refs"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/cli/fast-path.ts, src/compression/headroom-adapter.ts, src/compression/context-substitution.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:45.969Z
 ---
 
 ## What this is
@@ -42,3 +43,7 @@ as you go. DUST2.20 also touches `src/compression`. Rebase if it is in flight.
 
 - CCR bridge pairing by index: DUST2.20.
 - Slider-era comments in `src/compression`: DUST3.18.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

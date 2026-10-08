@@ -1,7 +1,7 @@
 ---
 task: DUST3.16
 title: "Buzz ACP: cancel with no turn in flight must not silence the next turn; provisioning must not orphan minted identities or name a nonexistent `--rotate`"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/buzz/acp-agent.ts, src/buzz/provision.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:49.681Z
 ---
 
 ## What this is
@@ -39,3 +40,7 @@ test first, commit as you go.
 ## Out of scope
 
 - Keygen parser (S6): DUSTSEC.6/17/18.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

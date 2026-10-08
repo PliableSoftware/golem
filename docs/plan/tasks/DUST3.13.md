@@ -1,7 +1,7 @@
 ---
 task: DUST3.13
 title: "Watch and dashboard CLI: live stats source, respect NO_COLOR and non-TTY, true footer cadence, no overlapping frames, CCR size from the worktree root"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/cli/watch.ts, src/cli/commands/note-dashboard-watch.ts, src/cli/storage-size.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:48.091Z
 ---
 
 ## What this is
@@ -38,3 +39,7 @@ Rebase if needed.
   renders): those fields are served on `/__golem/statusline` and pinned by
   `statusline.test.ts:786`. NEEDS-USER, see the index.
 - Telemetry store bugs: DUST3.12.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

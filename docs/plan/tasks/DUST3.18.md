@@ -1,7 +1,7 @@
 ---
 task: DUST3.18
 title: "Stale comments and strings that contradict the rebaselined spec: slider-era wording, retired command names, wrong defaults and dead cross-references (strings and comments only)"
-state: queued
+state: done
 owner: agent
 size: L
 discipline: code
@@ -10,6 +10,7 @@ gate: "golem verify exit 0 before AND after; suite test count unchanged; `git di
 depends_on: [DUST3.1, DUST3.2]
 touches: [src/pipeline, src/proxy/server.ts, src/cli, src/credentials, src/providers, src/compression, src/prompt, src/mcp, src/knowledge, src/hooks, src/config, src/pkg, src/tools, src/wiki, src/inference, src/tui, src/session, src/vibe, src/buzz, scripts/release.mjs, tests/unit/tools/catalog.test.ts, tests/unit/knowledge/extractors.test.ts]
 created: 2026-10-08
+updated: 2026-10-08T18:33:50.771Z
 ---
 
 ## What this is
@@ -105,3 +106,7 @@ count (NEEDS-USER, M2).
 `docs/decisions/ADR-0007-remote-conversation-and-hosted-sessions.md` numbers the base-URL rule 7
 in its list (`:286`) but calls it "invariant 8" at `:167,:329`. The code copied the 8. Use the
 list number (7) in code. Report the ADR inconsistency; do not edit the ADR in this task.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

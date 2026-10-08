@@ -1,7 +1,7 @@
 ---
 task: DUST3.7
 title: "Vector store integrity: no cross-process lost updates, stale vectors dropped, sub-path index keeps the manifest, no duplicate files, getChunk opens its collection"
-state: queued
+state: done
 owner: agent
 size: L
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/knowledge/file-driver.ts, src/knowledge/knowledge-base.ts, src/knowledge/ingest.ts, src/knowledge/index.ts, src/cli/auto-index.ts, src/cli/commands/local-ollama.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:44.891Z
 ---
 
 ## What this is
@@ -60,3 +61,7 @@ test first, commit each fix as it goes green. DUST2.14 (watcher, resumable check
 - D10 (full rebuild deletes first, checkpoints at end): DUST2.14.
 - D8 web-cache freshness: DUST2.13. D1 user-wiki-wins: intended (K2).
 - Wiki write path, distill, frontmatter, rerank, watcher shutdown: DUST3.8.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

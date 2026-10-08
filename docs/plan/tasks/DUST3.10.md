@@ -1,7 +1,7 @@
 ---
 task: DUST3.10
 title: "Inference roles and tool accounting: ollama setup pulls every live role, persona-sourced routes are labelled as such, bench drops the retired `level` cases and adds `code`, snooze and coder errors are instrumented"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/inference/ollama-bootstrap.ts, src/inference/target-dispatcher.ts, src/inference/workers.ts, src/tools/cases.ts, src/mcp/devices-snooze.ts, src/mcp/coder-tools.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:46.487Z
 ---
 
 ## What this is
@@ -43,3 +44,7 @@ test first, commit as you go.
 - C-b (second coder resolution chain), `coderRouteConflict`, `HaikuFallbackRequired`:
   NEEDS-USER, listed in DUST3.2.
 - Tool-description drift in `coder-tools.ts:156,173`: DUST3.18.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief
