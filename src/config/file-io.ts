@@ -9,8 +9,9 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { type RenameRetryOptions, renameWithRetry } from "../shared/win-fs-retry.js";
 
 // The same predicate `shared/json.ts` exports as `isRecord`. The config layer has
 // always called it `isPlainObject`, so it is re-exported under that name rather
@@ -33,15 +34,23 @@ export function splitDotted(dotted: string): readonly [string, string | undefine
  * **unwrapped** — callers classify it, and they do not agree: `writeSetting`
  * turns it into a `ConfigError`, `deleteRetiredKey` swallows it entirely.
  *
+ * The rename rides out a transient Windows sharing violation (EPERM/EBUSY/EACCES
+ * while antivirus or a reader holds the destination) with a short bounded
+ * backoff; `retry` is a test seam. The temp file is removed if it finally fails.
+ *
  * Does NOT create the parent directory; see {@link writeAtomic}. The split is
  * deliberate: callers that mkdir do so *outside* their try/catch, so a mkdir
  * failure surfaces as itself and not as a write failure.
  */
-export async function replaceViaTemp(file: string, text: string): Promise<void> {
+export async function replaceViaTemp(
+  file: string,
+  text: string,
+  retry: RenameRetryOptions = {},
+): Promise<void> {
   const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   try {
     await writeFile(tmp, text, "utf8");
-    await rename(tmp, file);
+    await renameWithRetry(tmp, file, retry);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
