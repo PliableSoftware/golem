@@ -23,7 +23,9 @@ import { portInUse, startDetached, stopProxy, waitForPortFree } from "../proxy-d
 /**
  * The port (and display upstream) this project's proxy uses. Moved here from
  * `commands/gateway.ts` in R10.24 so `gateway use` and `target use` cannot
- * resolve it two different ways.
+ * resolve it two different ways. (`proxy.ts` still keeps its own private
+ * `resolvePort` for `golem on`/`off`/`proxy`, so this is the one resolver for
+ * the gateway and target commands only.)
  */
 export async function resolvePort(
   dir: string,

@@ -216,7 +216,9 @@ export function spawnResume(argv: string[]): SpawnResult {
     child.on("error", (err) => {
       failed = err.message;
     });
-    // If it errored synchronously (ENOENT), `failed` is set before we unref.
+    // NOTE: 'error' is emitted asynchronously, so `failed` is still undefined here and
+    // this branch is effectively unreachable. A spawn that cannot start (ENOENT) is
+    // caught by the missing-pid check below instead, without the error message.
     if (failed !== undefined) {
       return { spawned: false, command, note: `spawn failed: ${failed} — run it manually` };
     }

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { promptMessages } from "./shared.js";
 
 const P1_TOOL_FALLBACK =
-  "If that tool is not available in this session, tell the user this Golem capability has not shipped or is not enabled yet, and suggest checking `golem status`.";
+  "If that tool is not available in this session, tell the user this Golem capability is not enabled in this session (every Golem tool ships; some register only when configured), and suggest checking `golem status`.";
 
 export function registerPrompts(server: McpServer): void {
   server.registerPrompt(

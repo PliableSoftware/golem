@@ -1,5 +1,6 @@
 /**
- * golem session — session tree view (R8.S3), plus `forget` over the R13.2
+ * golem session — session tree view (R8.S3), the `host` / `pending` / `drop`
+ * device-message commands, plus `forget` over the R13.2
  * local conversation store (redacted transcripts, ADR-0007 §6). The two
  * stores are separate (hashes-only tree vs. redacted-content store) — see
  * `src/session/session-tree.ts` and `src/session/conversation-store.ts`'s

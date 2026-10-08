@@ -1,10 +1,10 @@
 /**
  * `golem team` — sign this machine in to the hosted portal.
  *
- * `team-portal-auth`. Three subcommands and no more: this task ends at a stored
- * token and a working `GET /api/v1/me`. Choosing and recording a team is
- * `project-team-binding`, and fetching the team settings layer is
- * `team-layer-fetch`; neither is here.
+ * `team-portal-auth` started this file with three subcommands (a stored token and a
+ * working `GET /api/v1/me`). It now registers `link`, `status`, `sync`, `unlink`,
+ * `logout` and `skills`, and also does the project team binding and the team
+ * settings layer fetch.
  *
  * **Nothing printed by this file is a credential.** Every rendering path goes
  * through `describeTokenSet`, which returns issuer, scopes, expiry and a
@@ -80,14 +80,6 @@ async function portalContext(
   return { config, tokens, settings, provenance };
 }
 
-/**
- * What `golem team link` did about the PROJECT, as distinct from what it did
- * about the machine.
- *
- * Two separate outcomes on purpose: signing in can succeed while binding does
- * not (several teams and no `--org`), and reporting one as the other is how a
- * user ends up believing a repo is linked when only their keychain is.
- */
 /** `golem team link`'s flags. Named so the action stays one line. */
 interface LinkOptions {
   readonly dir: string;
@@ -101,6 +93,14 @@ interface LinkOptions {
   readonly json: boolean;
 }
 
+/**
+ * What `golem team link` did about the PROJECT, as distinct from what it did
+ * about the machine.
+ *
+ * Two separate outcomes on purpose: signing in can succeed while binding does
+ * not (several teams and no `--org`), and reporting one as the other is how a
+ * user ends up believing a repo is linked when only their keychain is.
+ */
 type BindOutcome =
   | {
       readonly kind: "bound";
@@ -461,7 +461,7 @@ export default function register(program: Command): void {
           return;
         }
         const token = status.token;
-        process.stdout.write(`Linked:  yes (OS keychain)\n`);
+        process.stdout.write(`Linked:  yes (stored token)\n`);
         process.stdout.write(`Scopes:  ${token?.scopes.join(" ") || "(none reported)"}\n`);
         process.stdout.write(
           `Expires: ${token?.expiresAt ?? "not stated"}${token?.expired === true ? " — EXPIRED, will refresh on next use" : ""}\n`,

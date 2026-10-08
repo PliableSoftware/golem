@@ -355,7 +355,7 @@ export default function register(program: Command): void {
         const { settings } = await loadConfig({ projectDir: cwd });
         const port = settings.proxy.port;
         // R9.23: if the URL is in settings, the daemon should be alive.
-        // If it's not, restart it.
+        // If it's not, start it — unless the recorded desired state says otherwise (below).
         const wiring = await readWiringState(cwd, proxyBaseUrl(port));
         if (wiring.owner !== "golem") return;
         // Resync Claude Code's own wiring (hooks/statusLine/permissions) with
