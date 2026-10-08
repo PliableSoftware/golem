@@ -252,8 +252,10 @@ dial (Decision 52's other half, which survives): it appends a directive to
 ---
 
 ## 5. Telemetry & UX
-- Dashboard (local web UI): tokens saved/spent, cache hit rates, cost estimate, per-stage savings attribution, per-device utilization, quality-delta from canary runs.
-- CLI: `golem status`, `golem devices`, `golem index <path>`, `golem compression 3`, `golem replay-eval`.
+*(Rewritten 2026-10-08 to what ships, DECISIONS.md A6.)*
+- **Dashboard** (local web UI, loopback `telemetry.dashboard_port` 4654, `src/config/schema.ts:1074`; one state API that the status line, `golem watch` and the VS Code extension also render, Decision 21c): per-stage savings attribution and live status. Cache hit rates and cost estimates live on `golem stats --cache` and `golem bench cost`, not on the dashboard itself (DUST2.18). Honest-observability labels: savings figures are *estimated*, request counts are *rewritten requests* (DUST2.10).
+- **Not built, no task (§12):** per-device utilization, a quality-delta view from canary runs, and `golem replay-eval`.
+- **CLI:** `golem status [--json]`, `golem stats`, `golem devices`, `golem index [path]`, `golem compression <level>`, `golem brevity <level>`, `golem gateway`, `golem target`, `golem task`, `golem wiki`, `golem update`, and a bare `golem` in a terminal opens the interactive panel (Decision 51). `golem ui` and `golem settings` are still recognised and answered with a migration message, exit 2 (`src/cli/main.ts:57-59`; Decision 51(f)'s "one release" window has run long past, DECISIONS.md A8 — the aliases still ship).
 
 ### 5.1 Claude-style slash commands & configuration (v0.6)
 `golem init` installs Golem commands into Claude Code following its native conventions, so control never requires leaving the session:
@@ -261,57 +263,61 @@ dial (Decision 52's other half, which survives): it appends a directive to
 | Command | Action |
 |---|---|
 | `/golem-compression <off\|1\|2\|3>` | Set the compression level (ADR-0004; takes effect within a second, no restart) |
-| `/golem-index <path>` | Ingest a directory/file into the knowledge base |
-| `/golem-search <query>` | Explicit federated search (knowledge + memory) |
+| `/golem-index <path>` | Ingest a directory/file into the knowledge base *(MCP prompt `/mcp__golem__index` only — no `/golem-index` skill ships)* |
+| `/golem-search <query>` | Explicit search (knowledge, plus memory when the sidecar is on) |
 | `/golem-stats` | Tokens saved, cache hits, per-stage attribution |
 | `/golem-expand <ref>` | Retrieve an original from the CCR store |
-| `/golem-bypass` | Disable all lossy stages for the next request(s); names `proxy.bypass_all` for a true full bypass |
-| `/golem-devices` | Show local + LAN worker capability/status |
-| `/golem-coder <task>` | Route a subtask to a local model explicitly (renamed from `delegate`, Decision 35) |
+| `/golem-bypass` | Explains that the per-request header was removed and points to `proxy.bypass_all` (CLI-only, persisted; DUSTSEC.2/3). A PreToolUse hook denies agent Bash that would switch the bypass on (DUSTSEC.3, R4); the skill says exactly that and nothing more |
+| `/golem-devices` | Show local capability/status *(MCP prompt only; LAN workers are DUST2.25)* |
+| `/golem-coder <task>` | Route a subtask to a local model explicitly (renamed from `delegate`, Decision 35) *(MCP prompt only)* |
 
-Mechanism: directory-namespaced skills `.claude/skills/golem/<cmd>/SKILL.md` → `/golem-<cmd>`, plus MCP prompts surfacing as `/mcp__golem__<cmd>` (verified T0.1, 2026-07-03 — colon-namespaced command names are not supported; see Decision 14 and verification-notes §10–11). Later additions to this surface: `/golem-research`, `/golem-wiki-ingest`, `/golem-note`, `/golem-develop` (Decisions 28/35).
+The rows marked *prompt only* (and `/golem-search`) exist as MCP prompts (`src/mcp/prompts.ts`: `slider`, `stats`, `expand`, `bypass`, `index`, `search`, `devices`, `coder`), not as `/golem-*` skills; `/golem-note` exists in neither form (the surface is `golem note`). Whether the `slider` prompt stays is OPEN, left for the user (§10, M2; the prompt set is a frozen contract). Installed skills (`src/cli/skills.ts`): `adversarial-review`, `bypass`, `cache-health`, `checkpoint`, `compression`, `context-hygiene`, `debrief`, `develop`, `expand`, `first-pancake`, `fresh-eyes`, `park`, `plan`, `promote`, `research`, `ship`, `stats`, `step`, `triage`, `upstream`, `verify`, `wiki-ingest`, plus `vibe`.
 
-Configuration mirrors Claude Code's hierarchy: `~/.golem/settings.json` (user) → `<project>/.golem/settings.json` (project, committable) → `<project>/.golem/settings.local.json` (personal, gitignored) → env vars → per-request headers. `golem init` also appends Golem usage guidance to the project's CLAUDE.md (coordinated with `headroom learn`'s writers, per §1.2).
+Mechanism: **flat** skills `.claude/skills/golem-<cmd>/SKILL.md` → `/golem-<cmd>`, plus MCP prompts surfacing as `/mcp__golem__<cmd>`. The nested `.claude/skills/golem/<cmd>/` layout of Decision 14 was never discoverable (Claude Code reads one level only) and was retired 2026-09-04 (`src/cli/skills.ts:4-8`; verification-notes §150/§152; DECISIONS.md X3, superseded). Colon-namespaced command names are unsupported (T0.1). Later additions: `/golem-research`, `/golem-wiki-ingest`, `/golem-develop` (Decisions 28/35) and the skills listed above. **Layering rule:** see §2.1.
+
+**Configuration cascade (ADR-0008, Decision 62; replaces the old "user → project → local → env → per-request headers" line).** Origins, weakest to strongest in the NORMAL band: `default` < `user` (`~/.golem/settings.json`) < `team` (hosted portal, Decision 64) < `project` (`<project>/.golem/settings.json`, committable; a content-free `{}` marker after `init`, Decision 43) < `local` (`<project>/.golem/settings.local.json`, gitignored) < `env` (`GOLEM_<SECTION>_<KEY>`, `src/config/env.ts`) < `override`. Any origin may mark keys `!important`; the IMPORTANT band resolves afterwards in reversed origin order, so `env` is no longer above every file layer (`src/config/loader.ts:1-60`). There is no per-request-header layer. `golem init` seeds guidance as `.claude/rules/golem-*.md` rules (presence is the toggle), not by appending to CLAUDE.md. Where *enforced team policy* must apply (G3, a security question) is **OPEN, left for the user** (§10).
 
 ## 6. Tech Stack (decided — REVISED v1.2 per Decisions 16–18)
-- **Language:** **TypeScript** (Node ≥ 22, ESM; Fastify or equivalent for the proxy HTTP layer) — user decision, see Decision 16. Distributed via npm (`npx @pliable/golem init`); single-binary packaging (`bun build --compile`) is a later optimization. ~~Python (FastAPI), uvx/pipx~~
-- **Compression:** **Golem-native TS lossless stage** (dedup, compaction, cache alignment, CCR) behind the `CompressionService` adapter for P0; optional pinned Headroom **Python sidecar** for ML-heavy stages at `compression.level: 3` (Decision 18). Golem owns the proxy process
-- **Vector DB:** embedded TS-native store by default (**LanceDB candidate**, Decision 17); Qdrant server mode optional via config URL; one collection/table per project
-- **Inference:** Ollama default backend behind an OpenAI-compatible interface (llama.cpp server / LM Studio / vLLM drop-in via config) — unchanged
-- **Embeddings/rerank:** served via Ollama where available; ONNX-runtime (node) or transformers.js as CPU fallback; cross-encoder reranker on GPU — WS-C/WS-D validate
-- **MCP:** official **TypeScript** MCP SDK (`@modelcontextprotocol/sdk`) — stdio + streamable HTTP transports; one Golem server exposing both Golem tools and re-exported Headroom tools
-- **Cache/metadata store:** SQLite (`node:sqlite` / better-sqlite3) + content-addressed blob dir (aligned with Headroom's CCR store)
-- **Code parsing:** tree-sitter via WASM bindings (web-tree-sitter) or native prebuilds — WS-C picks in C2 (cross-platform prebuilds are the constraint)
+- **Language:** **TypeScript** (Node ≥ 22, ESM; no web framework: `node:http` + `undici`, `src/proxy/server.ts:19`) — user decision, see Decision 16. Distributed via npm (`npx @pliable/golem init`); single-binary packaging (`bun build --compile`, Decision 41d) ships as a release asset, but a binary has not been run on the maintainer's machines (UNVERIFIED). ~~Python (FastAPI), uvx/pipx~~
+- **Compression:** **Golem-native TS lossless stage** (dedup, compaction, cache alignment, CCR) behind the `CompressionService` adapter for P0; optional pinned Headroom **Python sidecar** for the semantic stages at `compression.level` 2–3 (Decision 18; pin 0.30.0, `src/compression/pins.ts:24`). Golem owns the proxy process
+- **Vector DB:** embedded pure-TS file driver by default (`FileVectorDriver`, Decision 17 as refined by verification-notes §26; LanceDB is an unshipped optional scale upgrade behind the `VectorDriver` seam); the Qdrant server mode is **not implemented** (`knowledge.vector_db_url` throws, `src/knowledge/index.ts:177-180`; DECISIONS.md K4); one index directory per project
+- **Inference:** Ollama default backend behind an OpenAI-compatible interface (`src/inference/ollama-client.ts`; a `llamacpp` gateway kind exists; LM Studio / vLLM by URL are UNVERIFIED)
+- **Embeddings/rerank:** pure-TS hashing embedder by default; Ollama `bge-m3` / `nomic-embed-text` where reachable; rerank is the opt-in chat-judge. ONNX-runtime / transformers.js CPU fallback and a cross-encoder reranker are **not built** (§12)
+- **MCP:** official **TypeScript** MCP SDK (`@modelcontextprotocol/sdk` 1.29.0) — stdio + streamable HTTP transports; the Golem server exposes Golem's 11 tools only (no re-exported Headroom tools)
+- **Cache/metadata store:** no SQLite dependency anywhere in `src` (a grep for `node:sqlite` / `better-sqlite3` finds nothing). Telemetry is JSONL (`src/telemetry/jsonl-store.ts`); the CCR store is content-addressed JSON envelopes on a `BlobStore` (`src/compression/ccr-store.ts`; only `LocalDirBlobStore` ships, S3-compatible is intent only)
+- **Code parsing:** optional `web-tree-sitter` WASM (user-installed, never a dependency; `src/knowledge/tree-sitter-chunker.ts`); heuristic chunker otherwise. The Bun binary does not embed the WASM (Decision 41d)
+- **Runtime dependencies (tier 1):** six — `@agentclientprotocol/sdk` 1.4.0, `@modelcontextprotocol/sdk` 1.29.0, `commander` 14.0.3, `env-paths` 3.0.0, `undici` 7.28.0, `zod` 3.25.76 — all exactly pinned; plus optional `unpdf` 1.6.2 (`package.json:49-59`). Decision 53's "deliberately tiny — 5" is stale. Headroom stays pinned exactly and imported only in `src/compression/headroom-adapter.ts`.
 
 ## 7. Phased Roadmap
-- **P0 — Foundation:** `golem init` installs the Golem service (proxy owning the request path, Headroom as embedded library) for Claude Code + registers the unified MCP server and `/golem/*` commands; redaction pre-stage, `compression.level` `off` through `2`, savings dashboard, 3-OS CI. *Mostly integration work, not compression R&D.*
-- **P1 — RAG (first big differentiator):** Qdrant indexing (tree-sitter code chunks + docs), GPU embeddings, reranking, MCP tools `index_path` / `search_local` / `get_chunk`, file watchers; teach Claude via CLAUDE.md guidance that `golem init` installs ("prefer search_local over bulk file reads").
-- **P2 — Local LLM delegation:** Ollama detection + tiered model catalog; summarizer/extractor/classifier tools; semantic compression; `compression.level: 3`; local test/lint execution → failure digests. **Adds:** durable task queue (Decision 20a; the auto-resume half was dropped — Decision 37), task/question queue + local conversation multiplexing (20b), idea/note capture into the KB (20f, foundation).
-- **P3 — Assistant depth:** git-aware context tools, Whisper/OCR preprocessing, speculative prefetch, session memory beyond Headroom's, level 5 (per-project opt-in). **Adds:** cruise-control autonomy modes (Decision 20d), writing-style adaptation & prompt translation (20g), remote session access foundations (20c).
-- **P4 — Fleet (optional module):** device registry, scheduler, LAN workers for devs with a spare GPU box; canary quality evals. **Adds:** self-hosted remote session relay (Decision 20c), hosted workspace/org shared standards & knowledge tier (20e) — the leading paid-feature candidate on golem.run.
+- **P0 — Foundation (shipped):** `golem init` wires Claude Code, the proxy daemon and the MCP server, installs flat `/golem-<cmd>` skills; redaction pre-stage, `compression.level` dials, savings dashboard, CI on Ubuntu + Windows (macOS advisory). *Mostly integration work, not compression R&D.*
+- **P1 — RAG (shipped under other names and another store):** file-driver index (heading-aware docs, opt-in tree-sitter code chunks), embeddings via the hashing fallback or Ollama, opt-in rerank, MCP tools `ingest` / `search` / `fetch`, a polling watcher; Claude is taught by the seeded `golem-wiki-kb-first` rule (wiki first, then `search`). Qdrant indexing was not built.
+- **P2 — Local LLM delegation:** Ollama detection + tiered model catalog and the `coder` tool (shipped); summarizer/extractor/classifier *tools*, local test/lint execution → failure digests (not built, §12); semantic compression via the optional sidecar at `compression.level` 2–3 (shipped, opt-in). **Adds:** durable task queue (Decision 20a; the auto-resume half was dropped — Decision 37), task/question queue + local conversation multiplexing (20b), idea/note capture into the KB (20f, foundation).
+- **P3 — Assistant depth:** git-aware context tools, Whisper/OCR preprocessing, speculative prefetch, session memory beyond Headroom's (all not built, §12); "level 5" is dead (the scale has four levels and the slider is retired, ADR-0004). **Adds:** cruise-control autonomy modes (Decision 20d), writing-style adaptation & prompt translation (20g), remote session access foundations (20c).
+- **P4 — Fleet (optional module, partial):** a device registry exists for paired phones (ADR-0006); GPU-box scheduler, LAN workers and canary evals do not (DUST2.25; the fleet question is OPEN, §10). **Adds:** self-hosted remote session relay (Decision 20c), hosted workspace/org shared standards & knowledge tier (20e) — the leading paid-feature candidate on golem.run.
 
 > **Cross-cutting (Decision 20e):** tiered user/workspace/org shared standards & knowledge begins in **P1** at local (user) scope alongside the knowledge base; workspace/org sync is the P4+ hosted tier.
 
-> **Decision 21 placement:** 21c (dashboard sidecar) and 21d (account switching) land in **P2** as extensions of E3/the proxy; 21a (parallel conversations + escalation) P2/P3 on WS-D; 21e (multi-provider quota routing) and 21b (remote monitoring/permission-granting) P3/P4 alongside 20c's remote relay. 21f (cost-governance goals) is **continuous** — a standing benchmark, not a phase.
+> **Decision 21 placement (historical — superseded by Decision 36's renumbering; R6 then shipped 2026-07-23 per `docs/plan/SHIPPED.md`, see Decision 36's rebaseline note):** 21c (dashboard sidecar) and 21d (account switching) land in **P2** as extensions of E3/the proxy; 21a (parallel conversations + escalation) P2/P3 on WS-D; 21e (multi-provider quota routing) and 21b (remote monitoring/permission-granting) P3/P4 alongside 20c's remote relay. 21f (cost-governance goals) is **continuous** — a standing benchmark, not a phase.
 
 ## 8. Risks & Mitigations
 | Risk | Mitigation |
 |---|---|
-| Compression removes context Claude needed | Reversibility + MCP expansion tool + canary evals |
-| Local LLM quality too low on small GPUs | Tier routing; fall back to Haiku or skip stage |
-| Proxy breaks streaming/tool-use semantics | Pass through SSE untouched at level ≤1; extensive contract tests against real API shapes |
+| Compression removes context Claude needed | Reversibility of CCR-ref stages + the `expand` tool; levels 2–3 gated off caching upstreams. Canary evals are not built (§12) |
+| Local LLM quality too low on small GPUs | Tier routing; local model reachable only through explicit `coder` (Decision 31); a stage that cannot run is skipped |
+| Proxy breaks streaming/tool-use semantics | Responses pass through untouched; requests are lossless and prefix-stable at level ≤ 1; recorded-shape tests against real API shapes (DUST2.24) |
 | Prompt-cache interference (edits break prefix stability) | Cache-alignment stage explicitly optimizes for prefix stability |
-| Semantic cache serves stale/wrong answers | Strict thresholds, TTL, `compression.level`-gated, never for tool-use requests |
-| LAN security (prompts traverse network) | mTLS between hub/workers; redaction before transit; localhost-only default |
+| Semantic cache serves stale/wrong answers | *(Feature not built — `semanticCache` has no reader; risk row is dormant, §3.4)* |
+| LAN security (prompts traverse network) | Redaction before transit; localhost-only default; mTLS on the device write surface (ADR-0006). Hub↔worker mTLS is not built (no worker protocol, DUST2.25) |
 | Remote session access widens attack surface (Decision 20c) | Localhost-first; exposure is opt-in and token-authenticated; mTLS on LAN; documented threat model + rate limiting before any relay ships; no golem.run rendezvous without user consent |
 | Cruise-control autonomy takes an irreversible action (Decision 20d) | Mandatory approval gates for deploys/pushes/deletes/outward-facing calls; autonomy level is explicit and per-task; dry-run default for destructive steps; full action log |
-| Resumed durable task double-applies a side effect (Decision 20a) | Tasks checkpoint idempotency keys; side-effecting steps re-verify state before re-applying; resume replays plan, not blind re-exec |
+| Resumed durable task double-applies a side effect (Decision 20a) | *(Dormant: auto-resume was dropped by Decision 37; no idempotency-key code exists, only manual resume.)* Intended mitigation: tasks checkpoint idempotency keys; side-effecting steps re-verify state before re-applying; resume replays plan, not blind re-exec |
 | Prompt translation distorts user intent (Decision 20g) | Translated prompt is always shown and editable; scoring is user-inspectable; feature is opt-in and fully disableable; never auto-send a rewrite the user hasn't seen |
 | Remote permission-granting = remote code execution (Decision 21b) | Strong auth required (device-paired tokens/mTLS); default localhost-only; every remote approval audit-logged and attributable; conservative default-deny on link loss; a compromised channel must not silently approve — treat as the highest-severity surface in the product |
 | ~~Local-first mode gives a confident-but-wrong answer to a question that only looks self-contained (Decision 25)~~ | **Retired by Decision 31** — the automatic proxy-side local-first/draft intercept was removed; the local model is now invoked only via the explicit, labeled `coder` MCP tool, so this failure mode no longer arises from the slider. |
 | Multi-account/quota arbitrage may violate provider ToS (Decisions 21d/21e) | Do NOT ship a feature that rotates accounts/free quotas in a way that breaks any provider's Terms of Service; require explicit ToS review before build; account switching is user-initiated and transparent, not covert evasion of limits |
 | Seamless model switching silently degrades output (Decisions 21a/21e) | Routing preserves capability (don't send tool-use/long-context work to a model that can't do it); the responding model is always visible; escalation is explicit or clearly surfaced; never trade correctness for cost without signalling it |
-| Credential storage for multiple accounts/providers (Decisions 21d/21e) | Use OS keychains / secure stores, never plaintext; redaction stage still applies; least-privilege; document the trust model |
+| Credential storage for multiple gateways/providers (Decisions 21d/21e/46/47) | Use OS keychains / secure stores (a 0600 file only by explicit opt-in, honestly labelled), never plaintext in settings or logs; redaction stage still applies; least-privilege; document the trust model |
+| Local answer serves a wrong extractive answer (Decision 33) | Extractive only, single-turn, confidence floor, prose-only sources, visible "verify independently" label, `knowledge.local_answer_enabled` off-switch; coverage tracks the wiki |
 
 ## 9. Decisions Log & Remaining Items
 
