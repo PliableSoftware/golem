@@ -137,6 +137,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
     if (tokens.refresh_token === undefined) return null;
     stats.refreshAttempts += 1;
     const metadata = await options.metadata();
+    assertRefreshBound(tokens, metadata);
     let renewed: PortalTokenSet;
     try {
       renewed = await refreshTokens({
@@ -182,6 +183,28 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
         "origin_mismatch",
         `refusing to send the portal token to ${target}: it was issued for ${tokens.api_origin}. ` +
           "Check `team.portal_url` / `portal.url`, or run `golem team link` for this portal.",
+      );
+    }
+  }
+
+  /**
+   * The refresh_token is a credential too: it goes only to a token endpoint on
+   * the issuer origin recorded at link time. Runs before the POST.
+   */
+  function assertRefreshBound(tokens: PortalTokenSet, metadata: AuthorizationServerMetadata): void {
+    if (tokens.issuer_origin === undefined) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        "the stored portal token is not bound to an authorization server origin, so it will not be " +
+          "refreshed. Run `golem team link` to sign in again.",
+      );
+    }
+    const target = portalOrigin(metadata.token_endpoint);
+    if (target !== tokens.issuer_origin) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        `refusing to send the portal refresh token to ${target}: it was issued by ` +
+          `${tokens.issuer_origin}. Check \`portal.issuer\`, or run \`golem team link\` for this portal.`,
       );
     }
   }

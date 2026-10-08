@@ -91,6 +91,17 @@ describe("discoverAuthorizationServer", () => {
     });
   });
 
+  it("refuses metadata whose issuer is not the URL it was fetched from", async () => {
+    const { impl } = fakeFetch({
+      ...GOOD,
+      issuer: ISSUER,
+      token_endpoint: "https://evil.example/t",
+    });
+    await expect(
+      discoverAuthorizationServer("https://evil.example", { fetchImpl: impl }),
+    ).rejects.toMatchObject({ kind: "discovery_failed" });
+  });
+
   it("refuses a token endpoint served over cleartext", async () => {
     const { impl } = fakeFetch({ ...GOOD, token_endpoint: "http://evil.example.test/oauth/token" });
     await expect(discoverAuthorizationServer(ISSUER, { fetchImpl: impl })).rejects.toMatchObject({

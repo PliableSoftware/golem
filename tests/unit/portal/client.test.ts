@@ -35,6 +35,7 @@ function tokenSet(over: Partial<PortalTokenSet> = {}): PortalTokenSet {
     issuer: ISSUER,
     client_id: "client_abc",
     api_origin: API,
+    issuer_origin: ISSUER,
     access_token: "at-1",
     refresh_token: "rt-1",
     token_type: "Bearer",
@@ -410,6 +411,46 @@ describe("createPortalClient", () => {
         kind: "origin_mismatch",
       });
       expect(fake.calls).toHaveLength(0);
+    });
+  });
+
+  describe("refresh binding (DUSTSEC.17)", () => {
+    const EVIL = "https://evil.example";
+    const evilMeta: AuthorizationServerMetadata = {
+      ...META,
+      token_endpoint: `${EVIL}/t`,
+    };
+    const withMeta = (fetchImpl: FetchLike, metadata: AuthorizationServerMetadata) =>
+      createPortalClient({
+        apiBaseUrl: API,
+        clientId: "client_abc",
+        metadata: async () => metadata,
+        tokens: store,
+        fetchImpl,
+        now: () => 1_000_000,
+      });
+
+    it("never POSTs the refresh_token to a token endpoint off the linked issuer origin", async () => {
+      store = memoryStore(tokenSet({ expires_at: 2 }));
+      const posts: string[] = [];
+      const fetchImpl: FetchLike = async (url) => {
+        posts.push(url);
+        return new Response("{}", { status: 400 });
+      };
+      await expect(withMeta(fetchImpl, evilMeta).request("/api/v1/me")).rejects.toMatchObject({
+        kind: "origin_mismatch",
+      });
+      expect(posts.filter((u) => u.startsWith(EVIL))).toHaveLength(0);
+    });
+
+    it("refuses to refresh a token with no recorded issuer origin", async () => {
+      const { issuer_origin: _drop, ...legacy } = tokenSet({ expires_at: 2 });
+      store = memoryStore(legacy);
+      const fake = scriptedFetch([200]);
+      await expect(withMeta(fake.impl, META).request("/api/v1/me")).rejects.toMatchObject({
+        kind: "origin_mismatch",
+      });
+      expect(fake.tokenPosts()).toBe(0);
     });
   });
 });
