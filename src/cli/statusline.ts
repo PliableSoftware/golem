@@ -625,7 +625,7 @@ export function renderStatusLine(
   // showing nothing happening at all.
   if (golem.verifySegment) parts.push(yellow(golem.verifySegment));
   const waiting = blockedLabel(golem);
-  if (waiting !== "") parts.push(yellow(waiting));
+  if (waiting !== "") parts.push(dim(waiting));
   if (golem.updateAvailable === true) parts.push(yellow("⇧ update"));
 
   const line = parts.join(dim(" · "));
