@@ -36,7 +36,7 @@
  * file lands would be a path-traversal bug wearing an idempotency key.
  */
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type {
@@ -48,6 +48,7 @@ import type {
 import { redactStandaloneText } from "../pipeline/redaction.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
+import { renameWithRetry } from "../shared/win-fs-retry.js";
 
 /** Largest message the queue stores. Matches the transport's own limit. */
 export const MAX_MESSAGE_CHARS = 32_000;
@@ -207,7 +208,12 @@ export class FileJoinQueue implements JoinQueue {
     const file = path.join(dir, `${nowMs}-${input.messageId}.json`);
     const tmp = `${file}.${process.pid}.tmp`;
     await writeFile(tmp, `${JSON.stringify(message, null, 2)}\n`, "utf8");
-    await rename(tmp, file);
+    try {
+      await renameWithRetry(tmp, file);
+    } catch (err) {
+      await rm(tmp, { force: true }).catch(() => {});
+      throw err;
+    }
     return { status: "queued", message };
   }
 
