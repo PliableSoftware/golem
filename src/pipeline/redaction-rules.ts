@@ -290,6 +290,32 @@ export const ENTROPY_CANDIDATE_RE =
   /(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{32,128}(?![A-Za-z0-9+/=_-])/g;
 
 /**
+ * DUSTSEC.20 — the ONLY exemption from the entropy sweep: a candidate token that
+ * is, in its entirety, an Anthropic API object id of a documented shape. The API
+ * rejects a placeholder in an id field, so rewriting one fails the request.
+ *
+ * Strictly anchored, never a substring: `^prefix_01[A-Za-z0-9]{22}$` on the whole
+ * candidate run (the sweep's lookarounds already make that the whole unbroken
+ * token), so a longer run, a wrong prefix, a wrong length, or a secret appended
+ * to or wrapped around an id is still redacted. No field names, no bare length.
+ *
+ * Only families whose shape the official docs show are listed (verification-notes,
+ * DUSTSEC.20): `srvtoolu_` and `msgbatch_`, each 24 base62 characters after the
+ * prefix, and every documented example leads with `01` (so the lead is required). `container_` ids have NO documented example or format, so they are NOT
+ * exempt until one is established from an official source. Applies to every
+ * caller of the sweep (tool output, storage), which is harmless.
+ *
+ * KNOWN RESIDUAL: an id-shaped value is exempt even after `Bearer ` or in a
+ * credential header; no built-in rule covers those values.
+ */
+const API_ID_RE = /^(?:srvtoolu|msgbatch)_01[A-Za-z0-9]{22}$/;
+
+/** Whether `token` is, as a whole, a documented-shape Anthropic API object id. */
+export function isApiObjectId(token: string): boolean {
+  return API_ID_RE.test(token);
+}
+
+/**
  * Shannon-entropy threshold in bits/char. Random 32+ char base62 material
  * measures ~4.5-5.0 on its own sample; camelCase identifiers and English
  * words sit near 3.5-4.0.

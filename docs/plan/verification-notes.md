@@ -10965,3 +10965,40 @@ means only the R12.12-shipped half.
 **Open for the user:** accept the deny-for-everyone behaviour as-is (amend ADR-0002 via DUST2.3),
 or build a Golem-owned channel/pairing server that writes a connected marker (cleared on
 disconnect/crash) so the signal exists.
+
+## 2026-10-08 — DUSTSEC.20: Anthropic API object id formats, and what the entropy sweep did to them
+
+**Reproduced** (200 ids per family, built at runtime, `redactRequestBody({ id })` on `development`):
+`srvtoolu_` + 24 base62 (33 chars) replaced 200/200; `msgbatch_` + 24 replaced 199/200;
+`container_` + 24 (34 chars) 200/200; `container_` + 22 (32 chars) 200/200. Only the generic
+long-token rule fires; no provider rule matches these shapes.
+
+**Official format evidence** (fetched 2026-10-08 from docs.anthropic.com: `/en/api/messages-batches`,
+`/en/api/creating-message-batches`, `/en/docs/build-with-claude/batch-processing`,
+`/en/docs/agents-and-tools/tool-use/web-search-tool`, `.../code-execution-tool`,
+`/en/docs/agents-and-tools/tool-use/programmatic-tool-calling`, `/en/api/messages`):
+- `srvtoolu_`: every example id in the docs is `srvtoolu_` + 24 base62 characters (33 total).
+- `msgbatch_`: every example id is `msgbatch_` + 24 base62 characters (33 total).
+- `container_`: **no id example and no stated format appears on any fetched page** (only the
+  parameter names `container_upload` etc.). The 34-character figure in the task doc could not be
+  confirmed from an official source.
+- The docs show EXAMPLES, not a stated pattern or length guarantee. The exemption therefore
+  follows the documented examples and nothing wider.
+
+**Decision.** Exempt only the whole token `^(srvtoolu|msgbatch)_01[A-Za-z0-9]{22}$` in the entropy
+sweep (`isApiObjectId`, `src/pipeline/redaction-rules.ts`). `container_` is NOT exempt: open until
+an official source gives its format. Re-check the docs before adding it, and before widening the
+length if the API changes id sizes.
+
+**Follow-up after independent review (same day).** All 8 documented example ids (2 `msgbatch_`,
+6 `srvtoolu_`, same pages as above) begin `01` after the prefix, and all 8 match the tightened
+regex above; the exemption now requires that lead (same total length, 33). A value in the id shape
+WITHOUT `01` is redacted.
+- **Residual, shrunk but present:** a value in the exact id shape with the `01` lead is exempt even
+  after `Bearer ` or in a credential header such as `x-api-key`; no built-in rule matches those
+  values, so the sweep was their only protection. Pinned by tests as a known residual, not a feature.
+- **Scope:** the sweep is shared, so the exemption also applies to `redactStandaloneText` (tool
+  output) and `redactReversibleText` (storage). Harmless: an id-shaped token is passed through
+  unchanged there too.
+- An id embedded in a longer run (URL path, `key=` query value) is still rewritten; `.`, `:`,
+  whitespace and newline are delimiters, so the id survives beside a separately redacted secret.
