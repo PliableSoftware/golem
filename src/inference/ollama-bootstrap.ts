@@ -8,9 +8,10 @@
  * "One shared model across all Golem projects on a machine" needs no new
  * architecture here: Ollama is already a single machine-wide daemon,
  * `detectCapability()` already probes real hardware machine-wide (not per
- * project), and `"drafter"` is the only role any call site in this codebase
- * ever invokes. This module only closes the actual gap: nothing installs
- * Ollama or pulls that one model.
+ * project). Three roles are live — `drafter` (coder), `summarizer` (distill)
+ * and `judge` (rerank, `coder --refine`) — and each maps to a different model
+ * on every tier. This module only closes the actual gap: nothing installs
+ * Ollama or pulls those models.
  *
  * Platform install plans:
  *   - Windows: `winget install -e --id Ollama.Ollama ...` if winget is
@@ -241,7 +242,17 @@ export async function pullDrafterModel(
     readonly reachableTimeoutMs?: number;
   } = {},
 ): Promise<PullResult> {
-  const model = chatModelFor(tier, "drafter");
+  return pullModel(deps, chatModelFor(tier, "drafter"), opts);
+}
+
+async function pullModel(
+  deps: OllamaBootstrapDeps,
+  model: string,
+  opts: {
+    readonly onProgress?: (e: PullProgressEvent) => void;
+    readonly reachableTimeoutMs?: number;
+  },
+): Promise<PullResult> {
   const reachable = await waitForReachable(
     deps.native,
     opts.reachableTimeoutMs ?? DEFAULT_REACHABLE_TIMEOUT_MS,
@@ -256,6 +267,44 @@ export async function pullDrafterModel(
   }
   await deps.native.pull(model, opts.onProgress);
   return { model, alreadyPulled: false };
+}
+
+/** The chat roles with a live call site; each has its own model on every tier. */
+const LIVE_PULL_ROLES = ["drafter", "summarizer", "judge"] as const;
+
+/** Every distinct model {@link pullRoleModels} will pull for the tier, drafter first. */
+export function roleModelsFor(tier: HardwareTier): string[] {
+  return [...new Set(LIVE_PULL_ROLES.map((role) => chatModelFor(tier, role)))];
+}
+
+/**
+ * Pulls every live role's model for the tier (drafter first), each distinct
+ * model once. Without the summarizer and judge, `distill` and rerank fail with
+ * `CapabilityUnavailableError` on a machine setup reported ready.
+ */
+export async function pullRoleModels(
+  deps: OllamaBootstrapDeps,
+  tier: HardwareTier,
+  opts: {
+    readonly onProgress?: (model: string, e: PullProgressEvent) => void;
+    readonly reachableTimeoutMs?: number;
+  } = {},
+): Promise<PullResult[]> {
+  const models = roleModelsFor(tier);
+  const results: PullResult[] = [];
+  for (const [i, model] of models.entries()) {
+    const onProgress = opts.onProgress;
+    const result = await pullModel(deps, model, {
+      ...(onProgress !== undefined && {
+        onProgress: (e: PullProgressEvent) => onProgress(model, e),
+      }),
+      // only the first call needs the full poll window; the daemon is up after it
+      ...(opts.reachableTimeoutMs !== undefined &&
+        i === 0 && { reachableTimeoutMs: opts.reachableTimeoutMs }),
+    });
+    results.push(result);
+  }
+  return results;
 }
 
 /** Minimal post-pull smoke test through the existing OpenAI-compat client. */

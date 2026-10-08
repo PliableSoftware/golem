@@ -127,7 +127,11 @@ export function registerDevicesTool(
  * Golem snooze: park the live session until a usage-limit reset, then continue
  * in-place. Registered unconditionally.
  */
-export function registerSnoozeTool(server: McpServer, deps: GolemMcpServerDeps): void {
+export function registerSnoozeTool(
+  server: McpServer,
+  deps: GolemMcpServerDeps,
+  tel?: ToolTelemetry,
+): void {
   server.registerTool(
     "snooze",
     {
@@ -183,6 +187,7 @@ export function registerSnoozeTool(server: McpServer, deps: GolemMcpServerDeps):
       },
     },
     async ({ note, until, duration_ms, max_ms }, extra) => {
+      const startMs = Date.now();
       const progressToken = extra._meta?.progressToken;
       let progress = 0;
       let taskId: string | undefined;
@@ -233,8 +238,8 @@ export function registerSnoozeTool(server: McpServer, deps: GolemMcpServerDeps):
             ? `**Golem** Snoozed ~${mins} min — the usage window should have reset; continuing here.`
             : `**Golem** Snooze ended without a full wait (${outcome.reason ?? "stopped"}).`) +
           noteLines();
-        return {
-          content: [{ type: "text", text }],
+        return instrumented(tel, "snooze", startMs, {
+          content: [{ type: "text" as const, text }],
           structuredContent: {
             reset: outcome.reset,
             waited_ms: outcome.waitedMs,
@@ -244,9 +249,11 @@ export function registerSnoozeTool(server: McpServer, deps: GolemMcpServerDeps):
             ...(taskId !== undefined ? { task_id: taskId } : {}),
             ...(noteError !== undefined ? { note_error: noteError } : {}),
           },
-        };
+        });
       } catch (err) {
-        if (err instanceof SnoozeInputError) return errorResult(err.message + noteLines());
+        if (err instanceof SnoozeInputError) {
+          return instrumented(tel, "snooze", startMs, errorResult(err.message + noteLines()));
+        }
         throw err;
       }
     },

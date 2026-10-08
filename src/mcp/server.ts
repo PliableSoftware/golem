@@ -237,7 +237,7 @@ function registerTools(server: McpServer, deps: import("./deps.js").GolemMcpServ
   );
 
   registerDevicesTool(server, deps, tel);
-  registerSnoozeTool(server, deps);
+  registerSnoozeTool(server, deps, tel);
 
   if (deps.knowledge !== undefined) {
     registerKnowledgeTools(
