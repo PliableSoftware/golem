@@ -80,3 +80,18 @@ describe("collectStatus warnings under bypass_all (S11)", () => {
     expect(renderStatus(report)).toContain("redaction");
   });
 });
+
+describe("golem proxy status pipeline line (S12)", () => {
+  it("says the pipeline is active only when bypass_all is off", async () => {
+    const { renderPipelineLine } = await import("../../src/cli/commands/proxy.js");
+    expect(renderPipelineLine(false)).toContain("Pipeline is active");
+  });
+
+  it("is loud about redaction being off under bypass_all, and never says active", async () => {
+    const { renderPipelineLine } = await import("../../src/cli/commands/proxy.js");
+    const out = renderPipelineLine(true);
+    expect(out).not.toContain("Pipeline is active");
+    expect(out).toContain("REDACTION IS OFF");
+    expect(out).toContain("golem on");
+  });
+});
