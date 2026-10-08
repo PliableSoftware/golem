@@ -3,7 +3,7 @@ title: Buzz Integration
 type: concept
 tags: [r14, r14-2, r14-3, r14-4, buzz, agents, orchestration, personas, acp, harness, nostr, rate-limits, lanes, nesting]
 sources: ["https://buzz.xyz", "https://github.com/block/buzz", "https://github.com/block/buzz/blob/main/crates/buzz-acp/README.md", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/config.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/scope.rs", "https://github.com/block/buzz/blob/main/crates/buzz-acp/src/pool.rs", "https://github.com/block/buzz/blob/main/ARCHITECTURE.md", "https://github.com/block/buzz/blob/main/crates/buzz-cli/README.md", "https://agentclientprotocol.com", "https://agentclientprotocol.com/protocol/prompt-turn", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/docs/session-failure-extension.md", "https://engineering.block.xyz/blog/configuring-agents-in-buzz", "https://engineering.block.xyz/blog/run-your-own-buzz-relay", "docs/plan/verification-notes.md", "src/inference/personas.ts", "src/inference/persona-lane.ts", "src/inference/target-dispatcher.ts", "src/cli/persona-sync.ts", "src/hooks/spawn-gate.ts", "src/proxy/limit-prediction.ts", "src/hooks/snooze-nudge.ts", "https://raw.githubusercontent.com/agentclientprotocol/typescript-sdk/main/README.md", "https://unpkg.com/@agentclientprotocol/claude-agent-acp/package.json", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/src/acp-agent.ts", "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/examples/simple-client.ts", "https://agentclientprotocol.com/protocol/schema", "https://docs.claude.com/en/docs/claude-code/cli-reference", "docs/plan/tasks/R14.2.md", "docs/plan/tasks/R14.3.md", "docs/plan/tasks/R14.4.md"]
-updated: 2026-09-20
+updated: 2026-10-08
 created: 2026-09-19
 ---
 
@@ -26,6 +26,32 @@ in Buzz as an agent-lane one, and what it takes to borrow an agent loop by
 nesting ACP. Those sections are the authority on wire-level facts; this page
 carries the design and the decisions. Where they ever disagree, the notes are
 right and this page is stale.
+
+## Shipped status (rebaselined 2026-10-08)
+
+This page is mostly design. What the code does today, checked against `src/buzz/`:
+
+- **Shipped: `golem acp`** (`src/cli/commands/buzz.ts:15-40`, `src/buzz/acp-agent.ts`)
+  — the ACP stdio runtime, bound to one `--persona` for the process lifetime. A turn
+  runs the persona's dispatch in `src/buzz/acp-turn.ts`; rate-limit handling is in
+  `src/buzz/limit-guard.ts`. `golem acp` loads the project's plugin redaction rules
+  before it redacts and dispatches (`src/buzz/acp-turn.ts:235-237`, DUSTSEC.17), so
+  it follows the same rule as the proxy and MCP paths.
+- **Not shipped: `golem buzz provision` (R14.2).** `provisionBuzz`
+  (`src/buzz/provision.ts`) has no CLI caller. R14.2 `depends_on` DUSTSEC.6
+  (`docs/plan/tasks/R14.2.md:10`). That task is done: the keygen parser
+  (`parseGenerateKeyOutput`, `src/buzz/identity.ts:112-150`) now classifies by label
+  only. It requires exactly one `pub`- and one `sec`-labelled line carrying a
+  64-hex token, throws on anything ambiguous instead of guessing by position, and
+  `checkedPair` refuses a pubkey equal to the secret. The earlier defect (a global
+  regex's `lastIndex` swapped the keys, so the secret could reach the committed
+  manifest) is closed. Follow-ups sit under DUSTSEC.17 and DUSTSEC.18.
+- **Not shipped: the orchestrator's dispatch and deferral (R14.4).** No caller
+  supplies `postChannelMessage` (`src/buzz/acp-turn.ts:79`, only the declaring
+  field and the branch at `:187`). UNVERIFIED: whether R14.4's thread-state exists
+  elsewhere; the task docs for R14.2-R14.5 still read `state: queued`.
+- **Nothing here has been run against a live relay**; see the open questions at the
+  end of this page.
 
 ## Architecture, as confirmed
 
@@ -356,6 +382,16 @@ the `sessionFailure` extension `@agentclientprotocol/claude-agent-acp` uses for
 this exact condition would be swallowed. `end_turn` is also the only safe
 stopReason: `max_tokens` and `max_turn_requests` make `buzz-acp` discard the ACP
 session, and `refusal` misreports a transient external condition as policy.
+
+> **As shipped** (`src/buzz/acp-turn.ts:171-200`): the deferral is posted as the
+> turn's own ACP reply through `input.emit`, which `buzz-acp` forwards to the channel
+> as the persona's message. It is **not** posted with `buzz messages send`:
+> `postChannelMessage`, the seam for that, is declared (`:79`) and used if present
+> (`:187`), but nothing wires it. One channel message goes out either way, never
+> both. Whether an emitted chunk actually reaches the channel is UNVERIFIED without
+> a live relay; this page's own premise is that `buzz-acp` swallows most of the
+> reply path. The `persistSnoozeNote` breadcrumb is filed (`:192-200`); the
+> thread-deferred record is R14.4's.
 
 What *is* reused from snooze is its **decision**, not its mechanism:
 `decideSnoozeNudge()` is already a pure function of a `LimitPrediction`, so Buzz

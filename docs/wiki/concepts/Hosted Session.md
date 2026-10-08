@@ -3,7 +3,7 @@ title: Hosted Session
 type: concept
 tags: [r13, adr-0007, session-host, autonomy, mtls, refusal]
 sources: ["docs/decisions/ADR-0007-remote-conversation-and-hosted-sessions.md", "docs/plan/verification-notes.md §142", "docs/plan/verification-notes.md §147", "docs/plan/tasks/R13.3.md"]
-updated: 2026-08-29
+updated: 2026-10-08
 created: 2026-08-29
 ---
 
@@ -20,7 +20,23 @@ golem session host list
 golem session host log
 golem session host explain Bash -- "rm -rf build"
 golem session host stop <id>
+golem session host forget <id>
+golem session host serve "an optional first turn"
 ```
+
+Subcommands (`src/cli/commands/session-host.ts:77-485`): `start` (the default),
+`serve` (start AND serve to paired devices over mTLS, `:203`), `list`, `log`,
+`stop`, `forget` (drop a record and its transcript, `:469`) and `explain`.
+
+Shipped-behaviour notes (DUST1.10 rows 19, 39):
+
+- `start` is described as relaying "one or more messages" (`:78`), but the runner's
+  stdin is closed on the first `result` event (`hosted.end()`, `:144`), so only the
+  first turn completes. UNVERIFIED whether a multi-message `start` is exercised;
+  hosted-session gaps are DUST2.19's.
+- `stop` calls `process.kill(found.pid)` on the recorded pid (`:453`), which is the
+  supervising CLI. Whether that takes the `claude` child with it on Windows is
+  UNVERIFIED (suspected, not run).
 
 ## How it differs from the session on your screen
 
@@ -33,7 +49,11 @@ golem session host stop <id>
 | where the gate is wired | the project's `.claude/settings.json` | injected by the host at spawn, via `--settings` |
 
 Both run through the proxy. A hosted session gets the same redaction, the same
-telemetry and the same limits — ADR-0007 invariant 8, no exemption, no side door.
+telemetry and the same limits, no exemption, no side door. That is ADR-0007 §5
+invariant **7** ("a hosted session is not a privileged session"); invariant 8 in
+that ADR is local-only enrolment. The code comment at `src/session/host.ts:21-25`
+and older text here call it "invariant 8" — an ADR numbering mismatch the ADR-0007
+amendment is to record (DUST2.3).
 
 ## Two enums, on purpose
 
@@ -100,6 +120,12 @@ turn is written to the host log — device id or `"local"`, timestamp, exact tex
 **and the write is awaited before the relay**. Every tool decision is written
 too, `allow` included: a log that only records refusals cannot answer "what did
 this session do".
+
+The log is meant to be bounded to `HOST_LOG_MAX_LINES` = 5,000 lines
+(`src/session/host-log.ts:31`), but `trimHostLog` (`host-log.ts:111`) is exported
+and has **no caller** in `src/` (it is only re-exported from
+`src/session/index.ts:55`). Today the file grows without limit; the bound is
+intent, not behaviour (DUST1.10 row 19; DUST2.19).
 
 This is not `src/autonomy/log.ts`. That log is tool-shaped and written by a hook
 inside someone else's session; this one records turns, decisions and lifecycle
