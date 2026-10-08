@@ -203,8 +203,11 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
     if (target !== tokens.issuer_origin) {
       throw new PortalAuthError(
         "origin_mismatch",
-        `refusing to send the portal refresh token to ${target}: it was issued by ` +
-          `${tokens.issuer_origin}. Check \`portal.issuer\`, or run \`golem team link\` for this portal.`,
+        `refusing to send the portal refresh token to ${target}: its token endpoint is not on ` +
+          `the origin that issued the token (${tokens.issuer_origin}), and a refresh token is only ` +
+          "ever sent to that origin. If this authorization server legitimately serves its token " +
+          "endpoint from another origin it cannot be refreshed here: run `golem team link` again " +
+          "when the token expires, or check `portal.issuer`.",
       );
     }
   }
