@@ -38,14 +38,15 @@ import { buildUpstreamWiring, resolveProxyUpstream } from "./proxy-build/upstrea
 import { createRouteResolver, type VisionLookup } from "./route-resolver.js";
 
 /**
- * The bypass shim's fixed policy (Decision 56): compression 1 — redaction ON,
- * lossless, brevity `off`. `policyFor`'s defaults already mean exactly
- * this (`brevity` defaults to `off`, `compression` tracks the level), so the shim
- * needs no new dial and no frozen-contract change; it is one pinned policy value.
+ * The bypass shim's fixed policy (Decision 56(c)): compression `off` — redaction
+ * ON and nothing else. No lossless dedup/compaction, no semantic stages, brevity
+ * `off`. `policyFor`'s `off` row keeps `redaction: true` (ADR-0004: compression
+ * off is not redaction off), so the shim needs no new dial and no frozen-contract
+ * change; it is one pinned policy value.
  *
  * Frozen at module scope precisely so no dial can reach it.
  */
-const SHIM_POLICY = policyFor(CompressionLevel.Lossless);
+const SHIM_POLICY = policyFor(CompressionLevel.Off);
 
 /**
  * R11.1 — how long a resolved dial policy is reused before the settings are
@@ -133,10 +134,10 @@ export interface BuildProxyOptions {
    * dead socket (its `ANTHROPIC_BASE_URL` cannot be un-set without a window
    * reload — verification-notes §112b). This flag is what "pipeline off" means
    * concretely: the live dial store is ignored and the policy is pinned to
-   * **level 1**, local-answer is suppressed, and the Headroom sidecar is never
+   * **`off`** (redaction only, no compression), local-answer is suppressed, and the Headroom sidecar is never
    * constructed.
    *
-   * **Level 1, deliberately NOT level 0.** Level 0 / `proxy.bypass_all` forwards
+   * **`off`, deliberately NOT `proxy.bypass_all`.** `bypass_all` forwards
    * untouched, i.e. with redaction OFF — the single sanctioned redaction-off path,
    * which CLAUDE.md permits only when it is never the default and always surfaced
    * loudly. A Stop button that quietly routed unredacted prompts upstream would
@@ -198,7 +199,7 @@ export function buildProxyFromSettings(
   // keeps closing.
   let cachedPolicy: { readonly at: number; readonly policy: PipelinePolicy } | null = null;
   const resolvePolicy = async () => {
-    // Decision 56: pinned. The shim runs redaction and nothing else, whatever
+    // Decision 56(c): pinned. The shim runs redaction and nothing else, whatever
     // the dials say.
     if (build.shim === true) return SHIM_POLICY;
     // OPT-IN (see `reloadDials`): a caller that handed us `settings` gets exactly
