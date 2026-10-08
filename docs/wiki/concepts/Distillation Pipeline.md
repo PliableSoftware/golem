@@ -2,23 +2,25 @@
 title: Distillation Pipeline
 type: concept
 tags: [knowledge, distillation, notes, promote, r4]
-sources: [docs/plan/next_batch.md, docs/plan/R3_BATCH.md, src/cli/notes.ts, src/cli/distill-note.ts, src/cli/synthesize.ts, src/knowledge/distill.ts, src/knowledge/distill-store.ts, src/cli/promote.ts]
+sources: [src/cli/notes.ts, src/cli/distill-note.ts, src/cli/synthesize.ts, src/knowledge/distill.ts, src/knowledge/distill-store.ts, src/cli/promote.ts, src/wiki/file-wiki-store.ts, docs/golem-spec.md#44]
 created: 2026-07-10
-updated: 2026-07-15
+updated: 2026-10-08
 ---
 
 # Distillation Pipeline
 
-The data flow for turning raw, low-friction capture into durable, plan-gated
-wiki knowledge (spec Decision 20f, foundation for P2). Capture (T4) and
-distill (T3, extended by R3.5 to cover notes as well as fetched URLs) are both
-built; promote stays a human-in-the-loop step.
+The data flow for turning raw, low-friction capture into durable wiki knowledge
+(spec Decision 20f, foundation for P2). Capture (T4), distill (T3, extended by R3.5 to
+cover notes as well as fetched URLs) and promote (R4.5) are all built. Agent writes to
+the wiki carry no prior-approval gate (Decisions 44 and 54); the `promote` CLI keeps
+its own consent prompt.
 
 ## The loop, and the zones it crosses
 
 Capture lands in **zone 1** (local, gitignored, never committed); distillation
-shapes a draft; promote is the one human-gated step that writes a **zone 2** wiki
-page committed to git. The zones are defined in the wiki schema (`WIKI.md`); see also
+shapes a draft; promote is the step that writes a **zone 2** wiki page committed to
+git. The `promote` CLI asks for consent (TTY prompt, or `--yes`); an agent calling
+`wiki_upsert` does not need prior approval. The zones are defined in the wiki schema (`WIKI.md`); see also
 [[Wiki-First Knowledge]], [[Knowledge Base]], and [[Architecture]].
 
 ```mermaid
@@ -33,7 +35,7 @@ flowchart LR
   end
   NOTE -->|"capture (redact first)"| DRAFT
   WEB -->|"distill (local summarizer, strict JSON)"| DRAFT
-  DRAFT -->|"promote (human-gated · append-and-refine)"| PAGE
+  DRAFT -->|"promote (CLI consent · append-and-refine)"| PAGE
   PAGE -.->|"indexed as a derived cache"| KB["Vector KB"]
 ```
 
@@ -64,8 +66,11 @@ Drafts land at `.golem/distill/<slug>.md` (`src/knowledge/distill-store.ts`)
 — zone 1, gitignored, wiki-page-shaped from the start (`type: source`,
 reusing the same `parseFrontmatter`/`serializeFrontmatter` the real wiki
 pages use) so promoting one later is a copy into `sources/`, not a reformat.
-Writing is keyed by slug: distilling the same URL again overwrites its prior
-draft rather than accumulating stale copies.
+Writing is keyed by the **model-chosen slug** (`draftPath(projectDir, draft.slug)`,
+`distill-store.ts:61`; the slug comes from `parseDistillResponse`, `distill.ts:284`),
+not by the URL. Re-distilling a URL with `--force` overwrites its prior draft only if
+the model picks the same slug again; a different title leaves two drafts for one URL,
+and two URLs that get the same slug overwrite each other (audit D11, open).
 
 Entry points:
 
@@ -127,11 +132,13 @@ Entry point: `golem wiki synthesize [--days N]` (default 7 days) — errors
 with a clear message rather than a crash when the window has neither
 debriefs nor notes to draw on.
 
-## Stage 3 — promote (plan-gated, unchanged)
+## Stage 3 — promote (consent in the CLI, no plan-gate)
 
-Whatever the distillation engine drafts is a proposal, never an automatic
-write — same plan-gate as every zone-2 wiki write (spec Decision 29): propose,
-get approval, then `wiki_upsert`.
+Whatever the distillation engine drafts stays in zone 1 until something writes it.
+The Decision 28/29 plan-gate on wiki writes was reversed by Decision 44 and finished
+by Decision 54, so an agent may call `wiki_upsert` directly. `golem wiki promote`
+keeps its own consent step, described below; that is a CLI convention, not the
+retired gate.
 
 See also [[Wiki-First Knowledge]].
 
@@ -148,9 +155,11 @@ leg is `golem wiki promote`:
 - `golem wiki promote <id> [--yes]` — shows the draft and, on confirmation,
   writes it through the same append-and-refine `upsertPage` semantics as
   [[Wiki-First Knowledge]]'s `wiki_upsert` (Decision 29: union-merge
-  frontmatter, dated separator, never a wholesale rewrite), then removes the
-  consumed draft. A non-interactive run refuses without `--yes` (the
-  Decision 26 consent convention) — the human approving is the plan-gate.
+  frontmatter, and a bare `---` rule between the old body and the new one, with no
+  date in it, `src/wiki/file-wiki-store.ts:157`; never a wholesale rewrite), then removes
+  the consumed draft. In a TTY it shows the draft and asks; a non-interactive run
+  refuses without `--yes` (the Decision 26 consent convention, `src/cli/promote.ts:152-164`).
+  An `adr` draft is refused: decisions live at `docs/decisions/` (Decision 44).
 
 Implementation: `src/cli/promote.ts` (`runPromote`, `draftTargetRelPath`),
 `removeDraftFile` in `src/knowledge/distill-store.ts`.
