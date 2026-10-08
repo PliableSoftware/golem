@@ -775,9 +775,7 @@ async function pruneProcesses(
 export default function register(program: Command): void {
   program
     .command("ps")
-    .description(
-      "List Golem-owned processes on this machine (proxy, mcp serve, statusline)",
-    )
+    .description("List Golem-owned processes on this machine (proxy, mcp serve, statusline)")
     .option("--dir <path>", "project directory (limits to this project)", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .option("--prune", "remove stale/idle processes Golem owns and can prove are not live", false)
