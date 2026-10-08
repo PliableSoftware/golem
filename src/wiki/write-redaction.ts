@@ -11,6 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { pipelineRedact, stripKnownSecrets } from "../hooks/redact.js";
+import { redactIdentifierText } from "../pipeline/redaction.js";
 
 /** The pipeline stage first, the built-in secret-strip floor on top (hooks/redact.ts). */
 export function redactWikiText(text: string): string {
@@ -19,9 +20,16 @@ export function redactWikiText(text: string): string {
 
 const OPAQUE_RUN = /[A-Za-z0-9]{32,}/;
 
-/** True when `name` must not be used as a file name or slug as it stands. */
+/**
+ * True when `name` must not be used as a file name or slug as it stands.
+ *
+ * Uses the rule table WITHOUT the high-entropy sweep (`redactIdentifierText`):
+ * the sweep treats any long hyphenated run as a candidate secret and flags
+ * ordinary page names. Provider-shaped secrets are still caught by the rules,
+ * and anything long and opaque by the run check below.
+ */
 export function nameLooksSecret(name: string): boolean {
-  return redactWikiText(name) !== name || OPAQUE_RUN.test(name);
+  return stripKnownSecrets(redactIdentifierText(name)) !== name || OPAQUE_RUN.test(name);
 }
 
 /** First 8 hex of a sha256: enough to tell sources apart, not enough to expose one. */
@@ -45,6 +53,16 @@ export class UnsafeWikiPathError extends Error {
   }
 }
 
+/**
+ * Judge a wiki path SEGMENT by SEGMENT, never as a whole: the high-entropy sweep
+ * over `dir/sub/page.md` flags real, committed page paths whose every segment is
+ * fine alone. The final segment is judged without its `.md` suffix.
+ */
 export function assertSafeWikiPath(relPath: string): void {
-  if (nameLooksSecret(relPath)) throw new UnsafeWikiPathError();
+  const segments = relPath.split(/[\\/]/).filter((segment) => segment !== "");
+  const last = segments.length - 1;
+  segments.forEach((segment, index) => {
+    const name = index === last ? segment.replace(/\.md$/, "") : segment;
+    if (nameLooksSecret(name)) throw new UnsafeWikiPathError();
+  });
 }

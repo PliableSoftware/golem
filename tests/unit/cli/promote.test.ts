@@ -241,4 +241,55 @@ describe("runPromote redaction", () => {
     expect(outcome.relPath).toMatch(/^questions\/draft-[0-9a-f]{8}\.md$/);
     expect(outcome.relPath).not.toContain(hex.slice(0, 12));
   });
+
+  // Validate the destination BEFORE the user is asked: a failure after "yes" leaves the draft stuck.
+  it("rejects a title conflict before asking for consent and leaves the draft in place", async () => {
+    const slug = await seedDraft();
+    const store = new FileWikiStore({ wikiDir });
+    await store.upsertPage({
+      relPath: "questions/promotion-archive-or-delete.md",
+      frontmatter: { title: "A different title", type: "question", tags: [], sources: [] },
+      body: "existing",
+    });
+    let asked = 0;
+    await expect(
+      runPromote({
+        projectDir,
+        wikiDir,
+        slug,
+        nowIso: NOW,
+        yes: false,
+        isTTY: true,
+        onPreview: () => {},
+        confirm: async () => {
+          asked += 1;
+          return true;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(asked).toBe(0);
+    expect(await readDraftFile(projectDir, slug)).not.toBeNull();
+  });
+
+  it("promotes a draft whose slug is a real wiki page name after confirmation", async () => {
+    const stem = "2026-08-12-dust3-4-wiki-store-debrief";
+    await handDraft(stem, { title: "Plain title", tag: "plain", body: "Plain body" });
+    let asked = 0;
+    const outcome = await runPromote({
+      projectDir,
+      wikiDir,
+      slug: stem,
+      nowIso: NOW,
+      yes: false,
+      isTTY: true,
+      onPreview: () => {},
+      confirm: async () => {
+        asked += 1;
+        return true;
+      },
+    });
+    expect(asked).toBe(1);
+    expect(outcome.kind).toBe("promoted");
+    expect(await readDraftFile(projectDir, stem)).toBeNull();
+  });
 });

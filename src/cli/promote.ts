@@ -15,7 +15,11 @@
  */
 
 import readline from "node:readline/promises";
-import { UnknownWikiPageError, type WikiPageType } from "../interfaces/index.js";
+import {
+  UnknownWikiPageError,
+  type WikiPageType,
+  WikiWriteConflictError,
+} from "../interfaces/index.js";
 import {
   type DraftFile,
   listDraftFiles,
@@ -23,7 +27,7 @@ import {
   removeDraftFile,
 } from "../knowledge/distill-store.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
-import { FileWikiStore, safeDraftSlug } from "../wiki/index.js";
+import { assertSafeWikiPath, FileWikiStore, redactWikiText, safeDraftSlug } from "../wiki/index.js";
 
 /**
  * Zone directory each page type lives under (spec Decision 28 layout, amended by
@@ -157,6 +161,37 @@ export async function runPromote(opts: PromoteOptions): Promise<PromoteOutcome> 
     );
   }
 
+  // Validate the destination BEFORE asking: a failure after the user said yes
+  // would leave them with a confirmed promotion that did nothing.
+  const relPath = draftTargetRelPath(draft);
+  assertSafeWikiPath(relPath);
+  const store = new FileWikiStore({
+    wikiDir: opts.wikiDir,
+    now: () => opts.nowIso.slice(0, 10),
+    projectDir: opts.projectDir,
+  });
+  let existedBefore = true;
+  try {
+    const existing = await store.readPage(relPath);
+    // The store compares the REDACTED title, so this does too.
+    const draftTitle = redactWikiText(draft.frontmatter.title);
+    if (existing.frontmatter.title !== draftTitle) {
+      throw new WikiWriteConflictError(
+        relPath,
+        `existing title "${existing.frontmatter.title}" != "${draftTitle}"`,
+      );
+    }
+    if (existing.frontmatter.type !== draft.frontmatter.type) {
+      throw new WikiWriteConflictError(
+        relPath,
+        `existing type "${existing.frontmatter.type}" != "${draft.frontmatter.type}"`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof UnknownWikiPageError) existedBefore = false;
+    else throw err;
+  }
+
   if (!opts.yes) {
     const isTTY = opts.isTTY ?? process.stdin.isTTY === true;
     if (!isTTY) {
@@ -169,21 +204,6 @@ export async function runPromote(opts: PromoteOptions): Promise<PromoteOutcome> 
     const confirm = opts.confirm ?? defaultConfirm;
     const accepted = await confirm(`Promote "${opts.slug}" to ${draftTargetRelPath(draft)}?`);
     if (!accepted) return { kind: "cancelled" };
-  }
-
-  const relPath = draftTargetRelPath(draft);
-  const store = new FileWikiStore({
-    wikiDir: opts.wikiDir,
-    now: () => opts.nowIso.slice(0, 10),
-    projectDir: opts.projectDir,
-  });
-
-  let existedBefore = true;
-  try {
-    await store.readPage(relPath);
-  } catch (err) {
-    if (err instanceof UnknownWikiPageError) existedBefore = false;
-    else throw err;
   }
 
   await store.upsertPage({
