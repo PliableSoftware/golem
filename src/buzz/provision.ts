@@ -236,11 +236,27 @@ export async function provisionBuzz(opts: ProvisionOptions): Promise<ProvisionRe
   }
 
   if (blocked.length > 0) {
+    // Secrets for the other personas were already minted into the store above;
+    // throwing before the manifest write would orphan every one of them (the
+    // same state this error describes). Persist their records first, carrying
+    // forward the records of personas that left the roster, whose secrets are
+    // not forgotten on this path.
+    if (opts.write !== false && records.length > 0) {
+      const rosterIds = new Set(roster);
+      const carried = (previous?.agents ?? []).filter((a) => !rosterIds.has(a.persona));
+      await mkdir(path.dirname(buzzManifestPath(opts.projectDir)), { recursive: true });
+      await writeFile(
+        buzzManifestPath(opts.projectDir),
+        renderManifest({ version: 1, agents: [...records, ...carried] }),
+        "utf8",
+      );
+    }
     throw new Error(
       `Buzz identities are orphaned for: ${blocked.join(", ")} — a secret is stored but no manifest ` +
         "record holds its pubkey, and a Nostr pubkey cannot be recovered from its secret. " +
-        "Re-provision those personas with `golem buzz provision --rotate <id>` to mint a fresh " +
-        "identity, then register the new pubkey with the relay.",
+        "Records for the other personas were written. Mint a fresh identity for each blocked " +
+        "persona with `rotateIdentity` (src/buzz/identity.ts; no CLI reaches it yet, R14.2), " +
+        "register the new pubkey with the relay, then re-run provisioning.",
     );
   }
 

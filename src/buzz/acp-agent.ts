@@ -52,10 +52,14 @@ export interface GolemAcpAgentOptions {
  */
 export function createGolemAcpAgent(options: GolemAcpAgentOptions): AgentApp {
   const sessions: SessionRegistry = createSessionRegistry();
+  // Sessions with a `session/prompt` handler currently running.
+  const inFlight = new Set<string>();
   // Sessions with a turn in flight that the client has asked to cancel. Under
   // `buzz-acp`'s default `steer` event handling a new @mention CANCELs the
   // turn already running, so this fires on a routine interaction, not just an
-  // explicit `!cancel`. Cleared when the cancelled turn's handler resolves.
+  // explicit `!cancel`. Only populated while the session is in `inFlight`: a
+  // cancel with nothing running would otherwise outlive any turn and silence
+  // the NEXT one. Cleared when the cancelled turn's handler resolves.
   const cancelled = new Set<string>();
 
   return agent({ name: "golem" })
@@ -72,7 +76,8 @@ export function createGolemAcpAgent(options: GolemAcpAgentOptions): AgentApp {
       // its completion/timeout, but nothing it emits after this point reaches
       // the channel, and the turn reports `cancelled`. The bound is resources,
       // not correctness: a cancelled turn posts no stale reply.
-      cancelled.add(params.sessionId);
+      // A cancel with no turn in flight is a no-op, not a pre-cancel of the next turn.
+      if (inFlight.has(params.sessionId)) cancelled.add(params.sessionId);
     })
     .onRequest("session/new", ({ params }) => {
       const parsed = newSessionParamsSchema.parse(params);
@@ -92,6 +97,7 @@ export function createGolemAcpAgent(options: GolemAcpAgentOptions): AgentApp {
         );
       }
       const promptText = extractPromptText(parsed.prompt);
+      inFlight.add(session.id);
 
       // `runAcpTurn`'s `emit`/`keepalive` are synchronous by contract (a turn
       // must not block on the transport to keep dispatching), but each chunk
@@ -136,6 +142,7 @@ export function createGolemAcpAgent(options: GolemAcpAgentOptions): AgentApp {
         await chain;
         return { stopReason: wasCancelled() ? "cancelled" : result.stopReason };
       } finally {
+        inFlight.delete(session.id);
         cancelled.delete(session.id);
       }
     });
