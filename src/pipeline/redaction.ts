@@ -33,6 +33,7 @@ import {
   activeRedactionRules,
   ENTROPY_CANDIDATE_RE,
   ENTROPY_RULE_ID,
+  isApiObjectId,
   isHighEntropyToken,
   type RedactionRule,
 } from "./redaction-rules.js";
@@ -131,7 +132,7 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
 function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
   let count = 0;
   const out = text.replace(ENTROPY_CANDIDATE_RE, (match: string): string => {
-    if (!isHighEntropyToken(match)) {
+    if (isApiObjectId(match) || !isHighEntropyToken(match)) {
       return match;
     }
     count += 1;
