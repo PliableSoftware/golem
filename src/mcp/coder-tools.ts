@@ -572,7 +572,7 @@ export function registerCoderTool(
           });
         }
         const msg = backendUnavailableMessage(err);
-        if (msg !== null) return errorResult(msg);
+        if (msg !== null) return instrumented(tel, "coder", startMs, errorResult(msg));
         throw err;
       }
     },
