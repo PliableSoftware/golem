@@ -11,13 +11,13 @@
  *                 writeSetting(). Described for humans by ui-model.ts.
  *   2. GUIDANCE   `.claude/rules/golem-<name>.md` — presence of the file *is* the
  *                 toggle (project scope committed; `.local.md` personal).
- *   3. RUNTIME    the slider level, the active account, and whether the proxy
+ *   3. RUNTIME    the compression dial, the active account, and whether the proxy
  *                 daemon is up — each with its own side effects (notify the
  *                 proxy, credential preflight, spawn/kill).
  *
  * This module flattens all three into {@link Control} rows and routes writes back
  * to the existing implementations. It ADDS no persistence logic of its own: every
- * write delegates to setConfig/writeGuidanceRule/setSliderLevel/useAccount/
+ * write delegates to setConfig/writeGuidanceRule/setDial/useAccount/
  * startDetached, so the panel cannot bypass a validation or a side effect that
  * the CLI performs.
  *
@@ -27,7 +27,7 @@
  *   overrides would look successful and change nothing.
  * - A settings leaf with {@link SettingMeta.ownedBy} is omitted from the settings
  *   groups, because a runtime control edits the same key with a better
- *   affordance (slider.level, inference.model).
+ *   affordance (compression.level, inference.model).
  */
 
 import path from "node:path";
@@ -118,7 +118,7 @@ export async function collectHeader(options: ControlSurfaceOptions): Promise<Sta
 /**
  * Apply a change to one control. `scope` is one of the control's
  * {@link Control.writableScopes}; it is ignored by runtime controls that own
- * their own storage decision (the slider always writes local scope).
+ * their own storage decision (the compression dial always writes local scope).
  *
  * Throws {@link ConfigError} for an unknown id, a locked control, or an
  * out-of-schema value — the caller surfaces the message and leaves the row as it

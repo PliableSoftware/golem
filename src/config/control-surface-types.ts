@@ -95,12 +95,12 @@ export interface ControlSurfaceOptions {
  * carries its own confirmation.
  */
 export const COMPRESSION_CHOICES: readonly string[] = ["off", "1", "2", "3"];
-/** The scopes a settings control accepts, most-local first (what a UI defaults to). */
+/** The scopes a settings control accepts, in the order project, local, user (what a UI defaults to). */
 export const SETTING_SCOPES: readonly SettingsScope[] = ["project", "local", "user"];
 /** The scopes a guidance rule accepts: committed project rule, or personal. */
 export const GUIDANCE_SCOPES: readonly GuidanceScope[] = ["project", "user"];
 export const ENV_LOCKED = (source: string | undefined): string =>
-  `set by ${source ?? "an environment variable"} — env overrides every file layer, ` +
+  `set by ${source ?? "an environment variable"} — env overrides the file layers unless one declares \`!important\`, ` +
   "so a write here would have no effect. Unset it to edit this again.";
 
 /**

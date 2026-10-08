@@ -652,7 +652,7 @@ export const SETTINGS_LEAVES = {
     webcache_revalidate: z.boolean(),
     /**
      * Decision 42: on a WebFetch, fetch the RAW page ourselves in the
-     * PostToolUse hook and cache/ingest THAT — instead of caching Claude Code's
+     * PreToolUse hook, cache/ingest THAT and serve it via a deny — instead of caching Claude Code's
      * prompt-specific WebFetch answer (which is wrong for a later fetch with a
      * different prompt, and a poor KB source). On by default; set false to fall
      * back to the legacy answer-capture behavior. A raw fetch that fails caches
@@ -972,7 +972,7 @@ export const SETTINGS_LEAVES = {
      */
     sync: z.boolean(),
     /**
-     * Whether to sync the team's skills into `.claude/skills/golem-team/`.
+     * Whether to sync the team's skills into the flat `.claude/skills/golem-team-<name>/`.
      * Separate from {@link sync} because settings and instructions are different
      * kinds of thing to accept from an organization, and a member may
      * reasonably want one without the other.

@@ -1,7 +1,7 @@
 import { proxyStatus, startDetached, stopProxy } from "../cli/proxy-daemon.js";
 import { proxyBaseUrl, readWiringState, type WiringState, wiringGap } from "../cli/proxy-wiring.js";
 // costs ~530ms to load, and collecting the surface only needs to READ the level.
-// `setSliderLevel` is imported lazily in applyRuntime. (verification-notes §86)
+// `setDial` is imported lazily in applyRuntime. (verification-notes §86)
 import { coerceCompressionLevel, compressionName } from "../interfaces/policy.js";
 import {
   type ApplyControlOptions,
@@ -119,9 +119,9 @@ export async function runtimeControlGroup(shared: {
 // Apply
 // ---------------------------------------------------------------------------
 /**
- * Runtime controls decide their own storage (the slider always writes local
- * scope per Decision 43; the account writes project scope; the proxy writes
- * nothing), so the caller's `scope` is deliberately ignored here.
+ * Runtime controls decide their own storage (the compression dial writes local
+ * scope per Decision 43; the account switch writes `inference.model` at local
+ * scope too; the proxy writes nothing), so the caller's `scope` is deliberately ignored here.
  */
 export async function applyRuntime(
   name: string,
