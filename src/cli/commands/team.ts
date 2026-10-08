@@ -21,6 +21,7 @@ import { findProjectDir, loadConfig } from "../../config/index.js";
 import { defaultUserDir } from "../../config/paths.js";
 import { createCredentialStore } from "../../credentials/index.js";
 import {
+  applyLinkOverrides,
   assertLinkConfigTrusted,
   bindTeam,
   chooseOrganization,
@@ -66,9 +67,15 @@ function _fail(err: unknown): never {
   process.exit(recoverable ? 2 : 1);
 }
 
-async function portalContext(dir: string) {
-  const { settings, provenance } = await loadConfig({ projectDir: dir });
-  const config = resolvePortalConfig(settings.portal);
+async function portalContext(
+  dir: string,
+  flags: { readonly portalUrl?: string; readonly issuer?: string } = {},
+) {
+  const loaded = await loadConfig({ projectDir: dir });
+  const { settings } = loaded;
+  const applied = applyLinkOverrides(settings.portal, loaded.provenance, flags);
+  const provenance = applied.provenance;
+  const config = resolvePortalConfig(applied.settings);
   const tokens = portalTokenStore(createCredentialStore());
   return { config, tokens, settings, provenance };
 }
@@ -89,6 +96,8 @@ interface LinkOptions {
   readonly bind: boolean;
   readonly org?: string;
   readonly timeout?: string;
+  readonly portalUrl?: string;
+  readonly issuer?: string;
   readonly json: boolean;
 }
 
@@ -254,10 +263,15 @@ export default function register(program: Command): void {
     .option("--org <id-or-slug>", "which team to bind this project to (skips the prompt)")
     .option("--no-bind", "sign in only — do not write team.org_id into this project")
     .option("--timeout <ms>", "override how long to wait for the browser round trip")
+    .option("--portal-url <url>", "portal API base to bind the token to (https or loopback)")
+    .option("--issuer <url>", "authorization server to bind the token to (https or loopback)")
     .option("--json", "machine-readable output", false)
     .action(async (opts: LinkOptions) => {
       try {
-        const { config, tokens, provenance } = await portalContext(opts.dir);
+        const { config, tokens, provenance } = await portalContext(opts.dir, {
+          ...(opts.portalUrl === undefined ? {} : { portalUrl: opts.portalUrl }),
+          ...(opts.issuer === undefined ? {} : { issuer: opts.issuer }),
+        });
         assertLinkConfigTrusted(provenance);
         const timeoutMs = opts.timeout === undefined ? config.linkTimeoutMs : Number(opts.timeout);
         if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {

@@ -75,19 +75,19 @@ export function resolvePortalConfig(settings: PortalSettings): PortalConfig {
 }
 
 /**
- * Layers a repository ships. `local` is deliberately absent: it is the default
- * target of `golem config set` and gitignored by `golem init`, so refusing it
- * would break the documented setup. See the DUSTSEC.17 report note.
+ * Layers a repository can ship. `local` is included: a file tracked by git ships
+ * with the repo even when `.gitignore` names it, so `.golem/settings.local.json`
+ * is no safer than the project file (DUSTSEC.18).
  */
-const CHECKOUT_LAYERS: ReadonlySet<string> = new Set(["project", "team"]);
+const CHECKOUT_LAYERS: ReadonlySet<string> = new Set(["project", "team", "local"]);
 
 /**
  * Refuse to bind a new token to a portal a checkout chose (DUSTSEC.17).
  *
  * `golem team link` records the origins it is given as the token's binding, so a
  * committed `portal.url` / `portal.issuer` would bind the user's token to the
- * attacker's host from the start. Only user-scoped or local config (the user and local
- * settings files, the environment, an explicit override) or the defaults may
+ * attacker's host from the start. Only user-scoped config, the environment, an
+ * explicit override (the `--portal-url` / `--issuer` flags) or the defaults may
  * supply them at link time. Throws `untrusted_config`; names the key and file, never a token.
  */
 export function assertLinkConfigTrusted(
@@ -100,8 +100,39 @@ export function assertLinkConfigTrusted(
       "untrusted_config",
       `refusing to link: \`${key}\` comes from the ${entry.layer} settings` +
         `${entry.source === undefined ? "" : ` (${entry.source})`}, which a repository can ship. ` +
-        "Linking would bind your token to that host. Set it in your user settings instead " +
-        `(\`golem config set ${key} <url> --scope user\`) or via GOLEM_PORTAL_*, and remove it from the project file.`,
+        "Linking would bind your token to that host. Pass it explicitly instead " +
+        `(\`golem team link ${key === "portal.url" ? "--portal-url" : "--issuer"} <url>\`), set it in your user settings ` +
+        `(\`golem config set ${key} <url> --scope user\`) or via GOLEM_PORTAL_*, and remove it from the repository file.`,
     );
   }
+}
+
+/**
+ * Apply `golem team link --portal-url / --issuer`. The flags are explicit user
+ * input, so they replace the configured value AND its provenance; each is
+ * validated https-or-loopback before anything is bound to it.
+ */
+export function applyLinkOverrides(
+  settings: PortalSettings,
+  provenance: Readonly<Record<string, { readonly layer: string; readonly source?: string }>>,
+  flags: { readonly portalUrl?: string; readonly issuer?: string },
+): {
+  readonly settings: PortalSettings;
+  readonly provenance: Record<string, { readonly layer: string; readonly source?: string }>;
+} {
+  const nextProvenance = { ...provenance };
+  let nextSettings = settings;
+  if (flags.portalUrl !== undefined) {
+    const url = flags.portalUrl.trim().replace(/\/+$/, "");
+    portalOrigin(url);
+    nextSettings = { ...nextSettings, url };
+    nextProvenance["portal.url"] = { layer: "override", source: "--portal-url" };
+  }
+  if (flags.issuer !== undefined) {
+    const issuer = flags.issuer.trim().replace(/\/+$/, "");
+    portalOrigin(issuer);
+    nextSettings = { ...nextSettings, issuer };
+    nextProvenance["portal.issuer"] = { layer: "override", source: "--issuer" };
+  }
+  return { settings: nextSettings, provenance: nextProvenance };
 }

@@ -98,6 +98,7 @@ export async function discoverAuthorizationServer(
     response = await fetchImpl(url, {
       method: "GET",
       headers: { accept: "application/json" },
+      redirect: "manual",
       signal: controller.signal,
     });
   } catch (err) {
@@ -108,6 +109,15 @@ export async function discoverAuthorizationServer(
     );
   } finally {
     clearTimeout(timer);
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    throw new PortalAuthError(
+      "discovery_failed",
+      `the portal's authorization server metadata at ${url} answered a redirect (${response.status}); ` +
+        "redirects are refused. Set `portal.url` / `portal.issuer` to the final address.",
+      response.status,
+    );
   }
 
   if (!response.ok) {

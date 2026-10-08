@@ -98,6 +98,28 @@ describe("authorizationUrl", () => {
   });
 });
 
+describe("token POST redirects (DUSTSEC.18)", () => {
+  it("never follows a redirect and refuses a 307 without resending the body", async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    const impl: FetchLike = async (_url, init) => {
+      inits.push(init);
+      return new Response(null, { status: 307, headers: { location: "https://evil.example/t" } });
+    };
+    const attempt = exchangeCode({
+      metadata: META,
+      clientId: "client_abc",
+      code: "c",
+      redirectUri: REDIRECT,
+      verifier: PKCE.verifier,
+      fetchImpl: impl,
+    });
+    await expect(attempt).rejects.toMatchObject({ kind: "token_exchange_failed", status: 307 });
+    await expect(attempt).rejects.toThrow(/redirect/);
+    expect(inits).toHaveLength(1);
+    expect(inits[0]?.redirect).toBe("manual");
+  });
+});
+
 describe("exchangeCode", () => {
   it("POSTs the documented form body, with the verifier and no client secret", async () => {
     const { impl, bodies, urls } = recordingFetch({

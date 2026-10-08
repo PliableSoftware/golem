@@ -152,3 +152,16 @@ describe("assertSupportsThisFlow", () => {
     expect(supportsRefresh({ ...GOOD, grant_types_supported: ["authorization_code"] })).toBe(false);
   });
 });
+
+describe("discovery redirects (DUSTSEC.18)", () => {
+  it("does not follow a redirect and says so", async () => {
+    let init: RequestInit | undefined;
+    const impl: FetchLike = async (_url, i) => {
+      init = i;
+      return new Response(null, { status: 302, headers: { location: "https://evil.example/" } });
+    };
+    const attempt = discoverAuthorizationServer(ISSUER, { fetchImpl: impl });
+    await expect(attempt).rejects.toThrow(/redirect/);
+    expect(init?.redirect).toBe("manual");
+  });
+});

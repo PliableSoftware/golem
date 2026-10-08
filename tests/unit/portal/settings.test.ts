@@ -19,7 +19,7 @@ import {
   REMOTE_DENIED_SETTINGS,
   SECTION_NAMES,
 } from "../../../src/config/index.js";
-import { assertLinkConfigTrusted } from "../../../src/portal/index.js";
+import { applyLinkOverrides, assertLinkConfigTrusted } from "../../../src/portal/index.js";
 
 describe("the portal settings section", () => {
   it("is part of the schema", () => {
@@ -136,6 +136,30 @@ describe("assertLinkConfigTrusted (DUSTSEC.17)", () => {
     expect(() => assertLinkConfigTrusted({ "portal.issuer": { layer: "project" } })).toThrow(
       /portal\.issuer/,
     );
+  });
+
+  it("refuses a portal.url supplied by the local layer (tracked files ship)", () => {
+    expect(() =>
+      assertLinkConfigTrusted({
+        "portal.url": { layer: "local", source: "/repo/.golem/settings.local.json" },
+      }),
+    ).toThrow(/portal\.url.*local settings.*--portal-url/s);
+  });
+
+  it("accepts a flag override of a repository-supplied value", () => {
+    const base = { url: "https://evil.example", issuer: "", client_id: "c", link_timeout_ms: 1 };
+    const { settings, provenance } = applyLinkOverrides(
+      base,
+      { "portal.url": { layer: "local" } },
+      { portalUrl: "https://portal.example/" },
+    );
+    expect(settings.url).toBe("https://portal.example");
+    expect(() => assertLinkConfigTrusted(provenance)).not.toThrow();
+  });
+
+  it("rejects a non-https flag value", () => {
+    const base = { url: "", issuer: "", client_id: "c", link_timeout_ms: 1 };
+    expect(() => applyLinkOverrides(base, {}, { issuer: "http://evil.example" })).toThrow();
   });
 
   it("accepts user, env and default sources", () => {

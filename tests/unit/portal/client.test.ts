@@ -443,6 +443,16 @@ describe("createPortalClient", () => {
       expect(posts.filter((u) => u.startsWith(EVIL))).toHaveLength(0);
     });
 
+    it("explains why a cross-origin token endpoint cannot refresh, and what to do", async () => {
+      store = memoryStore(tokenSet({ expires_at: 2 }));
+      const attempt = withMeta(async () => new Response("{}", { status: 400 }), evilMeta).request(
+        "/api/v1/me",
+      );
+      await expect(attempt).rejects.toThrow(
+        /token endpoint is not on the origin.*golem team link/s,
+      );
+    });
+
     it("refuses to refresh a token with no recorded issuer origin", async () => {
       const { issuer_origin: _drop, ...legacy } = tokenSet({ expires_at: 2 });
       store = memoryStore(legacy);
