@@ -288,12 +288,30 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
 
     forget: async (account) => {
       const removed: CredentialLocation[] = [];
+      const faults: string[] = [];
       // Every backend is writable now, so a forget really is complete.
       for (const backend of [...(keychainB === null ? [] : [keychainB]), fileB]) {
-        const had = await backend.get(account).catch(() => null);
+        let had: string | null;
+        try {
+          had = await backend.get(account);
+        } catch (err) {
+          // A backend we could not read is NOT an empty one: reporting "no stored
+          // credential" would leave a live key behind with the user told otherwise.
+          // Keep going so the other backends are still cleaned, then say so.
+          faults.push(`${backend.id}: ${err instanceof Error ? err.message : String(err)}`);
+          continue;
+        }
         if (had === null) continue;
         await backend.remove(account);
         removed.push(backend.describe());
+      }
+      if (faults.length > 0) {
+        const done =
+          removed.length > 0 ? ` Removed from: ${removed.map((l) => l.label).join(", ")}.` : "";
+        throw new Error(
+          `could not check every credential backend for "${account}" (${faults.join("; ")}) — ` +
+            `a stored credential may remain.${done}`,
+        );
       }
       return removed;
     },
