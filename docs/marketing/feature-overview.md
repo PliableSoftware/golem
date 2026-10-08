@@ -13,7 +13,9 @@ It has a proxy that sits in front of model traffic and an MCP server that offers
 ## Redaction before the model
 
 The proxy redacts the JSON body of `POST /v1/messages` requests before any other pipeline stage runs and before the request is forwarded. <!-- C-01 -->
-Other paths and non-JSON bodies are not rewritten by this stage, so they are not redacted by it. <!-- C-01 -->
+A request to any other path whose body is a JSON object or array gets redaction only: the same rules in the same order, and no other stage. <!-- C-01 -->
+Some bodies are still forwarded as they arrived: one that is absent, empty or not JSON, and a JSON body sent with a content encoding such as gzip or starting with a byte-order mark. The redaction walk has no size cap. Two follow-up tasks, DUSTSEC.20 and DUSTSEC.21, are open. <!-- C-01 -->
+This change is on `development` and in no release tag. <!-- C-01; B-29 -->
 
 Every compression level, including `off`, runs redaction, and no level value can turn it off. <!-- C-02 -->
 If the pipeline throws, the proxy re-runs redaction alone on the original request and forwards that. <!-- C-03 -->
@@ -45,8 +47,7 @@ Levels 2 and 3 behave differently by upstream. On an Anthropic prompt-caching up
 They apply on non-caching upstreams and need the optional Headroom sidecar, which is off by default. <!-- C-12 -->
 An opt-in research flag, off by default, overrides that gate. <!-- C-12 -->
 
-On cached Anthropic traffic, compression saves roughly nothing: about 0%, measured in July 2026. <!-- C-13 -->
-Compression pays off on non-caching upstreams. <!-- C-13 -->
+Token savings from compression are situational, not the headline, and Golem's own stats note calls them near zero on cached Anthropic traffic. <!-- C-13 -->
 
 ## Local tools
 
@@ -55,18 +56,18 @@ The redacted original is stored under `.golem/ccr`, and Claude can retrieve it w
 
 **Local answers.** For an eligible question, the proxy can answer from the project knowledge base without calling the model. <!-- C-15 -->
 The answer is extractive: it quotes retrieved text and uses no generative model. <!-- C-15 -->
-It carries the visible prefix "Answered locally from the project knowledge base, verify independently", and the feature is on by default. <!-- C-15 -->
+It carries the visible prefix "**Golem** Answered locally from the project knowledge base — verify independently.", and the feature is on by default. <!-- C-15 -->
 Treat it like any cited source: it quotes the project's own pages, and it can quote the wrong one.
 
 **Knowledge base.** It works with no setup. A pure-TypeScript lexical hashing embedder is the default, replaced by an Ollama embedding model when one is reachable, and the vector store is a local file. <!-- C-16 -->
 A Qdrant server is not supported. <!-- C-16 -->
 
 **Local models.** Golem picks a local model tier from detected GPU or unified memory: under 8 GiB is P-min, 8 to 16 GiB is P-mid, over 16 GiB is P-max, and none detected is P-cpu. <!-- C-17 -->
-`golem ollama setup` asks for confirmation before it installs Ollama or pulls models, and nothing else here does. <!-- C-18 -->
+`golem ollama setup` asks for confirmation before it installs Ollama or pulls models, and nothing else here does. `--yes` skips the prompt, and without a TTY the command refuses unless `--yes` is given. <!-- C-18 -->
 
 ## The MCP surface
 
-The MCP server registers up to eleven tools: `code`, `coder`, `devices`, `snooze`, `search`, `fetch`, `ingest`, `expand`, `stats`, `wiki_read` and `wiki_upsert`. <!-- C-19 -->
+The MCP server registers up to eleven tools: `code`, `coder`, `devices`, `snooze`, `search`, `fetch`, `ingest`, `expand`, `stats`, `wiki_read` and `wiki_upsert`; plugin tools may add more. <!-- C-19 -->
 Several register only when their dependency exists: a knowledge base for `search`, `fetch` and `ingest`, a local-inference dependency for `coder`, a code root for `code`, and a wiki for the two wiki tools. <!-- C-19 -->
 It can run over stdio or streamable HTTP. <!-- C-19 -->
 
