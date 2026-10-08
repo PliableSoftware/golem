@@ -38,6 +38,7 @@ import { createCredentialStore } from "../credentials/index.js";
 import type { CompressionLevel } from "../interfaces/index.js";
 import {
   createPortalClient,
+  describeTeamOutcome,
   discoverAuthorizationServer,
   type PortalSettings,
   portalTokenPresent,
@@ -66,7 +67,7 @@ import {
   removeSkills,
   skillDirName,
 } from "./init-skills.js";
-import { teamInitStep } from "./init-team.js";
+import { type TeamInitSyncResult, teamInitStep } from "./init-team.js";
 import {
   ensureVscodeWatcherExclude,
   installVscodeExtension,
@@ -548,15 +549,15 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
  * unlinked path. It is only ever reached for a linked project with a token
  * present.
  *
- * The returned lines are what LANDED. Everything else — offline, lapsed, not a
- * member — is reported by `teamInitStep` from the disposition, and none of it
- * fails the init: `syncTeamLayer` does not throw, and Decision 64(f) puts that
+ * Returns the sync's disposition and notice along with what LANDED, so
+ * `teamInitStep` can say offline, lapsed, not a member or a stale cache in the
+ * sync's own words instead of "up to date". None of it fails the init: `syncTeamLayer` does not throw, and Decision 64(f) puts that
  * above every other consideration on this path.
  */
 async function syncTeamLayerForInit(
   binding: TeamBinding,
   portal: PortalSettings,
-): Promise<readonly string[]> {
+): Promise<TeamInitSyncResult> {
   const config = resolvePortalConfig(portal);
   const tokens = portalTokenStore(createCredentialStore());
   const client = createPortalClient({
@@ -571,7 +572,12 @@ async function syncTeamLayerForInit(
     client,
     report: true,
   });
-  return result.applied;
+  return {
+    disposition: result.disposition,
+    applied: result.applied,
+    fromCache: result.fromCache,
+    notice: result.notice ?? describeTeamOutcome(result.disposition, { orgId: binding.orgId }),
+  };
 }
 
 export interface UninitOptions {

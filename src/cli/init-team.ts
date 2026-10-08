@@ -52,6 +52,7 @@ import {
   mayUseCachedTeamLayer,
   readTeamBinding,
   type TeamBinding,
+  type TeamLayerDisposition,
   type TeamSettings,
 } from "../portal/index.js";
 
@@ -81,7 +82,21 @@ export interface TeamInitStepOptions {
    *
    * Only ever called when the project names a team AND a token is present.
    */
-  readonly syncTeamLayer?: (binding: TeamBinding) => Promise<readonly string[]>;
+  readonly syncTeamLayer?: (
+    binding: TeamBinding,
+  ) => Promise<readonly string[] | TeamInitSyncResult>;
+}
+
+/**
+ * What a real sync reports back: the portal's disposition and the notice that
+ * already says it honestly. A bare `string[]` (no disposition) is still
+ * accepted and read as a fresh, entitled sync.
+ */
+export interface TeamInitSyncResult {
+  readonly disposition: TeamLayerDisposition;
+  readonly applied: readonly string[];
+  readonly fromCache: boolean;
+  readonly notice: string;
 }
 
 export type TeamInitOutcome =
@@ -183,7 +198,26 @@ export async function teamInitStep(options: TeamInitStepOptions): Promise<TeamIn
   }
 
   try {
-    const applied = await options.syncTeamLayer(binding);
+    const synced = await options.syncTeamLayer(binding);
+    if (!Array.isArray(synced)) {
+      const result = synced as TeamInitSyncResult;
+      // Only a fresh, entitled answer is "applied". A verdict of no, an
+      // api_error, or a stale cache standing in for an unreachable portal is
+      // what the sync's own notice says it is.
+      if (result.disposition.kind !== "entitled" || result.fromCache) {
+        return {
+          outcome: {
+            kind: "degraded",
+            orgId: binding.orgId,
+            usedCache: result.fromCache,
+          },
+          notices: [result.notice],
+        };
+      }
+    }
+    const applied: readonly string[] = Array.isArray(synced)
+      ? synced
+      : (synced as TeamInitSyncResult).applied;
     return {
       outcome: { kind: "applied", orgId: binding.orgId, applied },
       notices: [
