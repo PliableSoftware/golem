@@ -49,7 +49,7 @@ describeLocalAnswerContract("KnowledgeLocalAnswerService", async () => {
   tempDirs.push(dir);
   await writeFile(
     path.join(dir, "deploy.md"),
-    "# Deployment\n\nHow do I deploy this project? Run npm run build, then golem-run init on the target machine.\n",
+    "# Deployment\n\nHow do I deploy this project? Run npm run build, then @pliable/golem init on the target machine.\n",
   );
   const kb = openKnowledgeBase({
     projectDir: dir,

@@ -3,7 +3,7 @@
  *
  * §26 evaluated LanceDB and sqlite-vec and correctly ruled that BOTH are native
  * binaries, so either can only ship as an OPTIONAL add-on — which would leave the
- * default `npx golem-run` install with no persistence at all. This driver fills
+ * default `npx @pliable/golem` install with no persistence at all. This driver fills
  * that gap: it persists each project's `{chunk, vector}` records to disk as JSONL
  * and does the same brute-force cosine search as {@link InMemoryVectorDriver} on
  * an in-memory copy loaded at open. No native dependency (CLAUDE.md hard rule),

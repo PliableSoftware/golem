@@ -8,7 +8,7 @@ server or account is required.
 
 ## Requirements
 
-- The `golem` CLI on your `PATH` (`npm i -g golem-run`, or `npm link` from the repo).
+- The `golem` CLI on your `PATH` (`npm i -g @pliable/golem`, or `npm link` from the repo).
 - A Golem-wired project (`golem init`) and, for live savings, a running `golem proxy`.
 
 ## What it shows

@@ -84,7 +84,7 @@ any release.
 
 ## The installer ladder (do not reorder)
 
-1. Node ≥ 22 + npm present → `npm install -g golem-run` (self-updating)
+1. Node ≥ 22 + npm present → `npm install -g @pliable/golem` (self-updating)
 2. otherwise → download the standalone binary (no Node)
 
 `GOLEM_VERSION` pins the npm version; `GOLEM_INSTALL_BASE` overrides the base

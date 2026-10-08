@@ -5,7 +5,7 @@
  * embedding + rerank (C3), and MEMORY-scope federation (C4/sidecar) follow.
  *
  * Native embedded vector engines (LanceDB / sqlite-vec) are OPTIONAL deps loaded
- * lazily behind the driver seam so the default `npx golem-run` install stays
+ * lazily behind the driver seam so the default `npx @pliable/golem` install stays
  * pure-TS (CLAUDE.md; decision memo in verification-notes §26).
  */
 

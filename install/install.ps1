@@ -2,7 +2,7 @@
 #   irm https://golem.run | iex
 #
 # Tiered, npm-first:
-#   1. Node >= 22 + npm present    -> npm install -g golem-run  (self-updating)
+#   1. Node >= 22 + npm present    -> npm install -g @pliable/golem  (self-updating)
 #   2. otherwise                   -> download the standalone .exe (no Node)
 #   3. $env:GOLEM_INSTALL_NODE=1   -> bootstrap Node via winget, then retry (1)
 #
@@ -36,8 +36,8 @@ function Show-NextSteps {
 }
 
 function Install-ViaNpm {
-  $spec = 'golem-run'
-  if ($env:GOLEM_VERSION) { $spec = "golem-run@$($env:GOLEM_VERSION)" }
+  $spec = '@pliable/golem'
+  if ($env:GOLEM_VERSION) { $spec = "@pliable/golem@$($env:GOLEM_VERSION)" }
   Write-Golem "installing $spec globally via npm ..."
   try {
     & npm install -g $spec
@@ -45,7 +45,7 @@ function Install-ViaNpm {
     Show-NextSteps
     return $true
   } catch {
-    Write-GolemWarn "npm install failed ($_). If golem-run isn't published yet, this is expected — see https://golem.run"
+    Write-GolemWarn "npm install failed ($_). If @pliable/golem isn't published yet, this is expected — see https://golem.run"
     return $false
   }
 }

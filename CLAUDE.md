@@ -3,7 +3,7 @@
 Guidance for Claude Code agents working in this repository.
 
 ## What this project is
-A local-first TypeScript pre-LLM processing layer (proxy + MCP server): redaction, compression, local tools, routing, honest observability. Claude Code is the flagship integration — byte-faithful proxying, native MCP tools, agentic developer-assistant with local tools (vector KB, tiered Ollama inference, CCR expansion, telemetry). The pipeline extends to other gateways (R6.1). npm **`golem-run`**, CLI **`golem`**.
+A local-first TypeScript pre-LLM processing layer (proxy + MCP server): redaction, compression, local tools, routing, honest observability. Claude Code is the flagship integration — byte-faithful proxying, native MCP tools, agentic developer-assistant with local tools (vector KB, tiered Ollama inference, CCR expansion, telemetry). The pipeline extends to other gateways (R6.1). npm **`@pliable/golem`**, CLI **`golem`**.
 
 Previously the project had a different working title — dated wiki records still show it, read as Golem. The MCP tools use short verb names: `search`, `fetch`, `expand`, `stats`, `ingest`, `coder` (Decisions 27/35). `level` was retired with the slider (ADR-0004): no tool call can change how much of the pipeline runs. Skills/prompts/env/config/header use `/golem-<cmd>` and `GOLEM_*`.
 

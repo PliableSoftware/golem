@@ -7,7 +7,7 @@ import path from "node:path";
 import type { Command } from "commander";
 import { findProjectDir } from "../../config/index.js";
 import { VERSION } from "../../index.js";
-import { checkForUpdate, detectInstallMethod } from "../../update/index.js";
+import { checkForUpdate, detectInstallMethod, PACKAGE_NAME } from "../../update/index.js";
 import { InitError } from "../init.js";
 import { golemDirExists } from "../local-model.js";
 import { collectStatus, renderStatus } from "../status.js";
@@ -80,7 +80,7 @@ export default function register(program: Command): void {
           return;
         }
         process.stdout.write(`Upgrading via npm: ${result.command}\n`);
-        const res = spawnSync("npm", ["install", "-g", "golem-run@latest"], {
+        const res = spawnSync("npm", ["install", "-g", `${PACKAGE_NAME}@latest`], {
           stdio: "inherit",
           shell: true,
         });

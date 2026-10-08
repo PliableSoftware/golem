@@ -2,13 +2,13 @@
  * `golem ps` — list Golem-owned processes on this machine.
  *
  * Ownership is PROVEN, not pattern-matched. A command line containing
- * `golem-run` is a good hint and a bad gate — the test puts a foreign
+ * `@pliable/golem` (or the legacy `golem-run`) is a good hint and a bad gate — the test puts a foreign
  * `node.exe` in the way deliberately.
  *
  * Sources:
  *   - proxy: pid files under <project>/.golem/proxy.pid (one per project)
  *   - mcp serve: session registry under <project>/.golem/state/hosted-sessions.json
- *   - statusline: machine-wide `node.exe` scan for `golem-run ... statusline`
+ *   - statusline: machine-wide `node.exe` scan for `@pliable/golem ... statusline`
  *     candidates, each proven live/dead via the same parentage walk as mcp/proxy
  *   - dashboard: not yet tracked (no pidfile)
  *
@@ -385,7 +385,7 @@ async function collectMcpServes(
     for (const [pid, entry] of snapshot) {
       if (seen.has(pid)) continue;
       if (entry.name !== "node.exe") continue;
-      if (!entry.cmd.includes("golem-run")) continue;
+      if (!namesGolemPackage(entry.cmd)) continue;
       if (!/\bmcp\b/.test(entry.cmd) || !/\bserve\b/.test(entry.cmd)) continue;
       out.push({
         pid,
@@ -402,6 +402,17 @@ async function collectMcpServes(
   return out;
 }
 
+/**
+ * Does a command line name the Golem npm package? Matches the canonical
+ * `@pliable/golem` path segment (either slash direction, for Windows) and the
+ * legacy `golem-run`, since an older install may still be running. The trailing
+ * lookahead keeps `@pliable/golem-other` and `golem-runner` from matching.
+ * A hint only, never the ownership gate.
+ */
+export function namesGolemPackage(cmd: string): boolean {
+  return /(?:@pliable[\\/]golem|golem-run)(?![\w-])/.test(cmd);
+}
+
 /** Spawn `cmd`, capture stdout, resolve on close, reject on a spawn error. */
 async function runCapture(cmd: string, args: string[]): Promise<string> {
   const proc = spawn(cmd, args);
@@ -416,14 +427,14 @@ async function runCapture(cmd: string, args: string[]): Promise<string> {
 }
 
 /**
- * Every live `node.exe` PID whose command line names `golem-run` and
+ * Every live `node.exe` PID whose command line names the Golem package and
  * `statusline` — the candidate set for the statusline kind. A commandline
  * match is a hint, never the gate: {@link findOwningClaude} still has to
  * prove each candidate's owning shell is dead before anything is pruned.
  */
 async function listStatuslineCandidates(): Promise<number[]> {
   const isCandidate = (cmd: string): boolean =>
-    cmd.includes("golem-run") && /\bstatusline\b/.test(cmd);
+    namesGolemPackage(cmd) && /\bstatusline\b/.test(cmd);
   if (process.platform === "win32") {
     try {
       if (!(await wmicAvailable())) throw new Error("wmic unavailable");
@@ -584,7 +595,7 @@ async function collectStatuslines(
 ): Promise<GolemProcess[]> {
   const out: GolemProcess[] = [];
   const isCandidate = (name: string, cmd: string): boolean =>
-    name === "node.exe" && cmd.includes("golem-run") && /\bstatusline\b/.test(cmd);
+    name === "node.exe" && namesGolemPackage(cmd) && /\bstatusline\b/.test(cmd);
 
   if (snapshot) {
     for (const [pid, entry] of snapshot) {

@@ -8,7 +8,7 @@
  *
  * **`unpdf` is genuinely optional as of Decision 53 (Tier 2).** It was
  * *documented* as optional here and in the R3.2 debrief while actually being a
- * static import in `dependencies`, so it shipped to every `golem-run` user and
+ * static import in `dependencies`, so it shipped to every `@pliable/golem` user and
  * an install without it would have failed at module load. It is now loaded via
  * dynamic `import()` and cached, following the `tree-sitter-chunker.ts`
  * precedent, and `optionalDependencies` lets an install tolerate its absence.
