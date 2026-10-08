@@ -98,13 +98,6 @@ export interface BuildProxyOptions {
    */
   readonly reloadDials?: boolean;
   /**
-   * When present, the level is re-read from this store on EVERY request
-   * instead of frozen at construction time — makes `level` /
-   * `golem slider` double as the live per-task toggle (Decision 25/30; both
-   * since retired by ADR-0004).
-   */
-
-  /**
    * R2.3 (spec Decision 24 sub-mode 2 / Decision 33): local inference
    * service, used ONLY to select the SEMANTIC embedder for the local-answer
    * sub-mode's KnowledgeBase. Has no effect unless

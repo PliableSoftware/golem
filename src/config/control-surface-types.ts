@@ -202,15 +202,6 @@ export function parseSettingScope(scope: string): SettingsScope {
     key: scope,
   });
 }
-export function coerceLevel(value: unknown): number {
-  const num = typeof value === "number" ? value : Number(String(value).trim());
-  if (!Number.isInteger(num) || num < 0 || num > 5) {
-    throw new ConfigError(`invalid slider level "${String(value)}" (expected 0–3)`, {
-      key: "slider.level",
-    });
-  }
-  return num;
-}
 export function restartHintFor(key: string): { restartHint?: string } {
   const restart = settingMeta(key)?.restart;
   if (restart === "proxy") return { restartHint: "run `golem proxy restart` to apply" };

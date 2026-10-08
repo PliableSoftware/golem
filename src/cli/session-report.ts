@@ -230,7 +230,3 @@ function emptyStats(): StatsReport {
     note: "stats unavailable",
   };
 }
-
-function _levelFallbackName(level: number): string {
-  return ["passthrough", "lossless", "balanced", "aggressive"][level] ?? `level ${level}`;
-}

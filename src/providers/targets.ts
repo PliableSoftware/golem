@@ -105,8 +105,6 @@ export interface ResolvedTarget {
   readonly provider: UpstreamProvider;
   readonly baseUrl: string;
   readonly model: string | undefined;
-  /** Optional context size in tokens (e.g., 262144). */
-  readonly contextSize?: number;
   readonly authScheme: UpstreamAuthScheme;
   readonly trust: TargetTrust;
   /**
@@ -185,20 +183,6 @@ function lookupGateway(
   id: string,
 ): GatewayEntry | undefined {
   return gateways?.find((g) => g.id === id);
-}
-
-/**
- * Find targets by model name across all gateways. Case-insensitive substring
- * match (e.g. `"qwen3"` matches `"qwen/qwen3.7-flash"` and
- * `"qwen/qwen3-14b"`). Returns all matching targets, or empty array.
- */
-export function resolveModel(
-  settings: TargetRegistrySettings,
-  name: string,
-): readonly ResolvedTarget[] {
-  const targets = listTargets(settings);
-  const lower = name.toLowerCase();
-  return targets.filter((t) => t.model?.toLowerCase().includes(lower) === true);
 }
 
 /**
