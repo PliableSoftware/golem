@@ -30,10 +30,9 @@
  * pass to the autonomy gate that follows.
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { isRecord } from "../shared/json.js";
-
-/** A Bash command is split into simple-command segments on these. */
-const SEGMENT_SPLIT = /[;&|\n\r(){}`]|\$\(/;
 
 /** The executable names `golem` goes by once a path, scope, version and extension are stripped. */
 const GOLEM_NAMES: ReadonlySet<string> = new Set(["golem", "golem-run"]);
@@ -47,10 +46,6 @@ export const BYPASS_DENY_REASON =
   "(ADR-0004): it is not an agent action. Ask the user to run `golem off` in " +
   "their own terminal if they want it. To stop compression but keep redaction, " +
   "`golem compression off` is allowed.";
-
-function unquote(token: string): string {
-  return token.replace(/["']/g, "");
-}
 
 /** `/usr/bin/golem`, `C:\x\golem.cmd`, `@pliable/golem@1.2`, `golem-run@latest` → the bare name. */
 function executableName(token: string): string {
@@ -91,8 +86,10 @@ function isConfigSetBypass(args: readonly string[]): boolean {
 
 /**
  * Words that run the next word as a command, so the program they launch is still
- * what the segment is about: package runners, `sudo`/`env`/`time`, shells (`-c`).
+ * what the segment is about: package runners, `sudo`/`env`/`time`/`timeout`/`nice`,
+ * `xargs`, shells (`-c`).
  */
+const SHELLS: ReadonlySet<string> = new Set(["bash", "sh", "zsh", "dash"]);
 const WRAPPERS: ReadonlySet<string> = new Set([
   "npx",
   "pnpx",
@@ -105,40 +102,161 @@ const WRAPPERS: ReadonlySet<string> = new Set([
   "exec",
   "x",
   "sudo",
+  "doas",
   "env",
   "command",
   "time",
+  "timeout",
   "nohup",
   "nice",
+  "ionice",
+  "stdbuf",
+  "setsid",
+  "xargs",
   "eval",
-  "bash",
-  "sh",
-  "zsh",
-  "dash",
   "node",
+  ...SHELLS,
 ]);
 
-/** Index of the program a simple command runs, past env assignments, wrappers and their flags. */
-function commandPosition(tokens: readonly string[]): number {
+/** Flags whose NEXT token is their value, per wrapper: that value is not the program. */
+const WRAPPER_VALUE_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["sudo", new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group"])],
+  ["doas", new Set(["-u", "-C"])],
+  ["nice", new Set(["-n", "--adjustment"])],
+  ["ionice", new Set(["-c", "-n", "-p", "--class", "--classdata"])],
+  ["timeout", new Set(["-s", "-k", "--signal", "--kill-after"])],
+  ["env", new Set(["-u", "-C", "-S", "--unset", "--chdir"])],
+  ["stdbuf", new Set(["-i", "-o", "-e"])],
+  ["xargs", new Set(["-n", "-P", "-I", "-L", "-s", "-d", "-E", "-a", "-l"])],
+  ["npx", new Set(["-p", "--package"])],
+]);
+
+interface CommandPosition {
+  at: number;
+  viaXargs: boolean;
+  /** The command string a shell `-c` or `eval` would run, when this segment is one. */
+  inner: string | null;
+}
+
+/** Where the program a simple command runs sits, past env assignments, wrappers and their flags. */
+function commandPosition(tokens: readonly string[]): CommandPosition | null {
+  let wrapper: string | null = null;
+  let viaXargs = false;
+  let shellC = false;
+  let isEval = false;
+  let wantDuration = false;
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i] ?? "";
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) continue;
     if (tok === "export") continue;
-    if (i > 0 && tok.startsWith("-")) continue;
-    if (WRAPPERS.has(executableName(tok))) continue;
-    return i;
+    if (i > 0 && tok.startsWith("-")) {
+      if (wrapper !== null && SHELLS.has(wrapper) && /^-[A-Za-z]*c$/.test(tok)) shellC = true;
+      if (wrapper !== null && !tok.includes("=") && WRAPPER_VALUE_FLAGS.get(wrapper)?.has(tok)) {
+        i += 1; // the flag's value, e.g. `nice -n 5`, `sudo -u me`
+      }
+      continue;
+    }
+    const name = executableName(tok);
+    if (WRAPPERS.has(name)) {
+      wrapper = name;
+      if (name === "xargs") viaXargs = true;
+      if (name === "timeout") wantDuration = true;
+      if (name === "eval") isEval = true;
+      continue;
+    }
+    if (wantDuration && /^\d+(?:\.\d+)?[smhd]?$/.test(tok)) {
+      wantDuration = false;
+      continue;
+    }
+    const rest = tokens.slice(i);
+    const inner = shellC || isEval ? (rest.length === 1 ? (rest[0] ?? "") : rest.join(" ")) : null;
+    return { at: i, viaXargs, inner };
   }
-  return -1;
+  return null;
+}
+
+/**
+ * Split a command into simple-command segments of words, quote-aware: a `|`, `;`
+ * or `(` inside quotes is text, not a boundary (`grep -E "x|golem off" docs`,
+ * `git commit -m "docs (golem off)"`). Quotes are removed from the words. A
+ * `$(…)` or backtick body inside double quotes DOES run, so it is returned in
+ * `nested` to be judged as a command of its own.
+ */
+function splitCommand(command: string): { segments: string[][]; nested: string[] } {
+  const segments: string[][] = [];
+  const nested: string[] = [];
+  let words: string[] = [];
+  let cur = "";
+  let inWord = false;
+  let quote: "'" | '"' | null = null;
+  const endWord = () => {
+    if (inWord) words.push(cur);
+    cur = "";
+    inWord = false;
+  };
+  const endSegment = () => {
+    endWord();
+    if (words.length > 0) segments.push(words);
+    words = [];
+  };
+  for (let i = 0; i < command.length; i += 1) {
+    const c = command[i] ?? "";
+    const next = command[i + 1] ?? "";
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      else cur += c;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === "\\" && next !== "") {
+        cur += next;
+        i += 1;
+      } else if (c === '"') {
+        quote = null;
+      } else if (c === "`" || (c === "$" && next === "(")) {
+        const close = c === "`" ? "`" : ")";
+        const start = i + (c === "`" ? 1 : 2);
+        const end = command.indexOf(close, start);
+        const stop = end === -1 ? command.length : end;
+        nested.push(command.slice(start, stop));
+        cur += command.slice(i, stop);
+        i = stop - 1;
+      } else {
+        cur += c;
+      }
+      continue;
+    }
+    // A backslash escapes only a shell-special next char; elsewhere it is a Windows path separator.
+    if (c === "\\" && next !== "" && /[\s"'\\;&|(){}`$]/.test(next)) {
+      if (next === "\n") endWord();
+      else {
+        cur += next;
+        inWord = true;
+      }
+      i += 1;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      inWord = true;
+    } else if (c === " " || c === "\t") {
+      endWord();
+    } else if (/[;&|\n\r(){}`]/.test(c)) {
+      endSegment();
+    } else if (c === "$" && next === "(") {
+      endSegment();
+      i += 1;
+    } else {
+      cur += c;
+      inWord = true;
+    }
+  }
+  endSegment();
+  return { segments, nested };
 }
 
 function bashDenied(command: string): boolean {
-  for (const segment of command.split(SEGMENT_SPLIT)) {
-    const tokens = segment
-      .split(/\s+/)
-      .map(unquote)
-      .filter((t) => t.length > 0);
-    if (tokens.length === 0) continue;
-
+  const { segments, nested } = splitCommand(command);
+  if (nested.some(bashDenied)) return true;
+  for (const tokens of segments) {
     for (const tok of tokens) {
       const env = /^(?:export\s+)?GOLEM_PROXY_BYPASS_ALL=(.*)$/i.exec(tok);
       if (env !== null && TRUTHY.has((env[1] ?? "").toLowerCase())) return true;
@@ -147,10 +265,17 @@ function bashDenied(command: string): boolean {
     // Only a `golem` in COMMAND position counts: `grep -rn "golem off" docs` and
     // `echo golem off` name the phrase without running it, and an agent searching
     // the docs for it must not be denied.
-    const at = commandPosition(tokens);
-    if (at === -1 || !GOLEM_NAMES.has(executableName(tokens[at] ?? ""))) continue;
-    const args = tokens.slice(at + 1);
+    const pos = commandPosition(tokens);
+    if (pos === null) continue;
+    if (pos.inner !== null && bashDenied(pos.inner)) return true;
+    if (!GOLEM_NAMES.has(executableName(tokens[pos.at] ?? ""))) continue;
+    const args = tokens.slice(pos.at + 1);
     if (isGolemOff(args) || isConfigSetBypass(args)) return true;
+    // `echo off | xargs golem`: the subcommand arrives on stdin, so a bare or
+    // placeholder-only invocation is judged by whether `off` appears anywhere.
+    if (pos.viaXargs && args.every((a) => a.startsWith("-") || a.startsWith("{"))) {
+      if (segments.some((seg) => seg.some((w) => /^off$/i.test(w)))) return true;
+    }
   }
   return false;
 }
@@ -174,24 +299,52 @@ function isGolemJsonPath(filePath: string): boolean {
   return /\.json$/i.test(normal) && /(?:^|\/)\.golem\//.test(normal);
 }
 
-function newTextOf(toolInput: Record<string, unknown>): string[] {
-  const out: string[] = [];
-  for (const key of ["content", "new_string"]) {
-    const v = toolInput[key];
-    if (typeof v === "string") out.push(v);
+/** Apply one Edit's replacement; `undefined` when `old_string` is not in `text`. */
+function applyEdit(text: string, edit: Record<string, unknown>): string | undefined {
+  const oldS = edit.old_string;
+  const newS = edit.new_string;
+  if (typeof oldS !== "string" || typeof newS !== "string") return undefined;
+  if (oldS === "") return newS;
+  if (!text.includes(oldS)) return undefined;
+  return edit.replace_all === true ? text.split(oldS).join(newS) : text.replace(oldS, () => newS);
+}
+
+/**
+ * The text(s) a Write/Edit/MultiEdit would leave in the settings file. A Write is
+ * its content; an Edit is judged on the file AFTER the edit is applied to what is
+ * on disk, because flipping the value alone names no setting in the new text.
+ * When the result cannot be computed a bare mention is returned, which
+ * {@link textSetsBypass} refuses to read, so the call fails closed.
+ */
+function resultingTexts(
+  toolName: string,
+  filePath: string,
+  toolInput: Record<string, unknown>,
+): string[] {
+  if (toolName === "Write") {
+    return typeof toolInput.content === "string" ? [toolInput.content] : [];
   }
-  const edits = toolInput.edits;
-  if (Array.isArray(edits)) {
-    for (const e of edits) {
-      if (isRecord(e) && typeof e.new_string === "string") out.push(e.new_string);
-    }
+  const cannotCompute = ["bypass_all"];
+  const edits: unknown[] = Array.isArray(toolInput.edits) ? toolInput.edits : [toolInput];
+  let text: string;
+  try {
+    text = readFileSync(resolve(filePath), "utf8");
+  } catch {
+    return cannotCompute;
   }
-  return out;
+  for (const e of edits) {
+    if (!isRecord(e)) return cannotCompute;
+    const next = applyEdit(text, e);
+    if (next === undefined) return cannotCompute;
+    text = next;
+  }
+  return [text];
 }
 
 /**
  * The deny reason when this tool call would set `proxy.bypass_all`, else
- * `undefined`. Pure: no I/O, no config, no autonomy level.
+ * `undefined`. No config, no autonomy level; the only I/O is reading the settings file an
+ * Edit/MultiEdit targets, to judge the content it would leave behind.
  */
 export function bypassGuardReason(toolName: string, toolInput: unknown): string | undefined {
   if (!isRecord(toolInput)) return undefined;
@@ -202,7 +355,9 @@ export function bypassGuardReason(toolName: string, toolInput: unknown): string 
   if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
     const filePath = toolInput.file_path;
     if (typeof filePath !== "string" || !isGolemJsonPath(filePath)) return undefined;
-    return newTextOf(toolInput).some(textSetsBypass) ? BYPASS_DENY_REASON : undefined;
+    return resultingTexts(toolName, filePath, toolInput).some(textSetsBypass)
+      ? BYPASS_DENY_REASON
+      : undefined;
   }
   return undefined;
 }

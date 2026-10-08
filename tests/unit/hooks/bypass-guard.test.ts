@@ -4,6 +4,8 @@
  * autonomy level, with the gate disabled, and never become an allow.
  */
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AutonomyLevel } from "../../../src/autonomy/index.js";
 import { BYPASS_DENY_REASON, bypassGuardReason } from "../../../src/hooks/bypass-guard.js";
@@ -131,6 +133,112 @@ describe("bypassGuardReason: settings-file writes", () => {
     expect(bypassGuardReason("Read", { file_path: "/p/.golem/settings.json" })).toBeUndefined();
     expect(bypassGuardReason("Bash", "golem off")).toBeUndefined();
     expect(bypassGuardReason("Bash", { command: 5 })).toBeUndefined();
+  });
+});
+
+describe("bypassGuardReason: wrappers with flag values (review finding 2)", () => {
+  it.each([
+    "timeout 30 golem off",
+    "timeout -s KILL 30 golem off",
+    "nice -n 5 golem off",
+    "sudo -u me golem off",
+    "sudo -u me -g wheel golem off",
+    "env -u FOO golem off",
+    "echo off | xargs golem",
+    "echo off | xargs -n1 golem",
+    "bash -c 'echo hi; golem off'",
+    'echo "$(golem off)"',
+    "nohup nice -n 5 timeout 9 golem off",
+  ])("denies %j", (command) => {
+    expect(bash(command)).toBe(BYPASS_DENY_REASON);
+  });
+
+  it.each([
+    "timeout 30 golem status",
+    "nice -n 5 golem status",
+    "sudo -u me golem status",
+    "ls | xargs golem status",
+  ])("does not deny %j", (command) => {
+    expect(bash(command)).toBeUndefined();
+  });
+});
+
+describe("bypassGuardReason: quoted separators are text (review finding 3)", () => {
+  it.each([
+    'grep -E "x|golem off" docs',
+    "grep -E 'x|golem off' docs",
+    'git commit -m "docs (golem off)"',
+    'git commit -m "fix; golem off handling"',
+    'rg "a && golem off" src',
+    "bash -c 'grep \"x|golem off\" docs'",
+  ])("does not deny %j", (command) => {
+    expect(bash(command)).toBeUndefined();
+  });
+
+  it("still splits on a separator outside the quotes", () => {
+    expect(bash('echo "a|b" | golem off')).toBe(BYPASS_DENY_REASON);
+    expect(bash('echo "a;b"; golem off')).toBe(BYPASS_DENY_REASON);
+  });
+});
+
+describe("bypassGuardReason: Edit is judged on the resulting file (review finding 1)", () => {
+  const dirOf = useTempDirs("golem-bypass-edit-");
+
+  async function settings(body: string): Promise<string> {
+    const dir = await dirOf();
+    await mkdir(join(dir, ".golem"), { recursive: true });
+    const file = join(dir, ".golem", "settings.local.json");
+    await writeFile(file, body);
+    return file;
+  }
+
+  it("denies flipping the value alone", async () => {
+    const file = await settings('{"proxy":{"bypass_all":false}}');
+    expect(
+      bypassGuardReason("Edit", { file_path: file, old_string: "false", new_string: "true" }),
+    ).toBe(BYPASS_DENY_REASON);
+  });
+
+  it("denies a MultiEdit and a replace_all that leave it true", async () => {
+    const file = await settings('{"a":1,"proxy":{"bypass_all":false}}');
+    expect(
+      bypassGuardReason("MultiEdit", {
+        file_path: file,
+        edits: [
+          { old_string: '"a":1', new_string: '"a":2' },
+          { old_string: "false", new_string: "true" },
+        ],
+      }),
+    ).toBe(BYPASS_DENY_REASON);
+    expect(
+      bypassGuardReason("Edit", {
+        file_path: file,
+        old_string: "false",
+        new_string: "true",
+        replace_all: true,
+      }),
+    ).toBe(BYPASS_DENY_REASON);
+  });
+
+  it("allows an edit that leaves bypass_all false", async () => {
+    const file = await settings('{"a":1,"proxy":{"bypass_all":false}}');
+    expect(
+      bypassGuardReason("Edit", { file_path: file, old_string: '"a":1', new_string: '"a":2' }),
+    ).toBeUndefined();
+  });
+
+  it("fails closed when the file cannot be read or old_string is absent", async () => {
+    const file = await settings('{"proxy":{"bypass_all":false}}');
+    expect(
+      bypassGuardReason("Edit", { file_path: file, old_string: "nope", new_string: "x" }),
+    ).toBe(BYPASS_DENY_REASON);
+    expect(
+      bypassGuardReason("Edit", {
+        file_path: file.replace("settings.local", "missing"),
+        old_string: "false",
+        new_string: "true",
+      }),
+    ).toBe(BYPASS_DENY_REASON);
   });
 });
 

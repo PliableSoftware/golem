@@ -205,4 +205,41 @@ describe("DUSTSEC.5: newline-chained commands and over-approved reads", () => {
   it("quoted literals of write flags are data, not flags", () => {
     expect(classifyBash("cat '--write'")).toBe("read");
   });
+  it("a quoted write flag on a build tool still writes (review finding 4)", () => {
+    for (const c of [
+      'npx biome check "--write" .',
+      "biome check '--fix' src",
+      'npx biome check --wri"te" .',
+      "npm test -- -u",
+      "npm run test -- -u",
+      'npm test -- "-u"',
+      "npx vitest run '-u'",
+    ]) {
+      expect(classifyBash(c), c).toBe("write");
+    }
+  });
+  it("git branch listing forms are read (review finding 5)", () => {
+    for (const c of [
+      "git branch --contains abc1234",
+      "git branch -a --contains HEAD~3",
+      "git branch --no-contains v1.2.0",
+      "git branch --merged main",
+      "git branch --merged",
+      "git branch --sort=-committerdate",
+      "git branch --sort committerdate",
+      "git branch --points-at HEAD",
+      "git branch -r --sort=refname",
+    ]) {
+      expect(classifyBash(c), c).toBe("read");
+    }
+    for (const c of [
+      "git branch --contains abc1234 -D main",
+      "git branch --merged main -d old",
+      "git branch --sort=x --delete old",
+      "git branch --contains abc1234 newbranch",
+    ]) {
+      expect(classifyBash(c), c).not.toBe("read");
+    }
+    expect(classifyBash("git branch --contains abc1234 -D main")).toBe("destructive");
+  });
 });
