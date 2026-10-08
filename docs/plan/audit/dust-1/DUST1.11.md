@@ -206,7 +206,7 @@ Two commands bypass commander: `hook` (`prompt-guidance.ts:389`, built in
   `concepts/Context Ledger.md`, `concepts/Hosted-multi-turn-claude-CLI-spike.md`,
   `concepts/Plan Tasks.md`, `questions/wiki-write-autonomy.md`,
   `syntheses/le2-grounded-refined-coder-quality.md`,
-  `[REDACTED:high-entropy:3].md`.
+  `syntheses/r6-multi-provider-batch.md`.
   `golem wiki check` flags only unlisted debriefs (`src/cli/wiki.ts:569-590`), so this passes lint. All 171 debriefs are listed.
 - **Descriptions (66 checked):** 10 mismatches:
   - `:132`: lists ADR-0001–0003 only and calls ADR-0003 "PROPOSED". It is ACCEPTED/AMENDED (`docs/decisions/ADR-0003-…md:12`), and ADR-0004–0008 are missing.
