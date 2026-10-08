@@ -34,9 +34,10 @@
  * else, as "There's an issue with the selected model". Better to fail here,
  * naming both sets.
  *
- * This module is the ONE implementation of that chain. `coder-route.ts` now
- * delegates to it rather than keeping a second copy — a second answer to "where
- * does this work go" is exactly what retiring `default_coder` was about.
+ * This module implements that chain for persona lanes. `coder-route.ts` does
+ * NOT delegate to it: it keeps its own resolution (it still shares the
+ * target-first / colon-shaped-raises rules above), so there are two
+ * implementations of the chain, not one.
  */
 
 import { listTargets, resolveTarget, type TargetRegistrySettings } from "../providers/index.js";

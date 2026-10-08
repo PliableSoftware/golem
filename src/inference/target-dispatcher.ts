@@ -216,7 +216,10 @@ export interface DispatchRequest {
 export type DispatchRoute =
   /** An explicit `targetId` on the call. */
   | "explicit"
-  /** This worker's `inference.worker_targets` entry. */
+  /**
+   * This worker's target from {@link workerTarget}: its `inference.worker_targets`
+   * entry, or, failing that, `inference.personas[worker].model`.
+   */
   | "worker"
   /** `inference.personas[worker].model` resolved as a target. */
   | "persona_worker"
@@ -231,7 +234,7 @@ export function describeRoute(route: DispatchRoute, worker?: string | undefined)
     case "explicit":
       return "target named by the caller";
     case "worker":
-      return `inference.worker_targets.${worker ?? "?"}`;
+      return `inference.worker_targets.${worker ?? "?"} (or inference.personas.${worker ?? "?"}.model)`;
     case "persona_worker":
       return `inference.personas.${worker ?? "?"}.model`;
     case "model":
