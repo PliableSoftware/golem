@@ -162,44 +162,48 @@ Enforced by `tests/contract/skills-tools-layering.contract.test.ts`, which flags
 
 ## 3. Offload Capabilities
 
-### 3.1 RAG / local vector search — the Golem knowledge base
-Scope: **documents the developer chooses to ingest** — codebases, developer guides, style guides, wikis, ADRs, API docs. Complements (does not replace) Headroom's conversational memory; both live in the same Qdrant instance, and `search_local` federates across memory + knowledge collections with a shared reranker.
-- **Vector DB — DECIDED (v0.3): Qdrant.** Default deployment uses qdrant-client's **embedded local mode** (on-disk, no server process — keeps install friction at zero); users can point config at a Qdrant server/Docker instance for bigger indexes or LAN sharing. **One collection per project** (mirrors Headroom's no-cross-project-bleed principle), plus an opt-in shared "knowledge" collection for cross-project docs.
-- **Embeddings:** GPU-accelerated local models (e.g., bge-m3 or nomic-embed) — code-aware and text models.
-- **Indexers:** file-watcher daemons for chosen paths; tree-sitter–based code chunking (function/class granularity); doc chunking with heading awareness.
-- **MCP tools:** `index_path`, `search_local(query, k, filter)`, `get_chunk(id)`.
+### 3.1 The Golem knowledge base — wiki-primary, vector index derived
+*(Rewritten 2026-10-08 to the Decision 28 design, DECISIONS.md K8; the earlier text described a Qdrant, chunks-primary store that Decision 28 inverted.)*
+
+Scope: **documents the developer chooses to ingest** — codebases, guides, style guides, wikis, ADRs, API docs. **The committed markdown wiki (`docs/wiki/`, `knowledge.wiki_dir`) is canonical; the vector index is a derived, rebuildable cache over wiki pages, raw capture and code** (Decision 28). Retrieval is graph-first (exact wiki title or one-hop wikilink match; alias matching is DUST2.15) and vector-second, both behind the `search` tool. Complements, does not replace, Headroom's conversational memory (MEMORY scope, optional sidecar, Decisions 13/18).
+- **Vector store (as shipped):** the `VectorDriver` seam (`src/knowledge/driver.ts`) with a durable, pure-TypeScript file driver (`FileVectorDriver`, `src/knowledge/file-driver.ts`, brute-force at developer-KB scale) as the embedded default (Decision 17's refinement, verification-notes §26). LanceDB stays the documented optional scale upgrade behind the seam and is not shipped. **A Qdrant server driver is not implemented**: setting `knowledge.vector_db_url` throws `NotImplementedYetError` (`src/knowledge/index.ts:177-180`); the earlier "fully supported via config URL" claim is retired (DECISIONS.md K4). One index directory per project (`knowledgeDir(projectDir)`); the opt-in shared cross-project collection is **not built** (§12).
+- **Embeddings:** a pure-TS hashing embedder (lexical, zero setup) by default; Ollama `bge-m3` / `nomic-embed-text` (`src/inference/catalog.ts`) when reachable (semantic). The index records the embedder signature and rebuilds on change (`src/cli/auto-index.ts`).
+- **Indexers:** `golem index` / the `ingest` tool, an automatic session-start sync capped by `knowledge.*` settings (R11.2), and a polling file watcher for `knowledge.watch_paths` (ADR-0001; amendment DUST2.3). Wiki pages reach the index through ingest, not through a wiki-write → watcher hook (DUST2.14). Doc chunking is heading-aware; code chunking is a line/column heuristic, with `web-tree-sitter` as a user-installed opt-in (`src/knowledge/tree-sitter-chunker.ts:1-30`; DECISIONS.md X6, optional add-on).
+- **MCP tools:** `ingest`, `search(query, k?, project_id?)`, `fetch(chunk_id)` (full text of a chunk; coverage of every hit kind is DUST2.15), plus `wiki_read` / `wiki_upsert` (Decisions 28/29). `index_path`, `search_local` and `get_chunk` are the retired v0.x names.
 - **Token effect:** Claude retrieves k relevant chunks (~2–5K tokens) instead of whole-directory reads (~50–500K tokens).
 
 ### 3.2 Context compression & summarization (powered by `headroom-ai`)
 Golem wraps Headroom's pipeline (CacheAligner → ContentRouter → per-type compressors → CCR store) rather than reimplementing it, and adds:
 1. **Redaction pre-stage** — strip secrets/PII before anything leaves the machine (runs before Headroom).
-2. **`compression.level` gating** — maps Golem's compression level to Headroom aggressiveness/config per content type.
-3. **Semantic compression** (`compression.level: 3`) — Golem's tiered local LLM summarizes stale conversation turns and low-relevance sections, a heavier step than Headroom's compressors; originals go into the same CCR store so `headroom_retrieve` / Golem `get_original(ref)` reverses everything uniformly.
+2. **`compression.level` gating** — `StageConfig` (`src/interfaces/policy.ts`) selects which stages run; the sidecar receives Headroom config through the opaque `compression.headroom_config` passthrough layered over per-mode presets (Decision 53). A per-content-type mapping is not built (DUST2.20).
+3. **Semantic compression** (`compression.level` 2 = `stale_turns`, 3 = `aggressive`) — performed by the optional Headroom sidecar, never by Golem's local LLM (Decision 31); gated off prompt-caching upstreams (`resolveEffectiveCompression`, `src/compression/effective-level.ts`). Originals that Golem's own stages elide go to the CCR store and `expand` reverses them. **Not everything lossy is reversible:** Headroom's stale-turn drops (`read_lifecycle`) leave no CCR marker, so the "everything lossy is reversible" design rule in §4 holds only for the stages that write refs (DECISIONS.md C4, doc follows code; the CCR swap itself is dial-independent and fires even at `off`, C3). The level-2 note must state the sidecar requirement as level 3 does (C5).
 4. **Savings telemetry** — per-stage attribution surfaced in the Golem dashboard (extends `headroom_stats`).
 
 ### 3.3 Local LLM subtasks
 Roles for local models (routed by tier):
 - **Summarizer** — conversation compaction, doc/file digests
-- **Classifier/Router** — "does this request even need Claude?" triage; intent tagging
-- **Extractor** — structured JSON extraction from logs, HTML, PDFs
+- **Classifier/Router** — *(roles exist in the catalog; triage and intent-tagging are **not built**, §12)*
+- **Extractor** — *(role exists; structured extraction from logs/HTML/PDFs is **not built**, §12)*
 - **Draft/Critic** — generate cheap first drafts locally, invoked explicitly via the `coder` MCP tool (never auto-triggered by any dial, ADR-0004/Decision 31); Claude reviews before relying on it
-- **Reranker** — cross-encoder rerank of RAG hits before sending to Claude
+- **Reranker** — an opt-in chat-judge (`knowledge.rerank_enabled`, default off; `src/knowledge/rerank.ts`, Decision 34), not a cross-encoder: `InferenceService` has no pairwise-scoring primitive
 
-Runtime — **DECIDED (v0.2): Ollama-first behind an OpenAI-compatible interface.** Golem talks to local models via the OpenAI-compatible chat/embeddings protocol; Ollama is the blessed default backend (dev-familiar, one-line install, manages model pulls and quantization, CUDA + Apple Metal). Anything speaking the same protocol — llama.cpp server, LM Studio, vLLM — is a drop-in swap via config. Bundled llama.cpp is a v2 fallback for zero-dependency installs; vLLM is opt-in only (Linux/CUDA, serving-scale benefits irrelevant to a single dev). Model catalog auto-selected per node: ~3–4B on P-min, 7–8B on P-mid, 14B on P-max, all quantized (Q4–Q5 default).
+Runtime — **DECIDED (v0.2): Ollama-first behind an OpenAI-compatible interface.** Golem talks to local models via the OpenAI-compatible chat/embeddings protocol; Ollama is the blessed default backend (dev-familiar, one-line install, manages model pulls and quantization, CUDA + Apple Metal). A `llamacpp` gateway kind exists; LM Studio and vLLM are untested drop-ins by URL (UNVERIFIED). Bundled llama.cpp and a vLLM opt-in are **not built** (§12). Model catalog auto-selected per tier (`src/inference/catalog.ts`): ~1.5B on P-cpu, ~3B on P-min, ~7B on P-mid, ~14B on P-max (`qwen2.5` family; `qwen2.5-coder` for `drafter`). Whether any call site other than `coder` (drafter) and rerank (judge) invokes a role is UNVERIFIED; Decision 26's "`drafter` is the only role any call site invokes" is stale (distill and rerank exist).
 
 ### 3.4 Caching & dedup
-- **Exact response cache** — hash(request) → response, TTL-configurable.
-- **Semantic cache** — embed the query; if cosine sim > threshold to a prior query, offer cached answer (`compression.level`-gated; a higher level means a stricter threshold or off).
-- **Tool-result cache** — repeated `read_file`/`grep`-style results in agentic loops served from cache with mtime invalidation.
+What ships: the CCR store (content-addressed originals, `.golem/ccr`), the WebFetch raw-page cache (`.golem/webcache`, Decision 42) and native lossless dedup/compaction. What is specified but **not built** (§12, no task unless noted):
+- **Exact response cache** — hash(request) → response (no code; DUST1.11 row 9).
+- **Semantic cache** — `StageConfig.semanticCache` is set per level (`src/interfaces/policy.ts`) but has no reader in `src` (a dead field in a frozen interface).
+- **Tool-result cache** with mtime invalidation — `StageConfig.toolResultCache` is read only by `src/mcp/in-memory-compression.ts:80,90`, not by the proxy path (DUST2.20).
 
 ### 3.5 Additional offload candidates (per your ask)
-- **Media pre-processing:** local Whisper for audio→text; local OCR/vision captioning so images/PDFs arrive as compact text, not costly image tokens.
-- **Local code execution & test running:** run tests/linters locally, send Claude the condensed failure digest instead of full output.
-- **Git-aware context:** send diffs/summaries of changes rather than full files; local commit-history summarization.
-- **Speculative prefetch:** while Claude responds, pre-index/pre-embed files it will likely request next.
-- **Artifact/output storage:** large generated outputs stored locally, referenced by link, not re-sent each turn.
-- **Session memory:** long-term project memory in the local vector DB — recall via search instead of resending history.
-- **Batch/off-peak queueing:** non-urgent jobs queued to Anthropic Batch API (50% cost) — an offload in time rather than space.
+*(Rebaseline 2026-10-08: only artifact storage ships. The rest is the "Not started (no task)" register, §12.)*
+- **Media pre-processing** (Whisper, OCR/vision captioning): not built.
+- **Local code execution & test running → failure digest:** not built. The PostToolUse head/tail swap condenses oversized output generally and is partial coverage only (DECISIONS.md X4).
+- **Git-aware context** (diff summaries, commit-history summarisation): not built.
+- **Speculative prefetch:** not built.
+- **Artifact/output storage:** shipped as the CCR swap — oversized tool output is stored under `.golem/ccr` and referenced by `hash=`, expanded via `expand` (hook rule `golem-ccr-refs`).
+- **Session memory:** partial — notes, wiki and the MEMORY scope exist; history recall in place of resending is not built.
+- **Batch/off-peak queueing** (Anthropic Batch API): not built.
 
 ---
 
@@ -212,34 +216,38 @@ Runtime — **DECIDED (v0.2): Ollama-first behind an OpenAI-compatible interface
 > superseded in that respect; Decision 31's gating below is unchanged and still
 > load-bearing.
 
-`compression.level`, with per-capability overrides. Every lossy operation declares its gate.
+`compression.level` (default `1`, `src/config/schema.ts:1135`) and `brevity.level` (default `off`, `:1143`), with per-capability overrides (`PipelinePolicy.overrides`). Every lossy operation declares its gate (levels 2–3 via `resolveEffectiveCompression`; partial for the stages listed in DUST2.20). The stage rows are `LEVEL_TABLE` in the frozen `src/interfaces/policy.ts`.
 
 | Level | Behavior |
 |---|---|
 | `off` | Redaction ONLY. Nothing else touches the request. Not a bypass. |
-| `1` — Lossless | Redaction + dedup, structural compaction, cache alignment. **Zero quality risk, byte-faithful.** Default. |
-| `2` — Balanced | + tool-result caching + semantic compression of stale context + semantic cache (strict). First lossy tier. |
-| `3` — Aggressive | + max semantic compression, looser semantic cache. |
+| `1` — Lossless | Redaction + dedup, structural compaction, cache alignment. **Lossless and prefix-stable** (the hard-rule wording, DECISIONS.md C1: not "byte-faithful" — the stage may rewrite bytes, but never loses information and never changes an already-sent prefix; recorded-shape tests guard it, DUST2.24). Default. |
+| `2` — Balanced | + semantic compression of stale turns (`stale_turns`; optional Headroom sidecar, `compression.headroom_sidecar`, non-caching upstreams only). First lossy tier. The table also sets `toolResultCache` and `semanticCache: strict`, but neither has a reader on the proxy path (§3.4). |
+| `3` — Aggressive | + max semantic compression (`aggressive`; sidecar), `semanticCache: loose` (no reader). Same sidecar requirement as level 2. |
 
 **No level disables redaction** — that is `proxy.bypass_all`, never the default,
-CLI-only (a tool call must not be able to switch redaction off), and surfaced
+CLI-only (no MCP/tool call, panel, remote surface or header can switch redaction off — the per-request `x-golem-bypass` header and `POST /__golem/pipeline/false` were removed by DUSTSEC.2; `src/proxy/headers.ts:44-48` now only strips the header), and surfaced
 loudly wherever it is on. The stage table has no redaction-free row at all, so a
 dial that turned redaction off is not something the code can express (ADR-0004).
+
+**Who may change a dial (DECISIONS.md R12, USER):** no model-initiated or MCP tool call can change how much of the pipeline runs (the `level` tool was retired with the slider); a *human* write of `compression.level` or `brevity.level` through the CLI, the panel or a remote device surface is allowed. Redaction stays untouchable from every surface.
+
+**On a pipeline error the proxy redacts, then forwards** (DUSTSEC.1, USER decision R1/S3; `src/proxy/server.ts:321-346`): it re-runs redaction alone on the original body and forwards that; if redaction itself throws, it fails closed with a 502 and forwards nothing.
 
 `brevity.level` (`off` · `lite` · `full` · `ultra`) is the independent output-side
 dial (Decision 52's other half, which survives): it appends a directive to
 `system` so the model answers more tersely, saving **output** tokens.
 
-(The dial is a **pure compression-aggressiveness dial** (Decision 31) — the local model is invoked only via the explicit `coder` MCP tool (renamed from `delegate`, Decision 35), never auto-triggered. Levels ≥2 are **lossy** and gated OFF on Anthropic-style caching upstreams to preserve prompt-cache prefixes; they engage only on non-caching gateways, so the level that RAN can differ from the level that was SET and every surface says which. A reachable local model makes any level "local + upstream" in the status surfaces.)
+(The dial is a **pure compression-aggressiveness dial** (Decision 31) — the local model is invoked only via the explicit `coder` MCP tool (renamed from `delegate`, Decision 35), never auto-triggered by a dial. The proxy-side local answer (Decision 33) is a separate, config-gated responder. Levels ≥2 are **lossy** and gated OFF on Anthropic-style caching upstreams to preserve prompt-cache prefixes; they engage only on non-caching gateways, so the level that RAN can differ from the level that was SET and every surface says which. A reachable local model makes any level "local + upstream" in the status surfaces.)
 
 [ADR-0004]: decisions/ADR-0004-retire-the-slider.md
 
-**Design rule:** everything lossy is *reversible* — originals retained locally; Claude can request expansion via MCP when it detects it's missing context.
+**Design rule (narrowed 2026-10-08, DECISIONS.md C4):** every stage that elides content into a CCR reference is *reversible* — originals are retained locally and Claude can `expand` them. Headroom's stale-turn drops at levels 2–3 leave no marker and are **not** reversible; they are why those levels are lossy and gated.
 
 ### Quality guardrails
-- **Eval harness:** replay a recorded task suite at each compression level; score with an LLM judge (Claude, sampled) + task success metrics; publish tokens-saved vs. quality-delta curves.
-- **Canary mode:** N% of requests sent both compressed and raw; responses compared to detect regressions.
-- **Per-request escape hatch:** header/flag `x-golem-bypass: true`.
+- **Eval harness** (replay per level, LLM judge, quality curves): **not built, no task** (§12). R2.6 is a live A/B on cost, not quality.
+- **Canary mode:** **not built, no task** (§12).
+- **Per-request escape hatch:** **removed** (DUSTSEC.2, USER decision R2). Redaction-off exists only as `proxy.bypass_all`; the `golem-bypass` skill points there. What guards the lossless levels is the recorded-shape test suite (DUST2.24 extends it).
 
 ---
 
