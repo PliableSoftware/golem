@@ -14,7 +14,14 @@ created: 2026-10-08
 
 ## What this is
 
-Batch close-out for Phase 5. Record the REVIEW.md verdict and any banned-claim near misses as lessons.
+Batch close-out for Phase 5, following CLAUDE.md 'Batch close-out' in order and the same shape as the Phase 2 and Phase 3 close-outs.
+
+1. Confirm DUST5.1-DUST5.6 are merged and `golem verify` and `golem wiki check` are green by exit code.
+2. Add one row to `docs/plan/SHIPPED.md` (that exact path) saying what was drafted and that NOTHING is published.
+3. Write the debrief in `docs/wiki/debriefs/` from the /golem-dust debrief template, list it in `WIKI.md`, with real wikilinks.
+4. Record the REVIEW.md verdict and any banned-claim near misses as lessons.
+5. Run `golem task done` for DUST5.1-DUST5.6 (the delegated-run review gate applies; mark independently reviewed runs, waive the rest with a recorded reason), then `golem task index --write`.
+6. Update the PLAN.md status section: Phase 5 drafted, publishing is the user's (DUST5.8).
 
 ## Out of scope
 

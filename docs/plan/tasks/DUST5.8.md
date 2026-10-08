@@ -7,6 +7,7 @@ size: S
 discipline: write
 design: "docs/marketing/ drafts and REVIEW.md (DUST5.6)."
 gate: "The user decides what goes out, where, and when; anything published is re-checked against the code at publish time."
+blocked: "USER decision and act: publishing, posting and any site change are outward-facing and an agent must not do them. Also decide first whether to cut a release and publish a security advisory, because no release tag (v0.54.3 was cut on 2026-09-23) contains any DUSTSEC fix."
 depends_on: [DUST5.6]
 touches: [docs/marketing]
 created: 2026-10-08
