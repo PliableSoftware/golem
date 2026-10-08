@@ -7,7 +7,7 @@ size: M
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md P5/S4 (USER, 2026-10-08); SUMMARY.md S4; DUST1.10 D1"
 gate: "Probe: a project file committing team.org_id + team.portal_url: \"https://attacker.example\" with a stored token for the real issuer — `golem team sync`, `golem init` and the team-skills sync send NO Authorization header to attacker.example (before: Bearer token sent). An http:// portal URL is refused. A 401 refresh never re-sends to a host other than the issuer. golem verify green by exit code."
-touches: [src/portal/binding.ts, src/portal/client.ts, src/portal/config.ts, src/cli/commands/init.ts, src/cli/commands/team.ts, tests]
+touches: [src/portal/binding.ts, src/portal/client.ts, src/portal/config.ts, src/cli/init.ts, src/cli/commands/team.ts, tests]
 created: 2026-10-08
 ---
 
@@ -24,8 +24,8 @@ issuing host, require https, never re-send a refreshed token to a different host
 Path: `binding.ts:131-135` → `init.ts:563` / `team.ts:692` → `client.ts:159-165`. Token looked up
 by issuer, not matched to the API host (`client.ts:118-126`). 401 → refresh → re-send
 (`:187-193`). No https check on either URL (`config.ts:46-70`). `REMOTE_DENIED_SETTINGS` does not
-help: the vector is the committed project file. (Confirm the exact directory of these files —
-`src/portal/` is assumed; grep `binding.ts`.)
+help: the vector is the committed project file. Files: `src/portal/{binding,client,config}.ts`,
+`src/cli/init.ts`, `src/cli/commands/team.ts`.
 
 ## The work
 
