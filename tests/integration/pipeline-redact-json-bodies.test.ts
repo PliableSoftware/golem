@@ -142,10 +142,14 @@ describe("DUSTSEC.19 redaction over non-messages JSON bodies", () => {
   });
 
   it("level off still redacts (no new way to turn redaction off)", async () => {
-    const r = await send(await build({ policy: () => policyFor(0) }), "/v1/messages/count_tokens", {
-      ...json,
-      body: JSON.stringify({ messages: messages() }),
-    });
+    const r = await send(
+      await build({ policy: () => policyFor("off") }),
+      "/v1/messages/count_tokens",
+      {
+        ...json,
+        body: JSON.stringify({ messages: messages() }),
+      },
+    );
     expectRedacted(r);
   });
 });

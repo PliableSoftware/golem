@@ -146,7 +146,7 @@ describe("pipeline through the proxy", () => {
     }
   });
 
-  it("non-messages paths pass through untouched", async () => {
+  it("non-messages JSON paths are redacted, and nothing else is changed (DUSTSEC.19)", async () => {
     const up = recordingUpstream();
     const upstream = await startUpstream(up.handler);
     const proxy = await startProxy({ upstreamBaseUrl: upstream.origin, pipeline: pipelineFor(1) });
@@ -157,8 +157,8 @@ describe("pipeline through the proxy", () => {
         headers: { "content-type": "application/json" },
         body,
       });
-      // Not a /v1/messages request — pipeline leaves it alone.
-      expect(up.received.body).toBe(body);
+      // Not a /v1/messages request: redaction-only walker, no other stage.
+      expect(up.received.body).toBe(JSON.stringify({ anything: `[${"REDACTED"}:aws-key:1]` }));
     } finally {
       await proxy.close();
       await upstream.close();
