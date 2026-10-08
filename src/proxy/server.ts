@@ -22,11 +22,7 @@ import { pipeline } from "node:stream/promises";
 import { gunzipSync } from "node:zlib";
 import { type Dispatcher, Pool } from "undici";
 import { mapUpstreamError, PROXY_ERROR_HEADER } from "./errors.js";
-import {
-  forwardableRequestHeaders,
-  forwardableResponseHeaders,
-  isBypassRequest,
-} from "./headers.js";
+import { forwardableRequestHeaders, forwardableResponseHeaders } from "./headers.js";
 import { classifyRateLimit, decideRetry } from "./rate-limit-retry.js";
 import {
   type ProxyConfig,
@@ -107,22 +103,14 @@ export class GolemProxy {
   readonly config: ProxyConfig;
 
   /**
-   * Toggle: when false, the proxy forwards every request as a raw passthrough
-   * (identity pipeline, no redaction/compression/brevity). The toggle is
-   * in-process — no process restart needed — so `golem off` is instant and
-   * does not affect the URL wired into Claude Code. True by default after
-   * construction; changed via {@link setPipelineEnabled} or on an admin
-   * request to `/__golem/pipeline/<enabled>`.
+   * When false, the proxy forwards every request as a raw passthrough (no
+   * redaction/compression/brevity). Fixed at construction from
+   * `proxy.bypass_all` (ADR-0004) and NEVER changed afterwards: DUSTSEC.2
+   * removed the unauthenticated `/__golem/pipeline/<bool>` endpoint that used
+   * to flip it, so redaction-off is only ever the persisted, CLI-only,
+   * loudly-surfaced setting, applied at the next proxy start.
    */
-  #pipelineEnabled: boolean;
-
-  setPipelineEnabled(enabled: boolean): void {
-    this.#pipelineEnabled = enabled;
-  }
-
-  pipelineEnabled(): boolean {
-    return this.#pipelineEnabled;
-  }
+  readonly #pipelineEnabled: boolean;
 
   private readonly server: Server;
   /**
@@ -196,20 +184,6 @@ export class GolemProxy {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // R9.23 — admin endpoint for the pipeline toggle (`golem on`/`golem off`).
-    if (req.url === "/__golem/pipeline/true" && req.method === "POST") {
-      this.#pipelineEnabled = true;
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ pipeline_enabled: true }));
-      return;
-    }
-    if (req.url === "/__golem/pipeline/false" && req.method === "POST") {
-      this.#pipelineEnabled = false;
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ pipeline_enabled: false }));
-      return;
-    }
-
     // Statusline endpoint — returns Golem state as JSON for the CLI statusline tool
     if (req.url === "/__golem/statusline" && req.method === "GET") {
       try {
@@ -313,7 +287,7 @@ export class GolemProxy {
     // runs first WITHIN the pipeline, so the hard rule is untouched.
     //
     // Fail-closed: an unknown target is an error, never a fallback to the
-    // default. Applied before the bypass check as well — `x-golem-bypass` turns
+    // default. Applied before the bypass check as well — `proxy.bypass_all` turns
     // off *processing*, and must not also turn a refused route into a silent
     // forward to somewhere the caller did not name.
     if (this.config.resolveRoute !== undefined) {
@@ -343,16 +317,34 @@ export class GolemProxy {
       }
     }
 
-    // A3 seam: redaction -> compression. FAIL-OPEN — a pipeline error must
-    // never break the session: fall back to forwarding the ORIGINAL request
-    // byte-faithfully (CLAUDE.md proxy-fidelity rule). Pipeline-disabled or
-    // bypass-header skips it (both forward the body untouched).
-    if (this.#pipelineEnabled && !isBypassRequest(req.headers)) {
+    // A3 seam: redaction -> compression. FAIL-SAFE, never fail-open (DUSTSEC.1,
+    // USER decision R1/S3). A pipeline error must not break the session, but it
+    // must not forward the raw body either: any compression, policy, telemetry or
+    // CCR-write failure would otherwise send an unredacted secret upstream. So
+    // on a throw we re-run REDACTION ALONE on the original request and forward
+    // that. If redaction itself throws (or the pipeline has no redaction-only
+    // entry point to prove it), we FAIL CLOSED: a 5xx, nothing forwarded.
+    // Pipeline-disabled (`proxy.bypass_all`, the single redaction-off path) skips
+    // this block and forwards the body untouched. No header or endpoint can do so.
+    if (this.#pipelineEnabled) {
+      const original = forward;
       try {
-        forward = await this.config.pipeline.process(forward);
+        forward = await this.config.pipeline.process(original);
       } catch (err) {
-        this.config.onPipelineError?.(err, forward);
-        // `forward` is still the original request — leave it unchanged.
+        this.config.onPipelineError?.(err, original);
+        try {
+          const redactOnly = this.config.pipeline.redactOnly;
+          if (redactOnly === undefined) throw new Error("pipeline has no redaction-only fallback");
+          forward = redactOnly.call(this.config.pipeline, original);
+        } catch (redactErr) {
+          failProxy(
+            502,
+            "golem proxy: the request pipeline failed and redaction could not be " +
+              "re-applied, so the request was NOT forwarded (fail closed, nothing " +
+              `reached the upstream). ${String(redactErr)}`,
+          );
+          return;
+        }
       }
     }
 

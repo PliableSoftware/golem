@@ -136,7 +136,7 @@ export interface BuildProxyOptions {
    * **level 1**, local-answer is suppressed, and the Headroom sidecar is never
    * constructed.
    *
-   * **Level 1, deliberately NOT level 0.** Level 0 / `x-golem-bypass` forwards
+   * **Level 1, deliberately NOT level 0.** Level 0 / `proxy.bypass_all` forwards
    * untouched, i.e. with redaction OFF — the single sanctioned redaction-off path,
    * which CLAUDE.md permits only when it is never the default and always surfaced
    * loudly. A Stop button that quietly routed unredacted prompts upstream would

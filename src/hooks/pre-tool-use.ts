@@ -25,6 +25,7 @@ import { loadConfig } from "../config/index.js";
 // reaches server.ts, which imports `undici` (~270ms). This hook runs on EVERY
 // Claude Code tool call and only reads a JSON file. See verification-notes §86.
 import { type LimitPrediction, readLimitState } from "../proxy/limit-prediction.js";
+import { bypassGuardReason } from "./bypass-guard.js";
 import {
   coderFirstNudgeReason,
   decideCoderFirstNudge,
@@ -219,6 +220,34 @@ export async function runPreToolUseHook(
     if (typeof toolName !== "string" || toolName.length === 0) return 0;
 
     const projectDir = options.projectDir ?? payload.cwd ?? process.cwd();
+
+    // DUSTSEC.3 (R4) — a redaction guard, deliberately FIRST: it holds at every
+    // autonomy level, with the autonomy gate on or off, and before the park
+    // nudge. It only ever denies; if the check itself throws we stop with no
+    // decision (the native prompt) rather than fall through to a gate that could
+    // `allow` the very call we failed to classify.
+    try {
+      const bypassReason = bypassGuardReason(toolName, payload.tool_input);
+      if (bypassReason !== undefined) {
+        io.stdout.write(
+          `${JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: bypassReason,
+            },
+          })}\n`,
+        );
+        return 0;
+      }
+    } catch (err) {
+      io.stderr.write(
+        `golem hook pre-tool-use: bypass guard failed (${
+          err instanceof Error ? err.message : String(err)
+        })\n`,
+      );
+      return 0;
+    }
 
     // Document-and-hold nudge (snooze P2b): as the session window fills, redirect
     // the agent to park (document into a durable task → snooze → wait) — ONCE per

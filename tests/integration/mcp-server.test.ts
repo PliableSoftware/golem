@@ -393,14 +393,14 @@ describe("golem MCP server (in-memory transport)", () => {
       expect(text).toContain("abc123");
     });
 
-    it("bypass prompt explains the header and level options (0/1), mentioning the bypass header", async () => {
+    it("bypass prompt names bypass_all's CLI route and says the header is gone", async () => {
       const client = await connectInMemory(createStandaloneDeps());
       const prompt = await client.getPrompt({ name: "bypass" });
       const first = prompt.messages[0];
       const text = first?.content.type === "text" ? first.content.text : "";
-      expect(text).toContain("x-golem-bypass");
-      expect(text).toContain("level 1");
-      expect(text).toContain("level 0");
+      expect(text).toContain("`golem off`");
+      expect(text).toContain("golem compression off");
+      expect(text).toContain("no per-request bypass");
     });
   });
 });

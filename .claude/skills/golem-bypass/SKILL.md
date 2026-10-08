@@ -4,24 +4,30 @@ invocationMode: user
 ---
 
 <!-- golem:layering-exception off — a true full bypass turns REDACTION off, so
-     by design no tool call can reach it (R11.1/ADR-0004 moved it to a CLI-only
-     setting). Naming the command for the user to run in their OWN terminal is the
-     point, not a shortcut around a tool. -->
+     it is a CLI-only setting (R11.1/ADR-0004). Naming the command for the user to
+     run in their OWN terminal is the point, not a shortcut around a tool. -->
 
 The user wants to bypass Golem's compression pipeline.
 
-Three different things, in increasing order of what they switch off:
+Two different things, in increasing order of what they switch off. There is no
+per-request bypass: the old `x-golem-bypass` header and the
+`/__golem/pipeline/*` admin endpoint were removed, so neither changes anything.
 
-1. **One request** — Golem's proxy honours the `x-golem-bypass` header for a
-   pure passthrough of that request. Nothing is configured; nothing persists.
-2. **Compression off, redaction still on** — `golem compression off`. This is
-   the usual answer: byte-faithful forwarding with secrets still redacted.
-3. **A true full bypass, redaction included** — `golem off`, which persists
-   `proxy.bypass_all` and applies it live (R11.3 — it used to be in-process only,
-   so it silently reverted at the next restart). Tell the user plainly that secrets
-   and PII then reach the upstream unredacted until they run `golem on`, and that
-   they must run it in their own terminal: no tool call can turn redaction off.
+1. **Compression off, redaction still on** — `golem compression off`. This is
+   the usual answer: lossless forwarding with secrets still redacted.
+2. **A true full bypass, redaction included** — `golem off`, which persists
+   `proxy.bypass_all` (it is the ONLY way to turn redaction off) and takes effect
+   when the proxy next starts: `golem proxy restart`. Tell the user plainly that
+   secrets and PII then reach the upstream unredacted until they run `golem on`
+   and restart. The user runs it in their own terminal. Do not run it yourself.
+
+What is actually enforced, so you claim no more than that: a PreToolUse hook
+DENIES an agent Bash call that runs `golem off` or `golem config set` on
+`proxy.bypass_all` (or sets `GOLEM_PROXY_BYPASS_ALL`), and a Write or Edit of a
+`.golem/*.json` file that sets it. It holds at every autonomy level. It is NOT a
+sandbox: a shell that writes a settings file another way, or an obfuscated command,
+is not caught. The MCP tools cannot set it at all.
 
 Then remind them to run `golem compression 1` (or their previous value) to
-re-enable savings when done, and `golem on` if they used option 3 — every status
+re-enable savings when done, and `golem on` if they used option 2 — every status
 surface shows the bypass while it is on, so it is not a state to leave behind.

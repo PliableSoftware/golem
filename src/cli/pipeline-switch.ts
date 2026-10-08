@@ -21,16 +21,15 @@
  * only route to redaction-off now that the stage table has no redaction-free
  * row. So the switch writes THAT, and every surface tells the truth for free.
  *
- * Writing alone would have cost the instant apply, because `proxy.bypass_all` is
- * read where the proxy is constructed (`restart: "proxy"` in the control
- * surface). So this persists first and then applies the same state live over the
- * admin endpoint: durable *and* immediate, with no restart. If no listener
- * answers, the setting is still recorded and the caller says when it lands.
+ * DUSTSEC.2 removed the live admin endpoint this used to POST to: it was
+ * unauthenticated and let any local caller (a browser tab, a stray process) turn
+ * redaction off with no trace in any status surface. So the switch now only
+ * persists, and a RUNNING proxy picks it up on its next start (`golem proxy
+ * restart`). `proxy.bypass_all` is read where the proxy is constructed
+ * (`restart: "proxy"` in the control surface), and that is the only way in.
  */
 
-import { request } from "node:http";
 import { setConfig } from "./config.js";
-import { InitError } from "./init.js";
 import { portInUse } from "./proxy-daemon.js";
 
 /** What `setPipelineState` did, so the caller can report it honestly. */
@@ -39,44 +38,18 @@ export interface PipelineSwitchResult {
   readonly enabled: boolean;
   /** Settings file the `proxy.bypass_all` write landed in. */
   readonly file: string;
-  /** True when a live proxy also took the change (so no restart is needed). */
-  readonly appliedLive: boolean;
+  /** True when a proxy is already listening: it must be restarted to take the change. */
+  readonly proxyRunning: boolean;
   /** Present when a scope above `local` overrides the value just written. */
   readonly overriddenBy?: string;
 }
 
-/** POST `/__golem/pipeline/<enabled>` to a proxy already listening on `port`. */
-async function applyLive(port: number, enabled: boolean): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const req = request(
-      {
-        host: "127.0.0.1",
-        port,
-        path: `/__golem/pipeline/${enabled}`,
-        method: "POST",
-        headers: { "content-length": 0 },
-        timeout: 2000,
-      },
-      (res) => {
-        res.resume();
-        resolve();
-      },
-    );
-    req.on("error", (err) => reject(new InitError(`could not reach the proxy: ${err.message}`)));
-    req.on("timeout", () => {
-      req.destroy();
-      reject(new InitError("the proxy did not answer within 2s"));
-    });
-    req.end();
-  });
-}
-
 /**
- * Persist the master switch, then apply it to a running proxy.
+ * Persist the master switch. A running proxy takes it on its next start.
  *
  * `enabled: false` is a FULL bypass — redaction included — because that is what
- * `golem off` has always done at the listener (`#pipelineEnabled = false` is an
- * identity pipeline). The difference is that it is now visible and durable.
+ * `golem off` has always done at the listener (a proxy built with the pipeline
+ * disabled is an identity pipeline). The difference is that it is visible and durable.
  *
  * The write goes to the `local` scope: it is one person's choice on one machine,
  * and `.golem/settings.local.json` is gitignored, so turning redaction off can
@@ -90,15 +63,10 @@ export async function setPipelineState(
   const write = await setConfig("local", "proxy.bypass_all", enabled ? "false" : "true", {
     projectDir,
   });
-  let appliedLive = false;
-  if (await portInUse(port)) {
-    await applyLive(port, enabled);
-    appliedLive = true;
-  }
   return {
     enabled,
     file: write.file,
-    appliedLive,
+    proxyRunning: await portInUse(port),
     ...(write.overriddenBy !== undefined ? { overriddenBy: write.overriddenBy.layer } : {}),
   };
 }
@@ -112,8 +80,9 @@ export async function setPipelineState(
  */
 export function renderPipelineSwitch(result: PipelineSwitchResult, port: number): string {
   const url = `http://localhost:${port}`;
-  const where = result.appliedLive
-    ? `on ${url}`
+  const where = result.proxyRunning
+    ? `recorded in ${result.file} — the proxy on ${url} is still running the previous state; ` +
+      "run `golem proxy restart` to apply it"
     : `recorded in ${result.file} — the proxy is not running, so it applies when it starts`;
   const lines: string[] = [];
   if (result.enabled) {

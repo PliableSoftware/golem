@@ -90,17 +90,16 @@ export function registerPrompts(server: McpServer): void {
     },
     () =>
       promptMessages(
-        "The user wants to bypass Golem's compression. Explain the two options " +
-          "and pick per intent: (1) a per-request bypass that leaves the " +
-          "persistent slider alone — direct API callers add the `x-golem-bypass` " +
-          "header. (2) a persistent change — `level 1` keeps redaction on while " +
-          "compression stays byte-faithful, and you can set it with the level " +
-          "tool. `level 0` turns Golem fully OFF but ALSO disables redaction " +
-          "(secrets reach the upstream raw), so it cannot be set from a tool call " +
-          "at all: for a deliberate full bypass, tell the user to run " +
-          "`golem slider 0` in their terminal. Prefer level 1 unless a true full " +
-          "bypass is intended; confirm the choice and remind the user to restore " +
-          "their previous level afterwards.",
+        "The user wants to bypass Golem's compression. There is no per-request " +
+          "bypass (the `x-golem-bypass` header was removed). Explain the two " +
+          "options and pick per intent: (1) `golem compression off` keeps " +
+          "redaction on while compression is off. (2) `golem off` turns Golem " +
+          "fully OFF but ALSO disables redaction (secrets reach the upstream " +
+          "raw); it persists `proxy.bypass_all`, so it cannot be set from a tool " +
+          "call at all: for a deliberate full bypass, tell the user to run it in " +
+          "their own terminal. Prefer option 1 unless a true full bypass is " +
+          "intended; confirm the choice and remind the user to restore their " +
+          "previous setting afterwards (`golem on`).",
       ),
   );
 

@@ -22,9 +22,6 @@
 
 import type { Transform } from "node:stream";
 
-/** Header that forces pure passthrough. Stripped before forwarding upstream. */
-export const BYPASS_HEADER = "x-golem-bypass";
-
 /**
  * The Anthropic Messages API `usage` block (R1.1 — net-of-cache measurement,
  * verification-notes §30-37). Sniffed read-only from the response bytes the
@@ -140,8 +137,8 @@ export type RouteResolver = (
  * Extension seam for the A3 pipeline (redaction -> compression).
  *
  * Contract:
- * - Invoked only when the request does NOT carry `x-golem-bypass`;
- *   bypassed requests are forwarded untouched, unconditionally.
+ * - Invoked on every request unless the proxy was started with `proxy.bypass_all`
+ *   (the single redaction-off path); no header or endpoint can skip it.
  * - May return a new {@link ProxyRequest}; `content-length` is recomputed
  *   by the proxy from the returned body, never by the pipeline.
  * - Must never reorder redaction after compression (CLAUDE.md hard rule).
@@ -152,6 +149,14 @@ export type RouteResolver = (
 export interface RequestPipeline {
   readonly name: string;
   process(request: ProxyRequest): Promise<ProxyRequest>;
+  /**
+   * DUSTSEC.1 — redaction alone, run by the proxy on the ORIGINAL request when
+   * `process` throws. Must be the same redaction `process` runs. Synchronous and
+   * total apart from redaction itself: if it throws, the proxy fails closed.
+   * A pipeline without it cannot be proven safe to fall back to, so a `process`
+   * error then also fails closed.
+   */
+  redactOnly?(request: ProxyRequest): ProxyRequest;
 }
 
 /** The A1 default: forwards every request byte-for-byte. */
@@ -167,10 +172,9 @@ export interface ProxyServerOptions {
    * byte-faithfully, redaction included in what is skipped. Set from
    * `proxy.bypass_all`, the explicit successor to slider level 0.
    *
-   * Distinct from the in-process `golem on`/`golem off` toggle only in that this
-   * one is a starting state read from settings, so it survives the restarts that
-   * silently reset that toggle. Defaults to enabled — the bypass is never the
-   * default (CLAUDE.md hard rule).
+   * The ONLY way to turn the pipeline off: a starting state read from settings,
+   * applied when the proxy starts (DUSTSEC.2 removed the live toggle). Defaults to
+   * enabled — the bypass is never the default (CLAUDE.md hard rule).
    */
   readonly pipelineEnabled?: boolean;
   /**
@@ -227,7 +231,7 @@ export interface ProxyServerOptions {
    * Anthropic credential and inject a different provider's key under its
    * expected header — see src/providers). Applied to the forwarded headers
    * immediately before the upstream request, OUTSIDE the pipeline, so it also
-   * covers `x-golem-bypass` requests (the upstream still needs valid creds).
+   * covers `proxy.bypass_all` requests (the upstream still needs valid creds).
    * A transport/routing concern only — it never touches the body, so SSE and
    * tool-use fidelity is untouched. Default: none (the Anthropic passthrough
    * forwards the client's own auth verbatim).

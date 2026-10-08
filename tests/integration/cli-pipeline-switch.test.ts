@@ -74,13 +74,14 @@ describe("golem off (R11.3)", () => {
     expect(result.enabled).toBe(false);
   });
 
-  it("also applies live, so no restart is needed", async () => {
+  it("does NOT poke the running proxy (the live admin endpoint is gone, DUSTSEC.2) and says to restart it", async () => {
     const port = await stubProxy();
 
     const result = await setPipelineState(projectDir, port, false);
 
-    expect(hits).toEqual(["/__golem/pipeline/false"]);
-    expect(result.appliedLive).toBe(true);
+    expect(hits).toEqual([]);
+    expect(result.proxyRunning).toBe(true);
+    expect(renderPipelineSwitch(result, port)).toContain("golem proxy restart");
   });
 
   it("says redaction is off, and how to undo it", async () => {
@@ -96,7 +97,7 @@ describe("golem off (R11.3)", () => {
 });
 
 describe("golem on (R11.3)", () => {
-  it("persists proxy.bypass_all = false and applies live", async () => {
+  it("persists proxy.bypass_all = false", async () => {
     const port = await stubProxy();
     await setPipelineState(projectDir, port, false);
     hits.length = 0;
@@ -105,7 +106,7 @@ describe("golem on (R11.3)", () => {
 
     const { settings } = await loadConfig({ projectDir });
     expect(settings.proxy.bypass_all).toBe(false);
-    expect(hits).toEqual(["/__golem/pipeline/true"]);
+    expect(hits).toEqual([]);
     expect(renderPipelineSwitch(result, port)).toContain("survives a restart");
   });
 
@@ -128,7 +129,7 @@ describe("the switch with no proxy listening", () => {
 
     const { settings } = await loadConfig({ projectDir });
     expect(settings.proxy.bypass_all).toBe(true);
-    expect(result.appliedLive).toBe(false);
+    expect(result.proxyRunning).toBe(false);
     const out = renderPipelineSwitch(result, DEAD_PORT);
     expect(out).toContain("the proxy is not running, so it applies when it starts");
     // Still loud: the state is armed even though nothing is serving yet.
