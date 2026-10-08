@@ -79,9 +79,9 @@ async function initSummary(dir: string): Promise<string> {
 
 /**
  * Say plainly what was just trusted, why, and what it cannot do. Trust changes
- * should never be silent, even when they are the default — and the restart is
- * not optional: `NODE_EXTRA_CA_CERTS` is read once at startup (§112), so until
- * Claude Code restarts, served WebFetches keep using the deny path.
+ * should never be silent, even when they are the default. Most sessions pick
+ * the new CA up live (§125); restart Claude Code only if served WebFetches are
+ * still denied.
  */
 function loopbackCertNotice(projectDir: string): string {
   return [

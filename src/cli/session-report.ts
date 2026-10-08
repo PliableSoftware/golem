@@ -13,7 +13,7 @@
  *   per-stage attribution · CCR + per-tool usage · on-disk storage sizes.
  *
  * It composes the already-shipped pieces (`collectGolemState`, `collectStats`,
- * `getSliderInfo`, telemetry) rather than re-deriving them, and is fully
+ * the compression dial, telemetry) rather than re-deriving them, and is fully
  * defensive — any single source failing degrades that field, never the whole
  * report. Nothing here opens a network surface; that is 21b's later guarded step.
  */

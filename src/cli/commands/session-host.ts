@@ -133,7 +133,7 @@ export default function register(session: Command): void {
               out(`  ⛔ runner guard refused ${String(event.tool)}: ${String(event.message)}\n`);
               break;
             case "rate_limit":
-              // Invariant 8: a hosted session is subject to the park like
+              // ADR-0007 invariant 7: a hosted session is subject to the park like
               // anything else, and says so rather than dying quietly.
               out("  ⏸ rate-limit pressure reported by the runner\n");
               break;

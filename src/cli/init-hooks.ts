@@ -225,8 +225,8 @@ export async function wireHooks(
   actions.push(await writeFallbackModel(options));
   actions.push(await addEventHook(options, "Notification", NOTIFICATION_COMMAND));
   actions.push(await addEventHook(options, "UserPromptSubmit", PROMPT_SUBMIT_COMMAND));
-  // PreToolUse: the snooze document-and-hold nudge + autonomy gate (inert at the
-  // default `manual` level). See PRE_TOOL_USE_HOOK_COMMAND.
+  // PreToolUse: the snooze document-and-hold nudge + autonomy gate (outward and
+  // destructive actions are gated at every level). See PRE_TOOL_USE_HOOK_COMMAND.
   actions.push(await addEventHook(options, "PreToolUse", PRE_TOOL_USE_HOOK_COMMAND));
   // PermissionRequest: the same gate, one event earlier, where a decision can
   // actually resolve the request instead of deferring it (R12.12).

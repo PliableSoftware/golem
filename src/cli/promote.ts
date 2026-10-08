@@ -6,10 +6,10 @@
  * `golem note distill`) already shaped like a wiki page (frontmatter + body).
  * Promotion is the mechanical write: it routes the draft to its zone by `type`,
  * writes it through the same append-and-refine `upsertPage` semantics as
- * `wiki_upsert` (Decision 29 — union-merge frontmatter, dated separator, never
+ * `wiki_upsert` (Decision 29 — union-merge frontmatter, bare `---` separator, never
  * a wholesale rewrite), then removes the consumed draft.
  *
- * The human approving IS the plan-gate (Decision 28): in a TTY the draft is
+ * Consent is the TTY confirmation (Decision 26 convention): in a TTY the draft is
  * shown and confirmed; a non-interactive run refuses unless `--yes` was passed
  * (the Decision 26 consent convention, mirroring `runOllamaSetup`).
  */

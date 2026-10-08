@@ -31,7 +31,7 @@ export interface PluginReport {
  * This runs the plugins' `setup()`, because there is no honest way to report
  * what a plugin registers without asking it — a manifest would be a claim, and
  * this surface exists to report facts. It is the same code path the proxy runs,
- * so what you see here is what the proxy got.
+ * but it is a fresh load, so it can differ from what the running proxy holds.
  */
 export async function collectPlugins(
   projectDir: string,

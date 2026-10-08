@@ -16,8 +16,8 @@
  *   the account commands use — one log, because "which endpoint did my context
  *   go to" is the same question whichever registry answered it.
  *
- * Nothing here changes proxy behaviour. In R9.1 the registry is inert
- * configuration; R9.2 routes on it and R9.3 dispatches `coder` through it.
+ * Nothing here changes proxy behaviour. The registry has routed since R9.2,
+ * and R9.3 dispatches `coder` through it.
  */
 
 import { appendFile, mkdir } from "node:fs/promises";
@@ -249,7 +249,7 @@ export async function addTarget(
   }
 
   // R9.23: detect if the new target's id matches a GATEWAY-DERIVED target
-  // (compound id `<gateway>/<model>`). The gateway-derived target is what
+  // (compound id `<gateway>:<model>`). The gateway-derived target is what
   // `listTargets` produces, so use it to determine whether this add overrides.
   const derived = listTargets(proxy);
   const overridesGateway = derived.some((t) => t.id === input.id && t.origin === "gateway");
@@ -372,6 +372,6 @@ export function renderTargets(report: TargetsReport): string {
   } else {
     lines.push(`default target: ${report.model}`);
   }
-  lines.push(`trust levels: ${TARGET_TRUST_LEVELS.join(" | ")} (stored now, enforced in R9.3)`);
+  lines.push(`trust levels: ${TARGET_TRUST_LEVELS.join(" | ")}`);
   return `${lines.join("\n")}\n`;
 }

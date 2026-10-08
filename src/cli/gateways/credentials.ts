@@ -219,9 +219,9 @@ export async function logoutGateway(
  *
  * **R9.1 — this resolves N credentials, not 1.** Every gateway referenced by a
  * target in `proxy.targets` (or derived from `proxy.gateways`) gets its key
- * injected under its own `perGatewayEnvVar` (was `perAccountEnvVar`, renamed in
+ * injected under its own `envVarForGateway` name (was `perAccountEnvVar`, renamed in
  * R9.23), because with a target registry the proxy may need any of them, not
- * only the active one. No new secret mechanism was required: `perGatewayEnvVar`
+ * only the active one. No new secret mechanism was required: `envVarForGateway`
  * was already designed per-gateway (Decision 47), and the CLI still owns
  * resolution and injects at spawn.
  *

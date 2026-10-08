@@ -14,7 +14,9 @@
  *
  * `golem ps --prune` removes ONLY processes Golem can prove are its own AND
  * are not serving a live session. Parentage is the evidence — walk to the
- * owning claude.exe/cmd.exe and check it is alive. Never infer death from age.
+ * owning claude.exe/cmd.exe and check it is alive. Death is not inferred from
+ * age alone, but the idle-prune (`--prune` with an idle timeout) does stop a proxy by age once
+ * its parent is dead.
  */
 
 import { spawn } from "node:child_process";

@@ -1,7 +1,8 @@
 /**
- * R13.12 — what the generated `golem-coder` subagent definition SAYS.
+ * R13.12 — what every generated persona subagent definition SAYS (one
+ * `golem-<id>` definition per persona staffed in `inference.personas`).
  *
- * Split from `init-agents.ts` on the same line `skills.ts` splits from
+ * Split from `init-personas.ts` on the same line `skills.ts` splits from
  * `init-skills.ts`: this owns the content, that owns where it lands and how an
  * existing file on disk is treated.
  *
