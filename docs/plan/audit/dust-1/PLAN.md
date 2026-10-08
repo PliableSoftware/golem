@@ -48,7 +48,7 @@ distributable skill, generated into `.claude/skills` the same way the
 `golem-*` rules generate from `src/hooks/guidance.ts` — so other
 Golem-managed projects can run the same shake-out.
 
-- **Task docs:** none yet.
+- **Task docs:** DUST4.1 (skill text), DUST4.2 (install lifecycle, seeded by default), DUST4.3 (wiki, README, spec, debrief template), DUST4.4 (dogfood), DUST4.5 (close-out).
 
 ## Phase 5 — Derived material
 
@@ -56,7 +56,7 @@ Once the spec is stable, generate website/blog-post material (feature
 overview, changelog-style narrative) from it. Separate, non-blocking output —
 doesn't touch code or wiki structure.
 
-- **Task docs:** none yet.
+- **Task docs:** DUST5.1 (keep `docs/marketing/` out of local answers, the one code change), DUST5.2 (claims ledger and banned claims), DUST5.3-DUST5.5 (drafts), DUST5.6 (fact-check), DUST5.7 (close-out), DUST5.8 (publishing, `owner: user`).
 
 ---
 
@@ -70,4 +70,4 @@ doesn't touch code or wiki structure.
 
 **Phase 3: done and merged.** `DUST3.1`-`DUST3.18` (PRs #242-#256). The 25 NEEDS-USER dead-code proposals in `PHASE3-INDEX.md` are not acted on and wait for the user, as does `session-dropframe-seq-and-hostlog`. Follow-ups: `vector-store-lock-and-outside-watch`, `proxy-runtime-webcache-windows-flake`, `dust3-leftovers`.
 
-**Phase 4-5: task docs not yet written.**
+**Phase 4-5: task docs written (DUST4.1-DUST4.5, DUST5.1-DUST5.8), not started.**
