@@ -2,7 +2,7 @@
 title: Knowledge Base
 type: concept
 tags: [rag, vector, search, knowledge, embeddings]
-sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/server.ts, docs/golem-spec.md#3.1]
+sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/search.ts, src/cli/auto-index.ts, src/knowledge/driver.ts, docs/golem-spec.md#3.1]
 created: 2026-07-25
 updated: 2026-08-22
 ---
@@ -13,7 +13,7 @@ Golem's local RAG layer: a per-project vector index over the documents you inges
 (codebases, docs, ADRs, fetched web pages), plus a **graph-first** lookup that lets
 the committed [[Wiki-First Knowledge|wiki]] answer before similarity search ever
 runs. Claude reaches it through the `search` / `fetch` / `ingest` MCP tools. Source:
-`src/knowledge/knowledge-base.ts`, `src/mcp/server.ts`.
+`src/knowledge/knowledge-base.ts`, `src/mcp/search.ts`.
 
 > **Code vs spec:** spec §3.1 targets Qdrant; the shipped default is an on-disk
 > `FileVectorDriver` (`src/knowledge/file-driver.ts`) — no server process, zero
@@ -41,7 +41,7 @@ flowchart LR
 
 ## Search path (read) — graph-first, then vector
 
-`assembleHits` (`src/mcp/server.ts`) is the one place hit assembly lives, shared by
+`assembleHits` (`src/mcp/search.ts:207`, module-local; moved out of `server.ts` by the R8.28 split) is the one place hit assembly lives, shared by
 the `search` tool and the `coder` tool's grounding. It tries a cheap, precise
 **wiki title match** (and one hop along that page's `[[wikilinks]]`) with **no
 embedding call**, then always runs vector search too, de-dupes, boosts wiki hits
@@ -59,9 +59,36 @@ flowchart TB
   JUDGE --> OUT
 ```
 
+`graphFirstWikiHits` (`src/mcp/search.ts:164`) is re-exported from `src/mcp/server.ts`
+but lives in `search.ts`. On a title collision between the project wiki and the
+user-scope wiki, graph-first builds its title map with `Map.set` over a page list that
+puts user pages last, so the **user page wins** (`search.ts:172-173`,
+`federated-wiki-reader.ts:39`); `readPage`/`resolveLink` still prefer the project page.
+The two paths disagree and that is left open (audit contradiction D1); see
+[[Wiki-First Knowledge]].
+
 Graph-first is **purely additive**: a free-text query that names no page just skips
 straight to vector search, so nothing regresses. This is why keeping the wiki current
 pays off directly — see [[Wiki-First Knowledge]].
+
+## Embedder identity on build
+
+A build never silently narrows an existing index. `planBuildEmbedder`
+(`src/cli/auto-index.ts:328`) compares the embedder recorded in the manifest with the
+one the detected hardware tier would use, and returns one of four plans:
+
+- `use-current` — no semantic index yet, or the tier's model built it.
+- `pin` — keep the existing index's model, because the tier's would narrow the vectors
+  (a degraded capability probe must not trigger a full re-embed at 768 in place of 1024).
+- `reembed` — the whole index is re-embedded into another space (a wider model is now
+  available, or the original is gone); a notice says so.
+- `lexical` — no semantic model is available; the built-in lexical embedder is used,
+  with a notice that retrieval is weaker.
+
+Underneath, `EmbedderMismatchError` (`src/knowledge/driver.ts:42`) rejects a query whose
+vector width differs from a non-empty index, and `FileVectorDriver.upsert` resets the
+collection when incoming vectors have a new width (`src/knowledge/file-driver.ts:196-209`).
+Cost side: [[Auto-Index Cost]].
 
 ## Scopes and federation
 
