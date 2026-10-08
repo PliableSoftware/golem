@@ -192,13 +192,10 @@ describe("level <= 1 recorded shapes: prefix-stable across turns", () => {
   });
 });
 
-describe("known gap: redaction is not idempotent (S10, Phase 3)", () => {
-  // S10 (SUMMARY.md): `connection-password` re-matches its own placeholder, so a second
-  // pass renumbers (redaction-rules.ts:195). Prefix stability holds today only because the
-  // client resends RAW history each turn; any path that redacts already-redacted text
-  // breaks it. Expected-fail until Phase 3 fixes S10 -- when it does, `it.fails` goes red
-  // and this marker must be removed.
-  it.fails("S10: redacting redacted output is a no-op", () => {
+describe("redaction is idempotent (S10)", () => {
+  // S10 (SUMMARY.md): `connection-password` used to re-match its own placeholder, so a
+  // second pass renumbered it. Fixed in redaction-rules.ts (DUST3.3).
+  it("S10: redacting redacted output is a no-op", () => {
     const pw = (seed: string): string => `pw${seed.repeat(16)}`;
     const conn = (user: string, seed: string): string =>
       `${[`postgres://${user}`, pw(seed)].join(":")}@h/db`;

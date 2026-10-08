@@ -137,6 +137,57 @@ function safeValidate(
   };
 }
 
+/** Distinct `validate` failure messages kept per rule; the rest only bump a count. */
+const MAX_DISTINCT_VALIDATE_PROBLEMS = 10;
+
+interface ValidateProblemLedger {
+  /** message -> index into `problems` */
+  readonly byMessage: Map<string, number>;
+  /** index of this rule's "and N more" overflow entry, once one exists */
+  overflow: number;
+}
+
+/**
+ * `validate` runs on every candidate match for the life of the process, so a
+ * throwing one would otherwise push a problem per call. Record each distinct
+ * message once with a count, and cap the distinct messages per rule (a message
+ * that embeds the candidate text is otherwise unbounded).
+ */
+function recordValidateProblem(
+  problems: PluginProblem[],
+  seen: Map<string, ValidateProblemLedger>,
+  subject: string,
+  ruleId: string,
+  reason: string,
+): void {
+  let ledger = seen.get(ruleId);
+  if (ledger === undefined) {
+    ledger = { byMessage: new Map(), overflow: -1 };
+    seen.set(ruleId, ledger);
+  }
+  let index = ledger.byMessage.get(reason);
+  if (index === undefined) {
+    if (ledger.byMessage.size < MAX_DISTINCT_VALIDATE_PROBLEMS) {
+      index = problems.push({ subject, reason, count: 0 }) - 1;
+      ledger.byMessage.set(reason, index);
+    } else {
+      // Further distinct messages share ONE overflow entry with its own count,
+      // so no earlier entry's text or count is disturbed.
+      if (ledger.overflow < 0) {
+        ledger.overflow =
+          problems.push({
+            subject,
+            reason: `rule "${ruleId}" validate threw (and more distinct errors, not listed)`,
+            count: 0,
+          }) - 1;
+      }
+      index = ledger.overflow;
+    }
+  }
+  const existing = problems[index];
+  if (existing !== undefined) problems[index] = { ...existing, count: (existing.count ?? 0) + 1 };
+}
+
 /**
  * Load every specifier. Never throws; the result carries what worked and what
  * did not.
@@ -204,12 +255,14 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
     const pendingStages: PluginPipelineStage[] = [];
     const pendingTools: PluginMcpTool[] = [];
     const ruleIds = new Set<string>();
+    const validateSeen = new Map<string, ValidateProblemLedger>();
     const stageNames = new Set<string>();
 
     const api: GolemPluginApi = {
       golemVersion: opts.golemVersion,
       projectDir: opts.projectDir,
       addRedactionRule(rule: PluginRedactionRule): void {
+        let emptyNote: string | null = null;
         const problem = ((): string | null => {
           if (typeof rule?.id !== "string" || !NAME_RE.test(rule.id)) {
             return "rule.id must be a kebab-case string";
@@ -221,6 +274,14 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
           // first occurrence would be replaced, which leaks the rest.
           if (!rule.pattern.flags.includes("g")) {
             return `rule "${rule.id}": pattern must carry the \`g\` flag`;
+          }
+          // A pattern that can match "" is NOT refused: dropping it would drop
+          // redactions that worked (e.g. an optional prefix before an optional
+          // group). `applyRule` ignores empty matches, so it cannot spam
+          // placeholders; say so as a non-fatal problem. (A context-dependent
+          // zero-width match, e.g. a lookahead, is not visible to this probe.)
+          if (new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "")).test("")) {
+            emptyNote = `rule "${rule.id}": pattern can match the empty string; the rule stays active and empty matches are ignored`;
           }
           if (rule.group !== undefined && (!Number.isInteger(rule.group) || rule.group < 1)) {
             return `rule "${rule.id}": group must be a positive integer`;
@@ -238,6 +299,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
           return;
         }
         ruleIds.add(rule.id);
+        if (emptyNote !== null) problems.push({ subject: plugin.name, reason: emptyNote });
         pendingRules.push({
           // Namespaced kind: a plugin can neither impersonate a built-in kind nor
           // collide with another plugin's (ADR-0005 §2).
@@ -248,10 +310,13 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
           ...(rule.validate !== undefined
             ? {
                 validate: safeValidate(rule.validate, (message) => {
-                  problems.push({
-                    subject: plugin.name,
-                    reason: `rule "${rule.id}" validate threw (treated as not-a-secret): ${message}`,
-                  });
+                  recordValidateProblem(
+                    problems,
+                    validateSeen,
+                    plugin.name,
+                    rule.id,
+                    `rule "${rule.id}" validate threw (treated as not-a-secret): ${message}`,
+                  );
                 }),
               }
             : {}),

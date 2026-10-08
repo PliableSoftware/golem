@@ -13,7 +13,9 @@
  * clock, no randomness, no config. Rule ORDER is part of the contract: rules
  * run in table order, left-to-right within a rule, and earlier replacements
  * are invisible to later rules (placeholders contain `[`/`]`/`:` which no
- * rule's charset matches, so redaction is idempotent).
+ * rule's charset matches, so redaction is idempotent; `connection-password`,
+ * whose group does match them, excludes a whole placeholder explicitly — S10).
+ * tests/unit/pipeline/redaction.test.ts proves the claim for every rule.
  *
  * The generic high-entropy detector runs AFTER the table (see redaction.ts)
  * so provider-specific rules win the placeholder kind for strings both would
@@ -192,7 +194,13 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "Credentials embedded in connection-string URLs " +
       "(scheme://user:password@host). Only the password is redacted so the " +
       "scheme, user, and host stay legible to the model.",
-    pattern: /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:@/]+:([^\s@/]+)@/g,
+    // The lookahead skips a group that is EXACTLY one connection-password
+    // placeholder, so a second pass over already-redacted text cannot re-match
+    // (and renumber) it (S10). It names that ONE kind and anchors on `]@`: a
+    // password shaped like any other placeholder (attacker-chosen kind text, or
+    // another rule's placeholder) is still redacted, as before.
+    pattern:
+      /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
     group: 1,
   },
   {

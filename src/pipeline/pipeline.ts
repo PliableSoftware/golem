@@ -565,6 +565,9 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
                 brevity: "off",
                 brevityDirectiveTokens: 0,
               });
+              // The `finally` below has not run yet; record the stage first so
+              // the held-request line names it (it is the stage that held us).
+              stageMs["local-answer"] = performance.now() - localAnswerAt;
               reportHeldRequest(startedAt, stageMs, "answered locally");
               return { ...request, respondDirectly };
             }
@@ -592,12 +595,13 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       // local-answer short-circuit, so a request Golem answers itself does not
       // run third-party code at all.
       //
-      // Then redaction RE-RUNS over whatever a stage returned. Redaction is
-      // idempotent (placeholders are outside every rule's charset), so the second
-      // pass cannot renumber anything — what it buys is that a plugin stage
-      // cannot introduce unredacted content into the request, however it obtained
-      // it. That is a structural answer to "can a plugin weaken redaction",
-      // rather than a promise that we read the plugin.
+      // Then redaction RE-RUNS after ANY stage ran — not only when a stage
+      // returned a new object, because a stage may also mutate `body` in place
+      // (S8). Redaction is idempotent (proven per rule in
+      // redaction.test.ts), so the second pass cannot renumber anything — what it buys is
+      // that a plugin stage cannot introduce unredacted content into the request,
+      // however it obtained it. That is a structural answer to "can a plugin
+      // weaken redaction", rather than a promise that we read the plugin.
       if (options.pluginStages !== undefined && options.pluginStages.length > 0) {
         const pluginsAt = performance.now();
         let touched = false;
@@ -618,16 +622,18 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
             );
           }
         }
-        if (touched) {
-          changed = true;
-          if (stages.redaction) {
-            const reRedacted = redactRequestBody(body);
-            if (reRedacted.count > 0 && isRecord(reRedacted.value)) {
-              body = reRedacted.value;
-              // Attribute the extra pass separately — a plugin stage that keeps
-              // introducing secrets should be visible, not folded into stage 1.
-              stageSavings["redaction-after-plugins"] = reRedacted.delta;
-            }
+        if (touched) changed = true;
+        if (stages.redaction) {
+          const reRedacted = redactRequestBody(body);
+          if (reRedacted.count > 0 && isRecord(reRedacted.value)) {
+            body = reRedacted.value;
+            // An in-place mutation returns the same object, so `touched` is
+            // false; if the second pass had to redact, the body differs from
+            // the original and must be forwarded.
+            changed = true;
+            // Attribute the extra pass separately — a plugin stage that keeps
+            // introducing secrets should be visible, not folded into stage 1.
+            stageSavings["redaction-after-plugins"] = reRedacted.delta;
           }
         }
         stageMs.plugins = performance.now() - pluginsAt;
