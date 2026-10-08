@@ -119,7 +119,33 @@ export class FileJoinQueue implements JoinQueue {
     this.#ttl = options.pendingTtlMs ?? PENDING_TTL_MS;
   }
 
+  /** Enqueues in flight in THIS process, by messageId: the check-then-write below spans awaits. */
+  readonly #inFlight = new Map<string, Promise<JoinEnqueueResult>>();
+
   async enqueue(input: {
+    readonly conversationId: string;
+    readonly deviceId: string;
+    readonly messageId: string;
+    readonly text: string;
+  }): Promise<JoinEnqueueResult> {
+    // Reserve the id synchronously: a concurrent twin waits for the first
+    // outcome and then reports `duplicate` instead of writing a second file.
+    const flight = this.#inFlight.get(input.messageId);
+    if (flight !== undefined) {
+      const first = await flight.catch(() => undefined);
+      if (first?.status === "queued") return { status: "duplicate", message: first.message };
+      return this.enqueue(input);
+    }
+    const run = this.#enqueue(input);
+    this.#inFlight.set(input.messageId, run);
+    try {
+      return await run;
+    } finally {
+      this.#inFlight.delete(input.messageId);
+    }
+  }
+
+  async #enqueue(input: {
     readonly conversationId: string;
     readonly deviceId: string;
     readonly messageId: string;
