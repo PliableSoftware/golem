@@ -19,6 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isLockContention } from "../shared/win-fs-retry.js";
 
 const STALE_LOCK_MS = 10_000;
 const ACQUIRE_TIMEOUT_MS = 5_000;
@@ -29,6 +30,10 @@ export interface FileLockOptions {
   readonly timeoutMs?: number;
   /** Age past which a held lock is treated as abandoned. */
   readonly staleMs?: number;
+  /** Test seam: platform whose contention rules apply. Defaults to `process.platform`. */
+  readonly platform?: NodeJS.Platform;
+  /** Test seam: the exclusive create. Defaults to `writeFile(..., { flag: "wx" })`. */
+  readonly createExclusive?: (file: string, content: string) => Promise<void>;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,16 +66,25 @@ async function breakStale(lockFile: string, staleMs: number): Promise<void> {
   await unlink(aside).catch(() => undefined);
 }
 
-async function acquire(lockFile: string, timeoutMs: number, staleMs: number): Promise<Acquired> {
+async function acquire(
+  lockFile: string,
+  timeoutMs: number,
+  staleMs: number,
+  platform: NodeJS.Platform,
+  createExclusive: (file: string, content: string) => Promise<void>,
+): Promise<Acquired> {
   const token = `${process.pid}-${randomUUID()}`;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
-      await writeFile(lockFile, token, { flag: "wx" });
+      await createExclusive(lockFile, token);
       return { token };
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") return { failure: code ?? String(err) };
+      // EEXIST, and on win32 EPERM/EACCES/EBUSY (a held or pending-delete lock),
+      // mean "someone has it": keep waiting. Anything else is a real failure.
+      if (!isLockContention(err, platform)) {
+        return { failure: (err as NodeJS.ErrnoException).code ?? String(err) };
+      }
     }
     try {
       const { mtimeMs } = await stat(lockFile);
@@ -108,6 +122,8 @@ export async function withFileLock<T>(
       lockFile,
       options.timeoutMs ?? ACQUIRE_TIMEOUT_MS,
       options.staleMs ?? STALE_LOCK_MS,
+      options.platform ?? process.platform,
+      options.createExclusive ?? ((file, content) => writeFile(file, content, { flag: "wx" })),
     );
     if ("failure" in got) {
       process.stderr.write(
