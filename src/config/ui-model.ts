@@ -306,12 +306,13 @@ export const SETTING_META = {
     advanced: true,
   },
   "inference.worker_targets": {
-    label: "Worker targets (DEPRECATED)",
-    summary: "DEPRECATED - use inference.personas[worker].model instead. Kept for migration",
+    label: "Worker targets",
+    summary: "Worker name -> target id; the explicit route, wins over personas[worker].model",
     detail:
-      "R14.3: worker lane now reads personas[worker].model directly. Each worker_targets entry " +
-      "becomes a persona with the same model/target id. This key is ignored when personas has " +
-      "the same worker. Migration warning shown on load.",
+      "Live setting. Routing precedence for a worker: an explicit target on the call, then " +
+      "worker_targets[worker], then inference.personas[worker].model, then inference.model, " +
+      "then the harness's own upstream. When worker_targets and a persona model name different " +
+      "destinations, worker_targets wins; unset it to use the persona's model.",
     kind: "opaque",
     advanced: true,
     restart: "mcp",

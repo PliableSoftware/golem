@@ -195,7 +195,7 @@ export async function setLocalCoderEnabled(
   scope: SettingsScope,
   opts: { readonly projectDir: string },
 ): Promise<ConfigWriteResult> {
-  // R14.3: worker_targets retired — use personas.coder.model instead.
+  // This writes personas.coder.model; a live worker_targets.coder still outranks it.
   // Enable means clear the model (falls through to model); disable means
   // set a model that will never resolve.
   const { settings } = await loadConfig({ projectDir: opts.projectDir });
