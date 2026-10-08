@@ -3,7 +3,7 @@
  * corruption tolerance, per-project scoping, concurrent-append safety.
  */
 
-import { appendFile, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEvent } from "../../../src/telemetry/index.js";
 import {
@@ -734,6 +734,51 @@ describe("aggregate() rollup cache + rotation", () => {
     // stale 3-event total.
     const afterRotation = await store.aggregate();
     expect(afterRotation.requests).toBe(2); // events 1+2 fell off the retained window
+    await store.close();
+  });
+
+  it("a rotation that leaves the new file larger than the old watermark is distrusted, never spliced (DUST3.12 D3)", async () => {
+    const store = new JsonlTelemetryStore(dir);
+    const file = telemetryFilePath(dir);
+    await store.record(ev());
+    await store.record(ev());
+    expect((await store.aggregate()).requests).toBe(2); // rollup watermark = 2 events
+
+    // Rotate by hand: the old file becomes `.1`, a NEW file grows past the old
+    // watermark. Size and mtime both look like growth; only the inode differs.
+    await rename(file, `${file}.1`);
+    for (let i = 0; i < 3; i++) await appendFile(file, `${JSON.stringify(ev())}\n`, "utf8");
+
+    // Truth: `.1` (2) + current (3) = 5. A splice reads the new file from the
+    // old offset and adds it to the old totals: 2 + 1 = 3.
+    expect((await store.aggregate()).requests).toBe(5);
+    await store.close();
+  });
+
+  it("a partial trailing line is not lost when its newline arrives later (DUST3.12 D4)", async () => {
+    const store = new JsonlTelemetryStore(dir);
+    const file = telemetryFilePath(dir);
+    await store.record(ev());
+    expect((await store.aggregate()).requests).toBe(1); // warm rollup
+
+    const full = JSON.stringify(ev({ ccrRefsStored: 7 }));
+    await appendFile(file, full.slice(0, 20), "utf8"); // writer mid-line
+    expect((await store.aggregate()).requests).toBe(1); // incremental path, partial ignored
+
+    await appendFile(file, `${full.slice(20)}\n`, "utf8"); // line completes
+    expect((await store.aggregate()).requests).toBe(2);
+    await store.close();
+  });
+
+  it("a full reparse over a partial trailing line does not checkpoint past it (DUST3.12 D4)", async () => {
+    const file = telemetryFilePath(dir);
+    const store = new JsonlTelemetryStore(dir);
+    await store.record(ev());
+    const full = JSON.stringify(ev());
+    await appendFile(file, full.slice(0, 20), "utf8");
+    expect((await store.aggregate()).requests).toBe(1); // cold: full reparse
+    await appendFile(file, `${full.slice(20)}\n`, "utf8");
+    expect((await store.aggregate()).requests).toBe(2);
     await store.close();
   });
 
