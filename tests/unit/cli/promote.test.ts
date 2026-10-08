@@ -4,9 +4,10 @@
  * consent convention (non-TTY refuses without --yes).
  */
 
-import { readFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   draftTargetRelPath,
   listPendingPromotions,
@@ -16,7 +17,9 @@ import {
 } from "../../../src/cli/promote.js";
 import type { NoteDraft } from "../../../src/knowledge/distill.js";
 import { readDraftFile, writeNoteDraftFile } from "../../../src/knowledge/distill-store.js";
-import { FileWikiStore } from "../../../src/wiki/index.js";
+import { resetExtraRedactionRulesForTests } from "../../../src/pipeline/redaction-rules.js";
+import { resetEnsurePluginRedactionRulesForTests } from "../../../src/plugins/redaction-init.js";
+import { FileWikiStore, serializeFrontmatter } from "../../../src/wiki/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
 let projectDir: string;
@@ -165,5 +168,77 @@ describe("renderPendingPromotions", () => {
     expect(rendered).toContain("promotion-archive-or-delete");
     expect(rendered).toContain("questions/promotion-archive-or-delete.md");
     expect(rendered).toContain("note:2026-07-16T00:00:00.000Z");
+  });
+});
+
+// DUST3.8 review: promote writes the COMMITTED wiki, so plugin rules (R6) and a
+// promote-time re-redaction must apply even to drafts written without them.
+describe("runPromote redaction", () => {
+  const PLUGIN_SRC = `export default {
+  name: "acme",
+  version: "0.1.0",
+  setup(api) {
+    api.addRedactionRule({
+      id: "employee-id",
+      description: "ACME employee ids",
+      pattern: /ACME-EMP-\\d{6}/g,
+    });
+  },
+};
+`;
+
+  beforeEach(() => {
+    resetExtraRedactionRulesForTests();
+    resetEnsurePluginRedactionRulesForTests();
+  });
+  afterEach(() => {
+    resetExtraRedactionRulesForTests();
+    resetEnsurePluginRedactionRulesForTests();
+  });
+
+  async function handDraft(stem: string, fields: { title: string; tag: string; body: string }) {
+    const dir = path.join(projectDir, ".golem", "distill");
+    await mkdir(dir, { recursive: true });
+    const fm = serializeFrontmatter({
+      title: fields.title,
+      type: "question",
+      tags: [fields.tag],
+      sources: [`note:${fields.tag}`],
+      created: "2026-07-16",
+      updated: "2026-07-16",
+    });
+    await writeFile(path.join(dir, `${stem}.md`), `${fm}\n\n${fields.body}\n`, "utf8");
+  }
+
+  it("applies plugin rules to a draft written before the rule existed", async () => {
+    await mkdir(path.join(projectDir, ".golem"), { recursive: true });
+    await writeFile(
+      path.join(projectDir, ".golem", "settings.json"),
+      JSON.stringify({ plugins: { load: ["./acme-plugin.mjs"] } }),
+      "utf8",
+    );
+    await writeFile(path.join(projectDir, "acme-plugin.mjs"), PLUGIN_SRC, "utf8");
+    const emp = `ACME-EMP-${String(Math.floor(Math.random() * 900000) + 100000)}`;
+    await handDraft("plugin-draft", { title: `Who is ${emp}`, tag: emp, body: `Body ${emp} end` });
+
+    await runPromote({ projectDir, wikiDir, slug: "plugin-draft", nowIso: NOW, yes: true });
+    const raw = await readFile(path.join(wikiDir, "questions", "plugin-draft.md"), "utf8");
+    expect(raw).not.toContain(emp);
+    expect(raw).toContain("Body");
+  });
+
+  it("promotes a draft whose file stem carries a token to a draft-<sha8> page", async () => {
+    const hex = randomBytes(20).toString("hex");
+    await handDraft(`note-${hex}`, { title: "Plain title", tag: "plain", body: "Plain body" });
+    const outcome = await runPromote({
+      projectDir,
+      wikiDir,
+      slug: `note-${hex}`,
+      nowIso: NOW,
+      yes: true,
+    });
+    if (outcome.kind !== "promoted") throw new Error("expected promoted");
+    expect(outcome.relPath).toMatch(/^questions\/draft-[0-9a-f]{8}\.md$/);
+    expect(outcome.relPath).not.toContain(hex.slice(0, 12));
   });
 });

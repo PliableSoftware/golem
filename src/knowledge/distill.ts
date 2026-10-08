@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import type { ChatMessage, InferenceService } from "../interfaces/inference.js";
+import { safeDraftSlug } from "../wiki/write-redaction.js";
 
 export interface DistillInput {
   readonly url: string;
@@ -281,7 +282,13 @@ function parseDistillResponse<T extends { title: string; slug: string; wikilinks
     );
   }
   const draft = parsed.data;
-  const slug = kebabCase(draft.slug) || kebabCase(draft.title);
+  // The slug becomes a file name and then a committed wiki path, and kebab-casing
+  // hides token shapes from the redactor, so the model's raw slug is judged first.
+  const rawSlug = safeDraftSlug(draft.slug);
+  const slug =
+    rawSlug !== draft.slug
+      ? rawSlug
+      : safeDraftSlug(kebabCase(draft.slug) || kebabCase(draft.title));
 
   // Canonicalize casing to the caller's title, not the model's — the wiki's
   // titles are the source of truth for how a link should read.

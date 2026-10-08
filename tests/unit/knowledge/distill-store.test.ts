@@ -3,6 +3,7 @@
  * shaped from the start (frontmatter type "source").
  */
 
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -148,6 +149,41 @@ describe("writeDraftFile / readDraftFile", () => {
     for (const secret of [t, g, u, b]) expect(raw).not.toContain(secret);
   });
 
+  it("never uses a slug that carries a long opaque token as the file name", async () => {
+    const hex = randomBytes(20).toString("hex");
+    const file = await writeDraftFile(
+      projectDir,
+      url,
+      { ...draft, slug: `notes-${hex}` },
+      "2026-07-11T00:00:00.000Z",
+    );
+    expect(path.basename(file)).toMatch(/^draft-[0-9a-f]{8}\.md$/);
+    expect(file).not.toContain(hex.slice(0, 12));
+  });
+
+  it("keeps two URLs that differ only in a redacted secret apart", async () => {
+    const tok = (seed: string) => `ghp_${seed.repeat(5)}`;
+    const a = `https://example.com/page?k=${tok("a1B2c3D4")}`;
+    const b = `https://example.com/page?k=${tok("z9Y8x7W6")}`;
+    await writeDraftFile(projectDir, a, { ...draft, summary: "From A." }, "2026-07-11T00:00:00Z");
+    await writeDraftFile(projectDir, b, { ...draft, summary: "From B." }, "2026-07-11T00:00:01Z");
+    const drafts = await listDraftFiles(projectDir);
+    expect(drafts).toHaveLength(2);
+    expect(drafts.map((d) => d.body).join("\n")).toContain("From A.");
+    expect(drafts.map((d) => d.body).join("\n")).toContain("From B.");
+    // And rewriting A hits A's own file.
+    await writeDraftFile(
+      projectDir,
+      a,
+      { ...draft, summary: "From A v2." },
+      "2026-07-11T00:00:02Z",
+    );
+    const after = await listDraftFiles(projectDir);
+    expect(after).toHaveLength(2);
+    expect(after.map((d) => d.body).join("\n")).toContain("From A v2.");
+    expect(after.map((d) => d.body).join("\n")).toContain("From B.");
+  });
+
   it("readDraftFile returns null for a missing slug", async () => {
     expect(await readDraftFile(projectDir, "does-not-exist")).toBeNull();
   });
@@ -289,5 +325,41 @@ describe("writeSynthesisDraftFile", () => {
     expect(drafts).toHaveLength(1);
     expect(drafts[0]?.body).toContain("Updated summary.");
     expect(drafts[0]?.frontmatter.sources).toEqual(["note:a", "note:b"]);
+  });
+});
+
+describe("synthesis drafts and slug collisions (DUST3.8 review)", () => {
+  it("does not overwrite a URL draft that has the same slug", async () => {
+    await writeDraftFile(
+      projectDir,
+      url,
+      { ...draft, slug: synthesisDraft.slug },
+      "2026-07-11T00:00:00Z",
+    );
+    await writeSynthesisDraftFile(projectDir, ["note:a"], synthesisDraft, "2026-07-11T00:00:01Z");
+    const drafts = await listDraftFiles(projectDir);
+    expect(drafts).toHaveLength(2);
+    expect((await findDraftByUrl(projectDir, url))?.frontmatter.type).toBe("source");
+  });
+
+  it("re-synthesising the same week still rewrites its own file", async () => {
+    await writeDraftFile(
+      projectDir,
+      url,
+      { ...draft, slug: synthesisDraft.slug },
+      "2026-07-11T00:00:00Z",
+    );
+    await writeSynthesisDraftFile(projectDir, ["note:a"], synthesisDraft, "2026-07-11T00:00:01Z");
+    await writeSynthesisDraftFile(
+      projectDir,
+      ["note:a", "note:b"],
+      { ...synthesisDraft, summary: "Updated summary." },
+      "2026-07-11T00:00:02Z",
+    );
+    const drafts = await listDraftFiles(projectDir);
+    expect(drafts).toHaveLength(2);
+    const synth = drafts.find((d) => d.frontmatter.type === "synthesis");
+    expect(synth?.body).toContain("Updated summary.");
+    expect(synth?.frontmatter.sources).toEqual(["note:a", "note:b"]);
   });
 });

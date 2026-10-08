@@ -22,7 +22,8 @@ import {
   readDraftFile,
   removeDraftFile,
 } from "../knowledge/distill-store.js";
-import { FileWikiStore } from "../wiki/index.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
+import { FileWikiStore, safeDraftSlug } from "../wiki/index.js";
 
 /**
  * Zone directory each page type lives under (spec Decision 28 layout, amended by
@@ -46,7 +47,10 @@ const ZONE_FOR_TYPE: Readonly<Record<WikiPageType, string>> = {
 /** The wiki-relative path a draft promotes to, from its `type` (zone) + slug. */
 export function draftTargetRelPath(draft: DraftFile): string {
   const zone = ZONE_FOR_TYPE[draft.frontmatter.type];
-  return zone === "" ? `${draft.slug}.md` : `${zone}/${draft.slug}.md`;
+  // A draft file name is not trusted: a stem written before slugs were redacted, or
+  // hand-edited, may carry a token, and this path goes into the committed wiki.
+  const slug = safeDraftSlug(draft.slug);
+  return zone === "" ? `${slug}.md` : `${zone}/${slug}.md`;
 }
 
 /** Pending drafts awaiting promotion (thin alias over the draft store). */
@@ -136,6 +140,10 @@ async function defaultConfirm(question: string): Promise<boolean> {
  * user declined.
  */
 export async function runPromote(opts: PromoteOptions): Promise<PromoteOutcome> {
+  // R6 (DUSTSEC.8): this writes the COMMITTED wiki, so plugin rules apply here
+  // too. The store re-redacts title, tags, sources and body at write time, which
+  // also covers drafts written before a rule existed or edited by hand.
+  await ensurePluginRedactionRules(opts.projectDir);
   const draft = await readDraftFile(opts.projectDir, opts.slug);
   if (draft === null) {
     throw new Error(`no pending draft "${opts.slug}" (see: golem wiki promote --list)`);
@@ -164,7 +172,11 @@ export async function runPromote(opts: PromoteOptions): Promise<PromoteOutcome> 
   }
 
   const relPath = draftTargetRelPath(draft);
-  const store = new FileWikiStore({ wikiDir: opts.wikiDir, now: () => opts.nowIso.slice(0, 10) });
+  const store = new FileWikiStore({
+    wikiDir: opts.wikiDir,
+    now: () => opts.nowIso.slice(0, 10),
+    projectDir: opts.projectDir,
+  });
 
   let existedBefore = true;
   try {

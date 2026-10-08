@@ -8,11 +8,11 @@
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { pipelineRedact, stripKnownSecrets } from "../hooks/redact.js";
 import type { WikiFrontmatter, WikiPage, WikiStore, WikiUpsertInput } from "../interfaces/index.js";
 import { UnknownWikiPageError, WikiWriteConflictError } from "../interfaces/index.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { extractWikilinks, parseFrontmatter, serializeFrontmatter } from "./frontmatter.js";
+import { assertSafeWikiPath, redactWikiText as redact } from "./write-redaction.js";
 
 export interface FileWikiStoreOptions {
   readonly wikiDir: string;
@@ -23,11 +23,6 @@ export interface FileWikiStoreOptions {
    * Omit and only the built-in rules run; they always run.
    */
   readonly projectDir?: string;
-}
-
-/** The pipeline stage first, the built-in secret-strip floor on top (hooks/redact.ts). */
-function redact(text: string): string {
-  return stripKnownSecrets(pipelineRedact(text));
 }
 
 /** `foo` and `foo.md` name the same page; readPage has always appended the suffix. */
@@ -145,6 +140,8 @@ export class FileWikiStore implements WikiStore {
     // Redact BEFORE anything is compared or stored: the page lands in a
     // committed tree, and the result handed back to the caller is this page.
     if (this.projectDir !== undefined) await ensurePluginRedactionRules(this.projectDir);
+    // A path is a file name in a committed tree: refuse, never rewrite it.
+    assertSafeWikiPath(rawInput.relPath);
     const input: WikiUpsertInput = {
       relPath: withMdSuffix(rawInput.relPath),
       frontmatter: {

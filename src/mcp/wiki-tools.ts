@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WikiPage, WikiPageType, WikiStore } from "../interfaces/index.js";
 import { UnknownWikiPageError, WikiWriteConflictError } from "../interfaces/index.js";
+import { UnsafeWikiPathError } from "../wiki/write-redaction.js";
 import { errorResult, instrumented, type ToolTelemetry } from "./shared.js";
 
 const WIKI_PAGE_TYPES: [WikiPageType, ...WikiPageType[]] = [
@@ -160,7 +161,8 @@ export function registerWikiTools(server: McpServer, wiki: WikiStore, tel?: Tool
           structuredContent: { ...structuredWikiPage(page), appended: existedBefore },
         });
       } catch (err) {
-        if (err instanceof WikiWriteConflictError) return errorResult(err.message);
+        if (err instanceof WikiWriteConflictError || err instanceof UnsafeWikiPathError)
+          return errorResult(err.message);
         throw err;
       }
     },

@@ -3,6 +3,7 @@
  * source-note draft. Uses a fake InferenceService (no network, no Ollama).
  */
 
+import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type {
   ChatMessage,
@@ -83,6 +84,21 @@ describe("distillPage", () => {
     expect(result.slug).toBe("widget-factory-basics");
     expect(result.tags).toEqual(["widgets", "factory"]);
     expect(result.wikilinks).toEqual(["Widget Factory"]);
+  });
+
+  // A slug becomes a filename and then a committed wiki path; kebab-casing destroys most token shapes.
+  it("replaces a slug that carries a long opaque token with draft-<sha8>", async () => {
+    const hex = randomBytes(20).toString("hex");
+    const draft = {
+      title: "Widget Factory Basics",
+      slug: `notes-${hex}`,
+      tags: [],
+      summary: "summary text",
+      wikilinks: [],
+    };
+    const result = await distillPage(new FakeInferenceService(JSON.stringify(draft)), input);
+    expect(result.slug).toMatch(/^draft-[0-9a-f]{8}$/);
+    expect(result.slug).not.toContain(hex.slice(0, 12));
   });
 
   it("normalizes a messy model slug to kebab-case", async () => {

@@ -7,7 +7,8 @@
  * page, write conflict) must come back as actionable `isError` results.
  */
 
-import { readFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -271,5 +272,24 @@ describe("MCP wiki tools (WS-W W2)", () => {
       arguments: { title_or_path: "concepts/Foo" },
     });
     expect(textOf(read)).toContain("two");
+  });
+
+  // DUST3.8 review: rel_path is stored raw as a file name in a committed tree.
+  it("refuses a rel_path carrying a token, writes nothing and never echoes it", async () => {
+    const client = await connect(depsWithWiki());
+    const hex = randomBytes(20).toString("hex");
+    const tok = `ghp_${"a1B2c3D4".repeat(5)}`;
+    for (const rel of [`concepts/${hex}.md`, `concepts/${tok}.md`]) {
+      const result = await client.callTool({
+        name: "wiki_upsert",
+        arguments: { rel_path: rel, title: "T", type: "concept", body: "x" },
+      });
+      expect(result.isError).toBe(true);
+      const echoed = `${textOf(result)}${JSON.stringify(result.structuredContent ?? {})}`;
+      expect(echoed).not.toContain(hex);
+      expect(echoed).not.toContain(tok);
+    }
+    const written = await readdir(dir, { recursive: true });
+    expect(written).toEqual([]);
   });
 });

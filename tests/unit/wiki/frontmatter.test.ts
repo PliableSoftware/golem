@@ -128,4 +128,24 @@ describe("frontmatter list items containing commas", () => {
       "tags: [a, b]",
     );
   });
+
+  it("keeps the whole raw item when text follows a closing quote", () => {
+    const raw = SAMPLE.replace("tags: [cache, prompts]", 'tags: ["a, b" extra, plain]');
+    expect(parseFrontmatter(raw).frontmatter.tags).toEqual(['"a, b" extra', "plain"]);
+  });
+
+  it("reads a doubled single quote inside single quotes as one quote", () => {
+    const raw = SAMPLE.replace("tags: [cache, prompts]", "tags: ['it''s, ok', plain]");
+    expect(parseFrontmatter(raw).frontmatter.tags).toEqual(["it's, ok", "plain"]);
+  });
+
+  it("round-trips a newline, a backslash and text after a quote", () => {
+    const fm = {
+      ...base,
+      tags: ["line1\nline2", "back\\slash, comma", '"quoted" tail'],
+      sources: [],
+    };
+    const raw = `${serializeFrontmatter(fm)}\n\nbody\n`;
+    expect(parseFrontmatter(raw).frontmatter).toEqual(fm);
+  });
 });
