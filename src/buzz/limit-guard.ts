@@ -35,7 +35,7 @@ import type { RateLimitedError } from "../inference/target-dispatcher.js";
 import type { LimitPrediction } from "../proxy/limit-prediction.js";
 import { decideRetry, MAX_RETRY_ATTEMPTS, RETRY_BUDGET_MS } from "../proxy/rate-limit-retry.js";
 
-// R14.5: the retry-vs-give-up MATH (budget, backoff, attempt cap) moved to
+// The retry-vs-give-up MATH (budget, backoff, attempt cap) moved to
 // `../proxy/rate-limit-retry.js` so the proxy's own retry loop shares it
 // instead of reimplementing it. Re-exported here so this module's existing
 // importers (this file's own tests included) see no change.
