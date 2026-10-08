@@ -15,6 +15,11 @@ the committed [[Wiki-First Knowledge|wiki]] answer before similarity search ever
 runs. Claude reaches it through the `search` / `fetch` / `ingest` MCP tools. Source:
 `src/knowledge/knowledge-base.ts`, `src/mcp/search.ts`.
 
+> **Local answers quote only durable prose:** the proxy's local answer (Decision 33)
+> serves extractive quotes from indexed markdown but never from `docs/plan/`
+> (working state) or `docs/marketing/` (unverified draft copy). Both stay ingested
+> and searchable; the exclusion is `isProseSource` in `src/knowledge/local-answer.ts`.
+
 > **Code vs spec:** spec §3.1 targets Qdrant; the shipped default is an on-disk
 > `FileVectorDriver` (`src/knowledge/file-driver.ts`) — no server process, zero
 > install friction — behind the same `VectorDriver` seam a Qdrant driver can later

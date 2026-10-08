@@ -25,8 +25,13 @@ export const LOCAL_ANSWER_LABEL =
  * durable answers about what Golem is/does. The durable knowledge lives in the
  * wiki and the spec (Decision 28); plan docs (IMPLEMENTATION_PLAN, ROADMAP, batch
  * briefs, verification-notes, BACKLOG) are ephemeral working state.
+ *
+ * `docs/marketing/` holds draft promotional copy: unverified, not durable
+ * knowledge, so it must never be quoted as "from the project knowledge base"
+ * (DUST5.1). Kept an explicit directory list, not a broader glob. This filter is
+ * local-answer ONLY — the drafts stay ingested and findable through `search`.
  */
-const WORKING_DOC_RE = /(^|\/)docs\/plan\//;
+const WORKING_DOC_RE = /(^|\/)docs\/(plan|marketing)\//;
 
 /**
  * Is this source an AUTHORITATIVE prose source to serve an extractive answer from?
@@ -40,7 +45,7 @@ const WORKING_DOC_RE = /(^|\/)docs\/plan\//;
  *     policyFor(0)` in a test file scored *above* the correct "slider
  *     level 0 = passthrough" prose.
  *  2. Durable prose only. Among prose, exclude working/planning docs (`docs/plan/`)
- *     so an answer comes from the durable knowledge store (wiki + spec + root docs
+ *     and draft marketing copy (`docs/marketing/`) so an answer comes from the durable knowledge store (wiki + spec + root docs
  *     like README/CLAUDE.md), not an ephemeral plan table.
  *
  * If nothing authoritative clears the confidence floor, the service declines and
