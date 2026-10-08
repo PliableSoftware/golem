@@ -72,7 +72,7 @@ export {
   semanticForcedReportRows,
   usageReportRows,
 } from "./usage-report.js";
-export { type WindowedStats, windowedStats, windowedStatsWithFallback } from "./windowed-stats.js";
+export { type WindowedStats, windowedStatsWithFallback } from "./windowed-stats.js";
 
 /** The durable telemetry store for a project (JSONL backend at P0). */
 export function openTelemetryStore(projectDir: string): TelemetryStore {
