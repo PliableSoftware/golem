@@ -7,6 +7,7 @@ size: M
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md R8 (USER, 2026-10-08); SUMMARY.md contradiction R8; ADR-0002; R12.12, R12.13; src/hooks/permission-request.ts header"
 gate: "Step 1 report exists: whether a 'relay channel connected' signal is observable from the PermissionRequest hook, with evidence. If yes: with no channel connected a destructive/outward call reaches the native permission dialog (before: denied, the human never asked); with a channel connected it is still denied. If no: the task stops after step 1 and records the gap — it does not invent a heuristic. golem verify green by exit code."
+blocked: "USER decision (2026-10-08 verify step): nothing at the PermissionRequest hook reports a connected relay channel (see the dated note at the end of docs/plan/verification-notes.md). Either accept the unconditional deny and amend ADR-0002 via DUST2.3, or build a Golem-owned channel server that writes a connected marker. R12.13 is still unconfirmed."
 touches: [src/hooks/permission-request.ts, src/autonomy/gate.ts, src/autonomy/index.ts, docs/plan/verification-notes.md, tests]
 created: 2026-10-08
 ---
