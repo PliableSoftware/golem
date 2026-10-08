@@ -9,7 +9,7 @@ Run on 2026-10-08 in this worktree (`git tag --sort=-v:refname`, `git tag --cont
 - Tags in the v0.54 line: `v0.54.0` (`b949fd3`, PR #182, 2026-09-07) and `v0.54.3` (`1719982`, PR #200, 2026-09-23). `v0.54.3` is the newest tag. There is no `v0.54.1` or `v0.54.2` tag.
 - The release commits `54f089a` (`chore(release): v0.54.1`, 2026-09-16) and `43ac834` (`chore(release): v0.54.2`, 2026-09-20) exist and are both contained in `v0.54.3`.
 - `npm view @pliable/golem versions`, read-only on 2026-10-08, returned exactly one version: `0.54.2`. This read does not show `0.54.3` on the registry, and it does not show what was installed from any other channel. Whether `v0.54.3` was ever published is not established by this draft.
-- **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 commits). Every fix is on `development` only.
+- **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 commits). Every fix is on `development` only. <!-- B-29; git tag --contains over the fix shas -->
 
 So: **every tagged build, `v0.54.0` and `v0.54.3` alike, lacks all of the DUSTSEC fixes.** The `0.54.2` build on npm was not checked directly: its source commit is unknown but is `2fc7cd2` or later, and no tag contains any fix. Anyone running a build from this line should treat the weaknesses in the security section as present in it, with one caveat: for each item the section says which tagged builds were checked directly and which were not. No wording in this draft says that current releases are protected. <!-- B-29; git tag --contains over the fix shas; 1719982; b949fd3 -->
 
@@ -101,7 +101,7 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 - Affected released builds: all of them, by the evidence of the tags (no tag contains the fix). This draft did not trace it tag by tag.
 - Status: fixed on `development` in PR #265 (code `109f32b`, task doc `d52dbf8`, test `96d9b81`). Every JSON object or array body on any route now gets the same redaction rules, in the same order, with plugin rules, and the fail-safe path covers the same routes. Level `off` still redacts; `bypass_all` is unchanged. No tag contains it.
 - What it does NOT cover, found by a review of the change by a separate reviewer agent in this project (not an outside audit) and tracked as separate work: a JSON body sent with a content encoding such as gzip, or one that begins with a byte-order mark, fails to parse and is forwarded unredacted; a body that is not JSON (multipart uploads, plain text) is forwarded unchanged and a test now pins that; the redaction walk is synchronous with no size cap on the request body.
-- A related defect that already existed on the main messages route, not introduced here: the redaction's long-token rule also rewrites some 33 and 34 character API ids (server tool and batch ids), which the API then rejects, and this change extends that behaviour to the token-count and batches routes. It is tracked as its own task.
+- A related defect that already existed on the main messages route, not introduced here: the redaction's long-token rule also rewrites some 33 and 34 character API ids (server tool and batch ids), which the API then rejects, and this change extends that behaviour to the token-count and batches routes. It is tracked as its own task. <!-- docs/plan/tasks/DUSTSEC.20.md -->
 <!-- C-01; 109f32b; d52dbf8; 96d9b81; 68580a4 -->
 
 #### Open
@@ -110,7 +110,7 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 
 ### Other security-relevant fixes found in Dust Phase 3 (on `development`, in no tag)
 
-Phase 3 re-checked the Phase 1 findings against current code (52 did not reproduce) and fixed the remaining ones. These are the security-relevant ones, named in the Phase 3 debrief. Whether each was present in a tagged build was not traced; the debrief records the Gemini credential forward as pre-existing and several others as caught in review of the Phase 3 changes. Nothing is claimed here beyond the commit subjects.
+Phase 3 re-checked the Phase 1 findings against current code (52 did not reproduce) and fixed the remaining ones. These are the security-relevant ones, named in the Phase 3 debrief. Whether each was present in a tagged build was not traced; the debrief records the Gemini credential forward as pre-existing and several others as caught in review of the Phase 3 changes. Nothing is claimed here beyond the commit subjects. <!-- 2026-10-08-DUST3-refactor.md -->
 
 - A plugin that changed a request in place skipped re-redaction (S8), and the `connection-password` rule re-matched its own placeholder so a second pass renumbered it (S10). Fixed in PR #245 (`7f0fd7d`, `84d6059`, `6b7af50`; merge `fb9673c`). <!-- 6b7af50; 84d6059; fb9673c -->
 - The redaction-off warning was dropped when an update was available (S11), and `golem proxy status` did not say redaction was off under `bypass_all` (S12). Fixed in PR #249 (`0f5eb87`, `d41db02`; merge `5693427`). <!-- 0f5eb87; d41db02; 5693427 -->
