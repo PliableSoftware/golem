@@ -188,7 +188,7 @@ ink and React were subsequently **removed** (spec Decision 51): they were ~85% o
 panel's load and nothing in them could be deferred. `src/tui/` now renders itself —
 `render.ts` (layout), `screen.ts` (diffed repaint), `keys.ts` (key decoding),
 `ansi.ts` (colour degradation), `width.ts` (ANSI/wide-char measurement) — with the
-same layout, keys, and colours, and `golem-run` back to 6 runtime dependencies.
+same layout, keys, and colours, and `@pliable/golem` (then published as `golem-run`) back to 6 runtime dependencies.
 **The panel now paints a fully-populated first frame in ~170ms**, so the pre-paint
 splash was deleted too: there is nothing left to cover.
 
