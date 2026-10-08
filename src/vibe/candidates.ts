@@ -4,7 +4,7 @@
  * `~/.golem/vibe/candidates.jsonl` never reaches a prompt. It is a ledger of
  * corrections the capture layer saw, counted, so the quiz can ask about a
  * preference that RECURRED rather than one that happened once. A pattern seen
- * once is an edit; a pattern seen three times across three files is a
+ * once is an edit; a pattern seen `QUIZ_THRESHOLD` (2) times is a
  * preference, and that distinction is the only thing standing between a useful
  * question and a nag.
  *
