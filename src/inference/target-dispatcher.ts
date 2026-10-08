@@ -21,7 +21,7 @@
  * what happened when nothing else was. The chain is now, in order:
  *
  * 1. an explicit `targetId` on the call,
- * 2. `inference.worker_targets[worker]`,
+ * 2. `inference.worker_targets[worker]`, else `inference.personas[worker].model`,
  * 3. `inference.model`,
  * 4. the harness's own default upstream (the synthetic target over
  *    `proxy.upstream_*`), which always exists.

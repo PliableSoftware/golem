@@ -17,10 +17,10 @@
  * ## What is deliberately NOT here
  *
  * Which lane a persona is staffed in — subagent or dispatched worker — is
- * R14.2. This module reports `staffed` (does it name a model at all) and stops
- * there. Guessing the lane before the resolution chain exists would put a second
- * answer to that question in the codebase, which is the thing R14.1's brief is
- * trying to avoid by retiring `default_coder`.
+ * resolved in `persona-lane.ts` (R14.2). This module reports `staffed` (does it
+ * name a model at all) and stops there. Resolving the lane here too would put a
+ * second answer to that question in the codebase, which is the thing R14.1's
+ * brief is trying to avoid by retiring `default_coder`.
  */
 
 import { readFile } from "node:fs/promises";
