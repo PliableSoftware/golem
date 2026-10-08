@@ -317,6 +317,26 @@ describe("dust skill (DUST4.1)", () => {
     }
   });
 
+  it("pins the Phase 1 audit method a dogfood run found missing (DUST4.4)", () => {
+    if (skill === undefined) throw new Error("expected a dust skill");
+    const audit = skill.slice(skill.indexOf("## Phase 1"), skill.indexOf("## Decisions record"));
+    for (const marker of [
+      "single partition",
+      "do not read earlier audit notes",
+      "- matches:",
+      "- drifted:",
+      "- partial:",
+      "- not started:",
+      "- contradicted:",
+      "claim of absence",
+      "A truncated tool read is not a read",
+      "one table row per claim",
+      "HIGH security items (",
+    ]) {
+      expect(audit.toLowerCase()).toContain(marker.toLowerCase());
+    }
+  });
+
   it("names neither a literal redaction marker nor the bypass-off command", () => {
     expect(skill).not.toContain(`[${"RE"}DACTED`);
     expect(skill).not.toMatch(/bypass_all/);
