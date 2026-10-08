@@ -25,10 +25,14 @@
  *    Golem processes (other sessions, the proxy) may be appending to
  *    concurrently, and it is never assumed to have been written by "this"
  *    process. Trust is decided purely by comparing the file's CURRENT
- *    `size`/`mtimeMs` against what the cache last recorded: growth-only is
- *    trusted, anything else (shrink, backwards mtime, missing/corrupt cache)
- *    falls back to a full reparse. That fallback is always correct — a stale
- *    or racing cache costs today's performance, never a wrong number.
+ *    `ino`/`size`/`mtimeMs` against what the cache last recorded: same inode
+ *    and growth-only is trusted, anything else (rotation, shrink, backwards
+ *    mtime, missing/corrupt cache) falls back to a full reparse. The
+ *    watermark only ever advances to the last complete line, so a record
+ *    still being written is picked up once finished. The fallback is always
+ *    correct, so a stale or racing cache costs performance, not a wrong
+ *    number. A rewrite that keeps the inode, grows the file and moves mtime
+ *    forward cannot be told from an append; nothing in this store does that.
  *
  * 2. **Rotation** (see {@link JsonlTelemetryStore#record}): once `events.jsonl`
  *    passes `rotateThresholdBytes` (10MB by default — big enough that normal
@@ -118,6 +122,16 @@ async function readOrEmptyFile(file: string): Promise<string> {
  * than throwing — the caller's own size/mtime check is what decides whether
  * that is trustworthy, not this function.
  */
+/**
+ * Split off the complete lines of `text`: everything up to and including the
+ * last `\n`. A trailing fragment with no newline is a record another process
+ * is still writing, so it is neither folded nor counted in `consumedBytes`.
+ */
+function completeLines(text: string): { complete: string; consumedBytes: number } {
+  const complete = text.slice(0, text.lastIndexOf("\n") + 1);
+  return { complete, consumedBytes: Buffer.byteLength(complete, "utf8") };
+}
+
 function readFromOffset(file: string, start: number, end?: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -163,6 +177,14 @@ const rollupEntrySchema = z.object({
    */
   size: z.number(),
   mtimeMs: z.number(),
+  /**
+   * Inode of the CURRENT file the offset refers to. A rotation replaces the
+   * file, so a changed inode means `offset` points into a different file and
+   * must not be trusted (size/mtime alone cannot see a rotation once the new
+   * file has grown past the old watermark). Absent on entries written before
+   * this field existed: those are distrusted once and rewritten.
+   */
+  ino: z.number().optional(),
   totals: aggregateTotalsSchema,
 });
 type RollupEntry = z.infer<typeof rollupEntrySchema>;
@@ -175,7 +197,7 @@ const rollupFileSchema = z.object({
 type RollupFile = z.infer<typeof rollupFileSchema>;
 
 /** Real `projectId` values are never empty-and-NUL-wrapped, so this can't collide. */
-const ROLLUP_ALL_KEY = " all ";
+const ROLLUP_ALL_KEY = "\u0000all\u0000";
 
 /** `.golem/state/telemetry-rollup.json` for a project — {@link JsonlTelemetryStore#aggregate}'s cache. */
 export function telemetryRollupPath(projectDir: string): string {
@@ -510,7 +532,7 @@ export class JsonlTelemetryStore implements TelemetryStore {
   async aggregate(projectId?: string): Promise<CompressionStats> {
     const key = projectId ?? ROLLUP_ALL_KEY;
 
-    let currentStat: { size: number; mtimeMs: number } | null;
+    let currentStat: { size: number; mtimeMs: number; ino: number } | null;
     try {
       currentStat = await stat(this.#file);
     } catch (err) {
@@ -526,6 +548,8 @@ export class JsonlTelemetryStore implements TelemetryStore {
     const trustworthy =
       currentStat !== null &&
       entry !== undefined &&
+      entry.ino !== undefined &&
+      currentStat.ino === entry.ino &&
       currentStat.size >= entry.size &&
       currentStat.mtimeMs >= entry.mtimeMs;
 
@@ -537,15 +561,19 @@ export class JsonlTelemetryStore implements TelemetryStore {
     // argument, and it is re-checked from scratch on every call.
     const appended = await readFromOffset(this.#file, entry.offset);
     const acc = cloneAggregateTotals(entry.totals);
-    for (const line of appended.split("\n")) {
+    // Advance only past complete lines: a partial trailing record is re-read
+    // whole on the next call instead of being lost.
+    const { complete, consumedBytes } = completeLines(appended);
+    for (const line of complete.split("\n")) {
       const ev = parseEvent(line);
       if (ev !== null) foldAggregateEvent(acc, ev, projectId);
     }
-    const newOffset = entry.offset + Buffer.byteLength(appended, "utf8");
+    const newOffset = entry.offset + consumedBytes;
     await writeTelemetryRollupEntry(this.#rollupFile, key, {
       offset: newOffset,
       size: newOffset,
       mtimeMs: currentStat?.mtimeMs ?? entry.mtimeMs,
+      ino: currentStat?.ino,
       totals: acc,
     });
     return toCompressionStats(projectId, acc);
@@ -555,7 +583,7 @@ export class JsonlTelemetryStore implements TelemetryStore {
    * Full reparse: current + one retained rotation generation (never
    * unbounded — see the module doc comment), used both for a cold cache and
    * for a distrusted one. Always correct; the only cost of reaching here
-   * unnecessarily is today's pre-fix performance, never a wrong number.
+   * unnecessarily is performance, not a wrong number.
    */
   async #fullReparseAggregate(
     projectId: string | undefined,
@@ -579,7 +607,7 @@ export class JsonlTelemetryStore implements TelemetryStore {
     // `{offset: <full size>, totals: {ccrRefsRetrieved: 1}}` against a file
     // that already durably held 2 events — the write path was never at
     // fault, only this checkpoint's bookkeeping.
-    let preReadStat: { size: number; mtimeMs: number } | null;
+    let preReadStat: { size: number; mtimeMs: number; ino: number } | null;
     try {
       preReadStat = await stat(this.#file);
     } catch (err) {
@@ -587,10 +615,12 @@ export class JsonlTelemetryStore implements TelemetryStore {
       preReadStat = null; // no current file — rotation-only content, if any
     }
     const rotated = await readOrEmptyFile(rotatedTelemetryFilePath(this.#file));
-    const current =
+    const currentRaw =
       preReadStat === null || preReadStat.size === 0
         ? ""
         : await readFromOffset(this.#file, 0, preReadStat.size - 1);
+    // Checkpoint only up to the last complete line; see completeLines().
+    const { complete: current, consumedBytes: currentConsumed } = completeLines(currentRaw);
     const raw = rotated + current;
     const acc = emptyAggregateTotals();
     for (const line of raw.split("\n")) {
@@ -603,9 +633,10 @@ export class JsonlTelemetryStore implements TelemetryStore {
     // mismatch check) and triggers another full reparse.
     if (preReadStat !== null) {
       await writeTelemetryRollupEntry(this.#rollupFile, key, {
-        offset: preReadStat.size,
-        size: preReadStat.size,
+        offset: currentConsumed,
+        size: currentConsumed,
         mtimeMs: preReadStat.mtimeMs,
+        ino: preReadStat.ino,
         totals: acc,
       });
     }
