@@ -1,7 +1,7 @@
 ---
 task: DUST3.12
 title: "Telemetry store correctness: no rollup splice across rotation, no lost event on a partial line, no literal NUL bytes in source, fold the `all` window once"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/telemetry/jsonl-store.ts, src/telemetry/cost-benchmark.ts, src/telemetry/windowed-stats.ts, src/telemetry/index.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:47.551Z
 ---
 
 ## What this is
@@ -49,3 +50,7 @@ first, commit as you go.
 ## Out of scope
 
 - Watch, dashboard and statusline CLI defects: DUST3.13.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

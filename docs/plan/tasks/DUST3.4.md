@@ -1,7 +1,7 @@
 ---
 task: DUST3.4
 title: "Status honesty and proxy process control: never hide redaction-off, report bypass in `proxy status`, make select-target restart properly, stop advertising a dashboard `ps` never finds"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/cli/status-collect.ts, src/cli/commands/proxy.ts, src/cli/commands/select-target.ts, src/cli/commands/ps.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:43.250Z
 ---
 
 ## What this is
@@ -42,3 +43,7 @@ commit as you go.
 - The dead `~/.golem` subdirectory scan in `collectProxies` (`ps.ts:290-304`): NEEDS-USER
   proposal in the index.
 - `ps.ts:17` and other comment-only fixes: DUST3.18.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

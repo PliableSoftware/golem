@@ -1,7 +1,7 @@
 ---
 task: DUST3.6
 title: "Gateway CLI papercuts: reject `--store fiel`, read piped login on `add --login`, report keychain faults on `forget`, stop truncating model ids silently, reject `model[262k]`"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: [DUST3.5]
 touches: [src/cli/commands/gateway.ts, src/cli/models.ts, src/credentials/store.ts, src/config/schema.ts, src/providers/gateways.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:44.352Z
 ---
 
 ## What this is
@@ -40,3 +41,7 @@ Small, independent CLI defects. It depends on DUST3.5 only because both edit
   by decision V1 (DUST2.2).
 - `account login` / `proxy.accounts` strings in `src/cli/gateways.ts` and
   `src/cli/commands/target.ts`: DUST3.18.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

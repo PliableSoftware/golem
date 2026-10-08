@@ -1,7 +1,7 @@
 ---
 task: DUST3.8
 title: "Wiki write path and KB lifecycle: redact and instrument wiki_upsert, normalise .md, key distill drafts by source, quote-aware frontmatter lists, close watchers, keep graph-first search when the KB build fails, reject invented rerank ids"
-state: queued
+state: done
 owner: agent
 size: L
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/mcp/wiki-tools.ts, src/wiki/file-wiki-store.ts, src/wiki/frontmatter.ts, src/knowledge/distill-store.ts, src/knowledge/rerank.ts, src/cli/commands/mcp-serve.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:45.424Z
 ---
 
 ## What this is
@@ -51,3 +52,7 @@ correctness gaps on the same write/read path. Work in your own worktree
   (`wiki-tools.ts:106`), `cli/promote.ts`, `cli/notes.ts`: DUST3.18. DUST3.18 depends on this
   task for `wiki-tools.ts`.
 - The store/indexing bugs (D3-D7): DUST3.7.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

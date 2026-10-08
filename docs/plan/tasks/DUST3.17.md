@@ -1,7 +1,7 @@
 ---
 task: DUST3.17
 title: "`vibe confirm` refuses a rejected key; release.mjs bumps package-lock.json with the other versions"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/vibe/candidates.ts, scripts/release.mjs, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:50.229Z
 ---
 
 ## What this is
@@ -35,3 +36,7 @@ test first, commit as you go.
 
 - `release.mjs` header steps that say "not committed/tagged/published": DUST3.18.
 - Atomic writes / SHA256SUMS assertion: DUST2.21.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

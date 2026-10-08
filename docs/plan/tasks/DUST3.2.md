@@ -1,7 +1,7 @@
 ---
 task: DUST3.2
 title: "Dead code (config, tui, cli): delete coerceLevel, DIM, _levelFallbackName, the slider-0 confirm branch and an orphaned doc comment; table the public leftovers for the user"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "golem verify exit 0 before AND after (exit code); suite test count unchan
 depends_on: []
 touches: [src/config/control-surface-types.ts, src/tui/state.ts, src/tui/ansi.ts, src/cli/session-report.ts, src/cli/proxy-runtime.ts]
 created: 2026-10-08
+updated: 2026-10-08T18:33:42.186Z
 ---
 
 ## What this is
@@ -59,3 +60,7 @@ collected with all the others in `docs/plan/audit/dust-1/PHASE3-INDEX.md` for on
 - Comment-only staleness elsewhere in these files (DUST3.18).
 - Telemetry, knowledge, session and buzz leftovers: listed in DUST3.7, DUST3.12, DUST3.15 and
   DUST3.16, beside the bugs in the same files.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

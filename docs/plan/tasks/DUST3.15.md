@@ -1,7 +1,7 @@
 ---
 task: DUST3.15
 title: "Session transport and host log: SSE drop frame keeps the cursor, idempotency reserves the id before awaiting, the host log is trimmed, `session forget` rejects a path-escaping id"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/session/transport.ts, src/session/join-queue.ts, src/session/host-log.ts, src/session/conversation-store.ts, src/session/session-bus.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:49.163Z
 ---
 
 ## What this is
@@ -46,3 +47,7 @@ test first, commit as you go. `src/interfaces/` is frozen: fix behind the interf
 - `/interrupt` answering 501: DUST2.19.
 - D10 (`session host stop` on Windows may leave `claude` running): not reproduced (suspected only,
   needs a Windows run). Listed in the index.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

@@ -1,7 +1,7 @@
 ---
 task: DUST3.11
 title: "Tasks, spawn gate and delegation ledger: escalated tasks are not re-run locally, the gate honours resetAtIso, ledger writes do not lose updates, `review --waive` needs an id"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/tasks/multiplex.ts, src/hooks/spawn-gate.ts, src/hooks/delegation-ledger.ts, src/cli/commands/tasks.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:47.013Z
 ---
 
 ## What this is
@@ -38,3 +39,7 @@ resume). Rebase rather than resolve by hand.
 - `spawnResume` failure detection: `dust-comment-pass-code-defects`.
 - `golem task resume` for plan tasks, worktree capture, unparseable docs: DUST2.12.
 - Quoted scalar titles: `roadmap-generator-quoted-titles`.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

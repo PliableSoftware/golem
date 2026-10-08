@@ -1,7 +1,7 @@
 ---
 task: DUST3.3
 title: "Pipeline redaction correctness: re-redact after in-place plugin mutation, make connection-password idempotent, refuse zero-length plugin rules, bound plugin problems, log the held stage"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/pipeline/pipeline.ts, src/pipeline/redaction.ts, src/pipeline/redaction-rules.ts, src/plugins/loader.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:42.716Z
 ---
 
 ## What this is
@@ -58,3 +59,7 @@ each fix as it goes green.
 - h9 path-like tokens with `=`/`+` and a policy that cannot represent redaction-off: DUST2.23.
 - Whole-body `JSON.stringify` re-serialisation: settled by decision C1 / DUST2.24.
 - Plugin diagnostics UX (counts, regex-hang heuristic): DUST2.11.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief

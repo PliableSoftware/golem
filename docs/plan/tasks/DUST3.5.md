@@ -1,7 +1,7 @@
 ---
 task: DUST3.5
 title: "Credentials reach the proxy and stay out of routes: auto-start must load gateway keys, gateway ids must not collide on one env name, the Gemini key leaves ProxyRoute"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each defect has a regression test that fails on the current code and pass
 depends_on: []
 touches: [src/cli/proxy-daemon.ts, src/cli/commands/prompt-guidance.ts, src/config/control-surface-runtime.ts, src/providers/gateways.ts, src/cli/gateways/credentials.ts, src/cli/route-resolver.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T18:33:43.825Z
 ---
 
 ## What this is
@@ -50,3 +51,7 @@ never loads gateway keys. Write each failing test first. Work in your own worktr
 
 - Gateway CLI papercuts in `gateway.ts`, `models.ts`, `credentials/store.ts`: DUST3.6.
 - `credentials.ts:222,224` comment wording: DUST3.18.
+
+## Outcome
+
+shipped (PRs 242-256); hard-rule branches independently reviewed, see the Phase 3 debrief
