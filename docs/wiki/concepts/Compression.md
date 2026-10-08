@@ -67,7 +67,7 @@ lever, not the headline.
 The lossless half is always worthwhile (it never breaks the cache); the lossy
 half is the situational part. Implementation lives in `src/compression/`
 (`native-lossless.ts` for the lossless path, which is off at
-`compression.level: off` — `src/interfaces/policy.ts:140-147` — and
+`compression.level: off` — `src/interfaces/policy.ts:142-148` — and
 `headroom-adapter.ts` for the pinned Headroom semantic stage).
 
 ### Is everything lossy reversible?

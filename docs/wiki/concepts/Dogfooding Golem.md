@@ -4,7 +4,7 @@ type: concept
 tags: [dogfooding, proxy, dev-workflow, headroom]
 sources: ["docs/DEVELOPMENT.md (relocated here by Decision 36, 2026-07-16)"]
 created: 2026-07-16
-updated: 2026-08-21
+updated: 2026-10-08
 ---
 
 # Developing Golem while using Golem
@@ -30,7 +30,7 @@ flowchart TB
 
   subgraph Stable["STABLE — frozen, yours"]
     GBIN["Global install<br/>npm i -g golem-run-*.tgz"]
-    SP["golem proxy start --detach<br/>:4653 · pid file in .golem/proxy.pid"]
+    SP["golem proxy restart (detached daemon)<br/>:4653 · pid file in .golem/proxy.pid"]
     DASH["golem dashboard<br/>:4654"]
     GBIN --> SP
     SP --- DASH
@@ -47,7 +47,7 @@ flowchart TB
   CC --> SP
   SP --> UP["Upstream (Anthropic / gateway)"]
   DP --> UP
-  SIDE["Headroom sidecar (opt-in, compression ≥3)<br/>uv run --with headroom-ai==pin · fails open"]
+  SIDE["Headroom sidecar (opt-in, compression ≥2, non-caching upstream only)<br/>uv run --with headroom-ai==pin · fails open"]
   SP -.->|"compression.headroom_sidecar"| SIDE
   DP -.-> SIDE
 
@@ -63,8 +63,8 @@ three-command act, never a side effect of a build.
 | | Stable | Dev |
 |---|---|---|
 | Build | frozen global install (`npm i -g golem-run-*.tgz`) — a real copy, unaffected by `npm run build` | the repo's `dist/` (changes every build) |
-| Run | `golem proxy` (resolves to the global binary) | `node dist/cli/main.js proxy --port 4655` |
-| Port | **4653** (what `golem init` writes to `ANTHROPIC_BASE_URL`) | **4655** (never in your session's path) |
+| Run | `golem proxy restart` (detached daemon; bare `golem proxy` is `status`) | `node dist/cli/main.js proxy start --port 4655` (foreground) |
+| Port | **4653** (what `golem init` writes to `ANTHROPIC_BASE_URL`) | **4655** (never in your session's path; the same number is the default `security.write_port`, `src/config/schema.ts:1165`, so the dev proxy collides with a project's write server on defaults. UNVERIFIED: whether both can be up at once) |
 | Who runs it | **you**, in your own terminal (persists across agent sessions) | the agent, transiently, only while testing |
 | Dashboard | `golem dashboard` → 4654 | — |
 
@@ -75,20 +75,21 @@ cannot affect it.
 ## Running stable persistently
 
 The proxy has a daemon lifecycle, so it survives on its own — no dedicated
-terminal needed. A `--detach`'d proxy outlives the shell that started it (that
-was the old failure mode: an agent-started background job dying with its
-session).
+terminal needed. The detached daemon (started by `golem proxy restart`) outlives the shell that
+started it (that was the old failure mode: an agent-started background job dying
+with its session). `golem proxy start` has **no** `--detach` flag: it runs in the
+foreground and is the daemon's own entry point (`src/cli/commands/proxy.ts:512-526`).
 
 ```sh
-golem proxy start --detach     # binds 4653, backgrounded, survives this shell
+golem proxy restart            # binds 4653, detached, survives this shell
 golem proxy status             # running? which pid/port/upstream?
-golem proxy restart            # reliable: stop, wait for the port, start detached
 golem proxy stop               # stop it
 golem dashboard                # savings UI on 4654 (still foreground)
 ```
 
-`golem proxy` with no subcommand runs in the FOREGROUND (for a terminal you keep
-open). `start --detach` / `restart` are the persistent, agent-safe path — the
+`golem proxy` with no subcommand is `status`; `golem proxy start` is the FOREGROUND
+run (for a terminal you keep open). `restart` (stop, wait for the port, start
+detached) is the persistent, agent-safe path — the
 pid file at `<project>/.golem/proxy.pid` makes them idempotent and stoppable
 from any shell.
 
@@ -142,11 +143,13 @@ npm install -g ./golem-run-*.tgz
 That is the *only* moment your live proxy changes — deliberately, not as a side
 effect of development.
 
-## Headroom semantic sidecar (opt-in, compression ≥3)
+## Headroom semantic sidecar (opt-in, compression ≥2)
 
-At compression level ≥3 Golem can route the losslessly-compressed request through the
+At compression level ≥2 Golem can route the losslessly-compressed request through the
 **Headroom** compression pipeline (spec Decision 23). It is **off by default** —
-it adds a Python dependency — and **fails open** (if it can't start, the request
+it adds a Python dependency — it is **gated off on a prompt-caching upstream**
+(the default Anthropic one), where levels 2 and 3 behave as level 1
+(`src/pipeline/pipeline.ts:658-668`, see [[Compression Levels]]), and it **fails open** (if it can't start, the request
 is forwarded with just the lossless stages).
 
 Enable it and provide the runtime:
@@ -156,7 +159,7 @@ Enable it and provide the runtime:
 #    pinned package with `uv run --with headroom-ai==<pin>` (no global install).
 # 2) Turn it on in <project>/.golem/settings.json:
 #    { "compression": { "headroom_sidecar": true } }   (or GOLEM_COMPRESSION_HEADROOM_SIDECAR=1)
-# 3) Set the compression dial to 3 and restart the proxy:
+# 3) Set the compression dial to 2 or 3 and restart the proxy:
 golem compression 3
 golem proxy restart
 ```
@@ -179,7 +182,7 @@ Three of them, in increasing order of how far they take Golem out of the path
 1. **`golem proxy stop`** — turns the *pipeline* off while keeping the port
    served by a redaction-only shim. Nothing to reload, and nothing edited: the
    wiring stays, so Claude Code never notices. Restore with
-   `golem proxy start --detach`. In the VS Code panel this is the Stop button.
+   `golem proxy restart`. In the VS Code panel this is the Stop button.
 2. **`golem proxy unwire`** — removes `ANTHROPIC_BASE_URL` (and
    `ENABLE_TOOL_SEARCH`) from `.claude/settings.json` → straight back to the
    direct API. **Reload the window afterwards**: Claude Code does *not* hot-reload
