@@ -60,27 +60,15 @@ doesn't touch code or wiki structure.
 
 ---
 
-## Status (as of 2026-09-26)
+## Status (as of 2026-10-08)
 
-**Phase 1: content complete, not yet merged.**
+**Phase 1: done and merged to `development`.** DUST1.1-DUST1.12 notes and
+`SUMMARY.md` are in `docs/plan/audit/dust-1/`.
 
-- All 11 audits (DUST1.1–DUST1.11) done, committed in their own worktrees/branches.
-- DUST1.12 close-out done in `D:/Personal/Repos/golem-dust1-phase1` (branch
-  `dust/phase-1`, commit `9be1c87`): merged all 11 notes, wrote `SUMMARY.md`,
-  clean working tree.
-- **Not yet done:** opening the PR from `dust/phase-1` into `development`.
-  `golem task done` for DUST1.1–1.12 and `golem task index --write` — check
-  whether the close-out commit already did this before opening the PR.
-- **Overall findings (800 rows, 791 classified, 746 distinct features after
-  dedup):** 436 M (55%) · 194 D (25%) · 70 P · 43 N · 48 X. 13 cross-partition
-  groups disagree (12 real conflicts X1–X12, 1 deferred).
-- SUMMARY.md flags 5 HIGH-severity security findings recommended to fix
-  out-of-band *before* Phase 3 starts, plus 1 more not reachable until R14.2
-  ships.
+**Phase 2: task docs written, work not started.** `DUST2.1`-`DUST2.26` (doc
+rebaseline and gap tasks), `DUSTSEC.1`-`DUSTSEC.16` (security and decision
+code fixes, to land before Phase 3) and `npm-claim-golem-run` (owner: user)
+are in `docs/plan/tasks/`. USER decisions are recorded in
+`docs/plan/audit/dust-1/DECISIONS.md`.
 
-**Phase 2–5: not started.** No task docs exist yet. Phase 2 task docs get
-written from Phase 1's `SUMMARY.md` once that PR is reviewed/merged.
-
-### Next step
-Review `dust/phase-1` (11 findings notes + `SUMMARY.md`), decide the 12 X1–X12
-conflicts, then open the PR into `development`.
+**Phase 3-5: not started.** Gated on Phase 2 merged.
