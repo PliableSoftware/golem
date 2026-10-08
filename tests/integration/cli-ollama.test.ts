@@ -222,11 +222,13 @@ describe("runOllamaSetup — happy path", () => {
     expect(result.install?.plan.kind).toBe("winget");
     expect(result.pull).toEqual({ model: "qwen2.5-coder:7b", alreadyPulled: false });
     expect(deps.runInstallCommand).toHaveBeenCalledOnce();
-    expect(native.pull).toHaveBeenCalledOnce();
+    expect(native.pull).toHaveBeenCalledTimes(3);
+    expect(result.extraPulls?.map((r) => r.model)).toEqual(["qwen2.5:7b", "qwen2.5:14b"]);
 
     const rendered = renderSetupResult(result);
     expect(rendered).toContain("Installed Ollama");
     expect(rendered).toContain("Pulled model qwen2.5-coder:7b");
+    expect(rendered).toContain("Pulled model qwen2.5:14b");
   });
 
   it("stops after install with no pull attempt when the install plan is manual", async () => {

@@ -40,6 +40,7 @@ export {
   OLLAMA_LINUX_INSTALL_SCRIPT_URL,
   OllamaNotReadyError,
   pullDrafterModel,
+  pullRoleModels,
   resolveInstallPlan,
   smokeTestModel,
 } from "./ollama-bootstrap.js";

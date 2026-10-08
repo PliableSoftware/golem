@@ -17,6 +17,7 @@ import {
   type OllamaBootstrapDeps,
   OllamaNotReadyError,
   pullDrafterModel,
+  pullRoleModels,
   resolveInstallPlan,
   smokeTestModel,
 } from "../../../src/inference/ollama-bootstrap.js";
@@ -239,6 +240,32 @@ describe("pullDrafterModel", () => {
     await expect(
       pullDrafterModel(deps, HardwareTier.PMid, { reachableTimeoutMs: 10 }),
     ).rejects.toBeInstanceOf(OllamaNotReadyError);
+  });
+});
+
+describe("pullRoleModels (D26e)", () => {
+  it("pulls every live role's model, drafter first, each distinct model once", async () => {
+    const native = new OllamaNativeClient();
+    vi.spyOn(native, "isReachable").mockResolvedValue(true);
+    vi.spyOn(native, "hasModel").mockResolvedValue(false);
+    const pull = vi.spyOn(native, "pull").mockResolvedValue();
+    const deps = fakeDeps({ native });
+
+    const results = await pullRoleModels(deps, HardwareTier.PMid);
+    expect(results.map((r) => r.model)).toEqual(["qwen2.5-coder:7b", "qwen2.5:7b", "qwen2.5:14b"]);
+    expect(pull).toHaveBeenCalledTimes(3);
+  });
+
+  it("skips models already present", async () => {
+    const native = new OllamaNativeClient();
+    vi.spyOn(native, "isReachable").mockResolvedValue(true);
+    vi.spyOn(native, "hasModel").mockImplementation((m) => Promise.resolve(m === "qwen2.5:7b"));
+    const pull = vi.spyOn(native, "pull").mockResolvedValue();
+    const deps = fakeDeps({ native });
+
+    const results = await pullRoleModels(deps, HardwareTier.PMid);
+    expect(results.map((r) => r.alreadyPulled)).toEqual([false, true, false]);
+    expect(pull).toHaveBeenCalledTimes(2);
   });
 });
 

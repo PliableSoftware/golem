@@ -23,7 +23,7 @@ import {
   OllamaNativeClient,
   OllamaNotReadyError,
   type PullResult,
-  pullDrafterModel,
+  pullRoleModels,
   resolveInstallPlan,
   smokeTestModel,
 } from "../inference/index.js";
@@ -111,6 +111,8 @@ export interface SetupResult {
   readonly kind: SetupOutcomeKind;
   readonly install?: InstallResult;
   readonly pull?: PullResult;
+  /** The other live roles' models (summarizer, judge), pulled after the drafter. */
+  readonly extraPulls?: readonly PullResult[];
   readonly smokeTest?: { readonly ok: boolean; readonly detail: string };
 }
 
@@ -123,7 +125,7 @@ export interface SetupOptions {
   readonly onLine?: (line: string) => void;
   /** Test injection (forwarded to loadConfig). */
   readonly userDir?: string;
-  /** Test injection (forwarded to pullDrafterModel) — default is a real 30s poll window. */
+  /** Test injection (forwarded to pullRoleModels) — default is a real 30s poll window. */
   readonly reachableTimeoutMs?: number;
   /**
    * Test injection: replaces the post-pull smoke test. The default builds a
@@ -180,7 +182,7 @@ export async function runOllamaSetup(opts: SetupOptions): Promise<SetupResult> {
     const confirm = opts.confirm ?? defaultConfirm;
     const question =
       `This will ${alreadyInstalled ? "" : `${planSummary}, then `}` +
-      `pull the ${targetModel} model (a multi-GB download) if it isn't already present. Continue?`;
+      `pull the ${targetModel} model and the summarizer/judge models (multi-GB downloads) if they aren't already present. Continue?`;
     const accepted = await confirm(question);
     if (!accepted) return { kind: "cancelled" };
   }
@@ -192,11 +194,14 @@ export async function runOllamaSetup(opts: SetupOptions): Promise<SetupResult> {
   }
 
   let pull: PullResult;
+  let extraPulls: readonly PullResult[];
   try {
-    pull = await pullDrafterModel(deps, facts.tier, {
-      onProgress: (e) => opts.onLine?.(`pull ${targetModel}: ${e.status}`),
+    const pulled = await pullRoleModels(deps, facts.tier, {
+      onProgress: (model, e) => opts.onLine?.(`pull ${model}: ${e.status}`),
       ...(opts.reachableTimeoutMs !== undefined && { reachableTimeoutMs: opts.reachableTimeoutMs }),
     });
+    pull = pulled[0] as PullResult;
+    extraPulls = pulled.slice(1);
   } catch (err) {
     if (err instanceof OllamaNotReadyError) return { kind: "completed", install };
     throw err;
@@ -204,7 +209,7 @@ export async function runOllamaSetup(opts: SetupOptions): Promise<SetupResult> {
 
   if (opts.smokeTest !== undefined) {
     const smokeTest = await opts.smokeTest(pull.model);
-    return { kind: "completed", install, pull, smokeTest };
+    return { kind: "completed", install, pull, extraPulls, smokeTest };
   }
   const client = new OllamaClient({
     baseUrl: settings.inference.ollama_base_url,
@@ -212,7 +217,7 @@ export async function runOllamaSetup(opts: SetupOptions): Promise<SetupResult> {
   });
   try {
     const smokeTest = await smokeTestModel(client, pull.model);
-    return { kind: "completed", install, pull, smokeTest };
+    return { kind: "completed", install, pull, extraPulls, smokeTest };
   } finally {
     await client.close();
   }
@@ -245,6 +250,13 @@ export function renderSetupResult(result: SetupResult): string {
       result.pull.alreadyPulled
         ? `Model ${result.pull.model} was already pulled.`
         : `Pulled model ${result.pull.model}.`,
+    );
+  }
+  for (const extra of result.extraPulls ?? []) {
+    lines.push(
+      extra.alreadyPulled
+        ? `Model ${extra.model} was already pulled.`
+        : `Pulled model ${extra.model}.`,
     );
   }
   if (result.smokeTest !== undefined) {
