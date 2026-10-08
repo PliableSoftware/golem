@@ -61,3 +61,7 @@ Two candidate shapes — pick one, record why in the debrief:
 ## Outcome
 
 shipped
+
+## Dust 2026-10-08 note
+
+Dust 2026-10-08: gate no longer met because it names the nested `.claude/skills/golem/<cmd>/` layout; the code is flat (`tests/integration/skill-provenance-clone.test.ts:5,92`). Not reopened. (source: DUST1.11 audit, `docs/plan/audit/dust-1/DUST1.11.md` Plan hygiene; not re-verified live)

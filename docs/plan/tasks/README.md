@@ -39,6 +39,8 @@ golem task done R8.5 --note …  # close it; re-run `index --write`
 | `design` | where the design already lives, so the brief does not restate it. |
 | `gate` | the one-line definition of done / what decides it. |
 | `blocked` | why it cannot start *now*, when that is a fact about the world (no hardware, no keys, needs a decision). Keeps it visible rather than lost. |
+| `created` | optional ISO date the doc was written; read into the task's `createdAt`. |
+| `updated` | optional ISO date of the last change; falls back to `created` when absent. |
 | `depends_on` | task ids that must land first. |
 | `touches` | directories the work is expected to reach — a starting map, not a contract. |
 

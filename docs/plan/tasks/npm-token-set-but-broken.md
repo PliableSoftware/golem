@@ -69,3 +69,7 @@ in the one workflow whose whole job is to be trustworthy.
 `R7.5` (first npm publish + VS Code Marketplace publish + tag) is the task that
 owns actually going live on the registry. This one only concerns the secret being
 present-but-broken while publishing is meant to be off.
+
+## Dust 2026-10-08 note
+
+Dust 2026-10-08: gate no longer met because `golem-run` is E404 on npm and the v0.54.3 Release run `35854466422` is red (portal notify failed); the OIDC commit `d315b23` is not an ancestor of `v0.54.3`, so "RESOLVED (v0.54.3)" overstates it. Not reopened. (source: DUST1.11 audit, `docs/plan/audit/dust-1/DUST1.11.md` Plan hygiene; not re-verified live)
