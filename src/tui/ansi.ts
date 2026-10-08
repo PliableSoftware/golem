@@ -19,7 +19,6 @@ export const CSI = `${ESC}[`;
 
 export const RESET = `${CSI}0m`;
 export const BOLD = `${CSI}1m`;
-export const DIM = `${CSI}2m`;
 /**
  * Underline on/off as their OWN pair (`4m`/`24m`), not `RESET` — a status-line
  * segment is already wrapped in a colour span, and `RESET` (`0m`) would clear
