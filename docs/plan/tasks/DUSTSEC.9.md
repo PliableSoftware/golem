@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.9
 title: "Redact vibe sources.json and candidates.jsonl before write"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "Probe: a candidate note and a source entry containing a fake AWS key are 
 depends_on: [DUSTSEC.8]
 touches: [src/vibe, tests/unit/vibe]
 created: 2026-10-08
+updated: 2026-10-08T10:26:12.063Z
 ---
 
 ## What this is
@@ -38,3 +39,7 @@ The Personal Vibe Guide says every byte is redacted, but only the brief is
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

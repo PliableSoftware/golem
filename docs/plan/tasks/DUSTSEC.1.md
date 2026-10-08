@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.1
 title: "Proxy pipeline error: redact-then-forward, fail closed (5xx) if redaction throws — never forward raw"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md R1/S3 (USER, 2026-10-08); SUMMARY.md S3; DUST1.1 headline 1"
 gate: "A probe that throws from each named throw site (compression.compress incl. a failed CCR blob write, policy(), onEvent, substituteKnownContent, applyBrevity, buildContextLedger, sessionRecorder.snapshot()) forwards a body with the secret REDACTED — it forwarded the raw key before; a probe where redaction itself throws gets a 5xx and nothing reaches upstream. The fail-open test at tests/integration/pipeline-proxy.test.ts:191 is rewritten to pin the new behaviour. golem verify green by exit code."
+depends_on: []
 touches: [src/proxy/server.ts, src/pipeline, src/compression/local-blob-store.ts, tests/integration/pipeline-proxy.test.ts]
 created: 2026-10-08
+updated: 2026-10-08T10:26:07.811Z
 ---
 
 ## What this is
@@ -55,3 +57,7 @@ Out-of-band HIGH security fix, lands before Dust Phase 3. Today any throw inside
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

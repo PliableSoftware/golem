@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.14
 title: "An invalid team value warns and skips the team layer; the proxy still starts (ADR-0008)"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md G2 (USER, 2026-10-08); SUMMARY.md S20; ADR-0008; DUST1.8 h2"
 gate: "Probe: a team-origin row with an invalid value — proxy starts, logs one warning naming the key and the team source, and the team layer is not applied (before: ConfigError, proxy refused to start). An invalid value in a non-team layer behaves exactly as before. golem verify green by exit code."
+depends_on: []
 touches: [src/config/loader.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:14.190Z
 ---
 
 ## What this is
@@ -39,3 +41,7 @@ the team layer is skipped; the proxy still starts.
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

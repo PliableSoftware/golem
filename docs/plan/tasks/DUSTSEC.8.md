@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.8
 title: "Plugin redaction rules apply on every redaction path — hook, vibe and join-queue as well as proxy and MCP"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Probe: with a plugin contributing a rule for an org-private token format,
 depends_on: [DUSTSEC.7]
 touches: [src/hooks/redact.ts, src/hooks/post-tool-use.ts, src/hooks/web-fetch.ts, src/vibe/store.ts, src/session/join-queue.ts, src/plugins, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:11.526Z
 ---
 
 ## What this is
@@ -48,3 +49,7 @@ vibe, join-queue as well as proxy and MCP); amend ADR-0005 to name all paths. AD
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

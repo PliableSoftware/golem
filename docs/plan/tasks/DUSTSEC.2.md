@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.2
 title: "Remove the redaction-off side doors: POST /__golem/pipeline/false and the x-golem-bypass header"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Probe 1: POST /__golem/pipeline/false (with Origin: https://evil.example)
 depends_on: [DUSTSEC.1]
 touches: [src/proxy/server.ts, src/proxy/headers.ts, src/proxy/types.ts, src/cli/proxy-runtime.ts, src/cli/skills/basics.ts, .claude/skills/golem-bypass/SKILL.md, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:08.348Z
 ---
 
 ## What this is
@@ -56,3 +57,7 @@ turn redaction off exist besides `bypass_all`, both invisible to every status su
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)

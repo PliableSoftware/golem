@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.17
 title: "Follow-ups from the independent review of DUSTSEC.1-16: portal refresh origin, Buzz keygen fallback, bypass-guard gaps, owner:user explicit target, acp plugin rules"
-state: queued
+state: done
 owner: agent
 size: L
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each finding below has a regression test that fails on the merged code an
 depends_on: [DUSTSEC.4, DUSTSEC.6, DUSTSEC.3, DUSTSEC.11, DUSTSEC.8]
 touches: [src/portal, src/buzz, src/hooks/bypass-guard.ts, src/autonomy/classify.ts, src/inference/target-dispatcher.ts, src/providers/gateways.ts, src/cli/proxy-runtime.ts, tests]
 created: 2026-10-08
+updated: 2026-10-08T10:26:15.798Z
 ---
 
 ## Findings (split across four agents by directory)
@@ -38,3 +39,7 @@ created: 2026-10-08
 - Re-opening any USER decision.
 - Migrating raw paths already in `sources.json`.
 - Two secrets in paths redacting to one placeholder (note it in the task, do not fix).
+
+## Outcome
+
+shipped; independently reviewed twice (DUSTSEC.17 and DUSTSEC.18 hold the follow-ups)
