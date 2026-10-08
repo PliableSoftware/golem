@@ -14,7 +14,7 @@ ML-heavy stages) is part of the pipeline too, but it's *situational* — it pays
 off on non-caching upstreams, not on Anthropic's cached traffic, where the
 honest number today is ~0% (see `docs/plan/verification-notes.md` §54).
 
-Claude Code is Golem's flagship, most-verified integration — byte-faithful
+Claude Code is Golem's flagship, most-verified integration — lossless, prefix-stable
 proxying, native MCP tools, `/golem-<cmd>` skills — with the same pipeline
 designed to extend to other gateways. Native Windows, macOS, and Linux.
 
@@ -34,12 +34,12 @@ flowchart LR
 ```
 
 Every `POST /v1/messages` runs a fixed pipeline — **redaction always first** (never
-reordered), then situational compression, then a byte-faithful forward at
+reordered), then situational compression, then a lossless, prefix-stable forward at
 compression level ≤ 1:
 
 ```mermaid
 flowchart LR
-  R["Request"] --> RD["Redact"] --> LA["Local-answer?<br/>(on by default, confidence-gated)"] --> CO["Compress<br/>(situational)"] --> FW["Forward<br/>byte-faithful at level <= 1"] --> UP["Upstream"]
+  R["Request"] --> RD["Redact"] --> LA["Local-answer?<br/>(on by default, confidence-gated)"] --> CO["Compress<br/>(situational)"] --> FW["Forward<br/>lossless, prefix-stable at level <= 1"] --> UP["Upstream"]
 ```
 
 Full component diagrams — request lifecycle by compression level, web-fetch caching,

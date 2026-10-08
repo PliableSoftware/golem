@@ -78,7 +78,7 @@ The proxy has a daemon lifecycle, so it survives on its own — no dedicated
 terminal needed. The detached daemon (started by `golem proxy restart`) outlives the shell that
 started it (that was the old failure mode: an agent-started background job dying
 with its session). `golem proxy start` has **no** `--detach` flag: it runs in the
-foreground and is the daemon's own entry point (`src/cli/commands/proxy.ts:512-526`).
+foreground and is the daemon's own entry point (`src/cli/commands/proxy.ts:513-527`).
 
 ```sh
 golem proxy restart            # binds 4653, detached, survives this shell
@@ -149,7 +149,7 @@ At compression level ≥2 Golem can route the losslessly-compressed request thro
 **Headroom** compression pipeline (spec Decision 23). It is **off by default** —
 it adds a Python dependency — it is **gated off on a prompt-caching upstream**
 (the default Anthropic one), where levels 2 and 3 behave as level 1
-(`src/pipeline/pipeline.ts:658-668`, see [[Compression Levels]]), and it **fails open** (if it can't start, the request
+(`src/pipeline/pipeline.ts:659-669`, see [[Compression Levels]]), and it **fails open** (if it can't start, the request
 is forwarded with just the lossless stages).
 
 Enable it and provide the runtime:

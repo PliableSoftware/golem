@@ -57,7 +57,7 @@ that skill reasoned blind.
   the pipeline is under a standing obligation not to read the wall clock.
 - **Latest-only, fail-open.** One atomic temp+rename write per **pipeline event** (not per request: a
   request the pipeline leaves unchanged returns before the event is emitted, so
-  it writes nothing — `src/pipeline/pipeline.ts:766-769`, sink
+  it writes nothing — `src/pipeline/pipeline.ts:767-770`, sink
   `src/cli/proxy-build/telemetry-hooks.ts:49`, write
   `src/proxy/context-ledger.ts:430-440`) to
   `.golem/state/context-ledger.json`, no history: per-request history is already

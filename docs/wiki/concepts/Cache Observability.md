@@ -103,7 +103,7 @@ check on the predictor, not retired with the bug it caught.
   event (the established convention shared with the semantic and
   context-substitution stages). It is still observed so the per-conversation chain
   stays warm, and a bust on such a request is reported one request late rather
-  than lost (`src/pipeline/pipeline.ts:749-768`). A request under
+  than lost (`src/pipeline/pipeline.ts:750-769`). A request under
   `proxy.bypass_all` never enters the pipeline at all, so it is never observed.
   There is no "level 0": the compression dial is `off | 1 | 2 | 3`, and `off` still
   runs the pipeline (redaction only), so it is observed like any other level.

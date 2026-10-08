@@ -203,7 +203,7 @@ file already on disk; only `golem init` and `golem team sync` open a socket
 (`syncTeamLayer`, `src/cli/init.ts:556`, `src/cli/commands/team.ts:559`).
 Marking an origin remote arms the floor, so a real payload now reaches
 `REMOTE_DENIED_SETTINGS`. **Which callers apply it** is narrower than "every load":
-the proxy foreground (`src/cli/commands/proxy.ts:191`) and `golem status`
+the proxy foreground (`src/cli/commands/proxy.ts:192`) and `golem status`
 (`src/cli/status-collect.ts:145`). `golem config` and the panel use plain `loadConfig`
 ([[Configuration Surfaces]]). Where enforced team policy ought to apply is an open
 question (Phase 1 contradiction G3), not settled here. `team-settings-layer`

@@ -63,4 +63,4 @@ semantic caching are already on the roadmap.
 ## Rebaseline 2026-10-08
 
 - "slider-gated" semantic caching: slider retired (ADR-0004). `semanticCache` is set per compression level in `src/interfaces/policy.ts` but no non-test consumer exists in `src/` (checked by grep), so it is a dead field, not a live feature.
-- "honest gaps ... lazy tool-def loading and cache-hit observability" are closed: Tool Search is relayed (`ENABLE_TOOL_SEARCH` wiring, `src/cli/commands/proxy.ts:605-610`; line-level claim UNVERIFIED) and `golem stats --cache` reports hit rate and prefix breaks (`src/cli/commands/dials-stats.ts:115`).
+- "honest gaps ... lazy tool-def loading and cache-hit observability" are closed: Tool Search is relayed (`ENABLE_TOOL_SEARCH` wiring, `src/cli/commands/proxy.ts:606-611`; line-level claim UNVERIFIED) and `golem stats --cache` reports hit rate and prefix breaks (`src/cli/commands/dials-stats.ts:115`).

@@ -59,8 +59,8 @@ Neither claim is as strong as earlier revisions of this page said.
 ## Where it runs
 
 Redaction is **stage 1 of the pipeline and is never reordered after compression**
-(`src/pipeline/pipeline.ts:496-503`; it runs at every compression level). One
-stage runs before it by design: join injection (stage 0.9, `pipeline.ts:448`),
+(`src/pipeline/pipeline.ts:497-504`; it runs at every compression level). One
+stage runs before it by design: join injection (stage 0.9, `pipeline.ts:449`),
 and what it injects is then redacted by stage 1.
 
 The single exception is `proxy.bypass_all`, a deliberate full bypass where
@@ -73,12 +73,12 @@ path:
 - The per-request `x-golem-bypass` header and the `POST /__golem/pipeline/*`
   admin endpoint are **removed** (DUSTSEC.2); `#pipelineEnabled` is fixed from
   `bypass_all` at construction and never changed afterwards
-  (`src/proxy/server.ts:108`).
+  (`src/proxy/server.ts:109`).
 - **A pipeline error does not forward the raw body.** On any throw in
   `pipeline.process`, the proxy re-runs redaction alone on the original request
-  (`redactOnly`, `src/pipeline/pipeline.ts:382`) and forwards that; if redaction
+  (`redactOnly`, `src/pipeline/pipeline.ts:383`) and forwards that; if redaction
   itself throws, or the pipeline has no `redactOnly`, it fails closed with a
-  **502** and forwards nothing (`src/proxy/server.ts:328-352`; DUSTSEC.1, USER
+  **502** and forwards nothing (`src/proxy/server.ts:329-353`; DUSTSEC.1, USER
   decision R1/S3). `redactOnly` leaves a body that is not a rewritable
   Messages JSON request unchanged, the same verdict `process` reaches.
 - `bypass_all` is guarded against agents by a PreToolUse hook

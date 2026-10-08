@@ -92,7 +92,7 @@ Both exist in the shipped code today; which one is canonical is not decided here
 
 ## Escalating a task
 
-`golem task escalate <id>` (`src/cli/commands/tasks.ts:425-440`) hands a task to the
+`golem task escalate <id>` (`src/cli/commands/tasks.ts:427-442`) hands a task to the
 Claude tier: `escalateTask` (`src/tasks/multiplex.ts:183-208`) folds the local first
 pass into the prompt, sets `escalated: true` and resets `state` to **`queued`**. The CLI
 passes `null` grounding, so no project context is added. Shipped caveats, read from the

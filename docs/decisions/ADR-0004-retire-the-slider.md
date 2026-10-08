@@ -138,7 +138,7 @@ invariant is true again.
   tool could send the same simple request (a drive-by web page was suspected
   in the audit but not browser-tested). `#pipelineEnabled`
   is now fixed at construction from `proxy.bypass_all` and never changed
-  afterwards (`src/proxy/server.ts:106-113`; `src/cli/proxy-runtime.ts:316`).
+  afterwards (`src/proxy/server.ts:107-114`; `src/cli/proxy-runtime.ts:317`).
   Redaction-off therefore applies at the next proxy start, and a restart can no
   longer silently revert it, because the setting is the only source.
 - **The `x-golem-bypass` request header is removed (R2, DUSTSEC.2).** A request

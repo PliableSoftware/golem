@@ -157,9 +157,11 @@ Related: [[Redaction Stage]] (untouched), R5.1 `--permission-mode` plumbing
 > whether the `PermissionRequest` hook can observe a connected relay and found no
 > signal in the hook payload, an environment variable, or a Golem-owned marker
 > (verification-notes, 2026-10-08 DUSTSEC.10 entry). **The deny is currently
-> unconditional.** Open question, recorded and not decided here: accept the
-> unconditional deny, or build a Golem-owned channel server that writes a
-> connected marker. DUSTSEC.10 stays queued until the user chooses. Separately,
+> unconditional.** The decision stands; what is missing is a way to deliver it,
+> because Golem has no signal to key on. Open question, recorded and not decided
+> here: how to deliver it, for example a Golem-owned channel server that writes a
+> connected marker. Until then the unconditional deny is the interim state, not a
+> changed decision. DUSTSEC.10 stays queued until the user chooses. Separately,
 > R12.13 is unconfirmed: nobody has observed live whether the deny pre-empts the
 > relay (`owner: user`, needs an interactive session).
 >

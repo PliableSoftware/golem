@@ -27,7 +27,7 @@ Related pages: [[Portal Install Contract]] · [[Team Layer]] · [[Dogfooding Gol
 
 | workflow | trigger | does |
 |---|---|---|
-| `ci.yml` | PR to `main` **and** `development` (`.github/workflows/ci.yml:19-20`); **`workflow_call`** | lint, typecheck, build, wiki lint, 10 sharded test jobs × 2 node versions, then one `CI gate` job |
+| `ci.yml` | PR to `main` **and** `development` (`.github/workflows/ci.yml:24-25`); **`workflow_call`** | lint, typecheck, build, wiki lint, 10 sharded test jobs on ubuntu (node 22 and 24) and windows (node 24), 30 jobs (`ci.yml:113-119`), then one `CI gate` job |
 | `release-prepare.yml` | manual, on `development` | bumps the version, pushes it, opens the release PR |
 | `release.yml` | push to `main` (i.e. the release PR merging) | calls `ci.yml`, tags, builds, publishes, notifies |
 
