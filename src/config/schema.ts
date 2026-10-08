@@ -184,7 +184,16 @@ export const SETTINGS_LEAVES = {
           models: z
             .array(
               z.union([
-                z.string(),
+                z
+                  .string()
+                  // Only `[<digits>]` is a context suffix. Anything else in a
+                  // trailing bracket (`[262k]`) would otherwise go upstream as
+                  // part of the model name, so refuse it here.
+                  .refine((m) => !/\[[^\]]*\]$/.test(m) || /\[\d+\]$/.test(m), {
+                    message:
+                      "a model's context suffix must be digits only, e.g. model[262144] " +
+                      "(k/m shorthand is not supported)",
+                  }),
                 z.object({
                   name: z.string().min(1),
                   contextSize: z.number().int().positive().optional(),
@@ -194,7 +203,7 @@ export const SETTINGS_LEAVES = {
             .transform((arr) =>
               arr.map((m) => {
                 if (typeof m === "string") {
-                  // Parse string like "model[262k]" or "model"
+                  // Parse string like "model[262144]" or "model"
                   const match = m.match(/^(.+?)(?:\[(\d+)\])?$/);
                   if (!match) {
                     // If parsing fails, treat as name only
