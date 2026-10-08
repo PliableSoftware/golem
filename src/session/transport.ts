@@ -234,10 +234,7 @@ export function handleStream(
         write(
           sseFrame({
             type: "ended",
-            // The CURRENT cursor, not cursor + 1: this frame is synthetic (never in
-            // the ring), so an id past the cursor would make a Last-Event-ID
-            // reconnect skip the next real event.
-            seq: session.bus.cursor,
+            seq: session.bus.cursor + 1,
             reason,
           } as SessionEvent),
         );
