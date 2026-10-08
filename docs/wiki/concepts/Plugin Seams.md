@@ -4,7 +4,7 @@ type: concept
 tags: [plugins, redaction, threat-model, trust, extensibility, adr-0005, r8]
 sources: [src/plugins/types.ts, src/plugins/loader.ts, src/plugins/init.ts, src/pipeline/redaction-rules.ts, src/cli/plugin.ts, docs/decisions/ADR-0005-plugin-seams-and-the-redaction-path.md]
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-10-08
 ---
 
 # Plugin seams — third-party code inside the redaction path
@@ -73,23 +73,54 @@ of this rests on review:
 
 - Built-ins run **first**, in their audited order; plugin rules are a **suffix**.
   A plugin can therefore only ever redact *more*.
-- `REDACTION_RULES` is never handed to a plugin, and there is **no remove,
-  replace, or reorder function** — those do not exist to be called.
+- There is **no remove, replace, or reorder function** in the plugin API — those
+  do not exist to be called. The exported `REDACTION_RULES` is a frozen **copy**
+  with its own `RegExp` objects (`src/pipeline/redaction-rules.ts:249`,
+  DUSTSEC.7), and the table redaction actually reads is a private, frozen array
+  (`:104`, `:245-246`), so splicing the export changes nothing. This is the
+  honest limit of the claim: **"cannot via the API"**, not "structurally
+  impossible". A plugin is in-process code with full process authority (see the
+  headline above), so it could still patch Node itself; the controls narrow what
+  a plugin is asked to do, not what it can do. (USER decision R5; the ADR-0005
+  wording is DUST2.3's.)
 - Rule kinds are namespaced `<plugin>/<rule>`, so a plugin cannot impersonate a
   built-in kind (`[REDACTED:acme/employee-id:1]`, never `[REDACTED:aws-key:1]`).
 - A plugin rule that matches something a built-in already replaced sees a
   **placeholder** — `[`, `]` and `:` are outside every rule's charset — so it
   cannot un-redact.
-- Registration happens **once, at startup**, and a second registration is
-  *refused*. Not tidiness: redaction must be a pure function of its input for
-  prompt-cache prefix stability (verification-notes §14), so a table that
-  changed mid-process would break caching for every later request.
+- Registration happens **once per process, at startup**, and a second
+  registration is *refused* (`registerExtraRedactionRules`,
+  `src/pipeline/redaction-rules.ts:483-490`). Not tidiness: within a process
+  redaction must be a stable function of its input for prompt-cache prefix
+  stability (verification-notes §14), so a table that changed mid-process would
+  break caching for every later request. Nothing enforces that a plugin's
+  `validate` is itself pure.
+
+## Plugin rules apply on every redaction path
+
+Plugin rules are process-global, so they apply wherever a process registers them,
+and since DUSTSEC.8 (USER decision R6) every Golem redaction path does. The proxy
+(`src/cli/commands/proxy.ts`) and `mcp serve` (`src/cli/commands/mcp-serve.ts`)
+call `initPlugins`; the processes that do not own plugin loading call
+`ensurePluginRedactionRules(projectDir)` (`src/plugins/redaction-init.ts:55`)
+before they redact, and it is a no-op in a process that already registered:
+
+- hooks: `src/hooks/post-tool-use.ts`, `src/hooks/web-fetch.ts`,
+  `src/hooks/session-state.ts`
+- the vibe store (`src/vibe/store.ts`), the join-queue (`src/session/join-queue.ts`),
+  notes (`src/cli/notes.ts`) and the Buzz ACP turn (`src/buzz/acp-turn.ts`)
+
+A failed load there warns and leaves the built-in rules in force; it never
+disables redaction. UNVERIFIED: that this list is exhaustive for every call site
+that redacts text; it is the set of importers of `ensurePluginRedactionRules`.
 
 ## A stage cannot smuggle a secret in, because redaction runs again
 
 The load-bearing property of the pipeline seam. A plugin stage receives
 already-redacted content, and **redaction re-runs over whatever it returns**.
-Redaction is idempotent, so the second pass renumbers nothing; what it buys is
+Redaction is idempotent for almost every rule (the known exception is
+`connection-password`, which can renumber its own placeholders on a second pass;
+see [[Redaction Stage]]); what the second pass buys is
 that a stage cannot introduce unredacted content — fetched, constructed, or
 restored from anywhere.
 
@@ -119,6 +150,13 @@ golem plugin --verbose    # every rule, stage and tool contributed
 golem plugin --json       # machine-readable
 ```
 
+`golem plugin` does a **fresh load in its own process** (`src/cli/plugin.ts:36`);
+it runs each plugin's `setup()`, so what it prints can differ from what the
+running proxy loaded (an edited plugin file or changed settings), and the in-process
+problems the proxy collects at runtime never reach it. A comment in the source
+says it is "the same code path the proxy runs, so what you see here is what the
+proxy got"; treat that as true of the code path, not of the running state.
+
 Read-only, with **no install verb**: offering one would imply a vetting Golem does
 not perform. It reports the **resolved path**, not just the specifier — "which
 copy of this is running inside my process" is the question that matters. Every
@@ -139,7 +177,8 @@ want it gone now.
 
 ## The bypass shim gets rules but not stages
 
-Decision 56's shim is "pipeline off", so no third-party *stage* runs on it. Plugin
+Decision 56's shim runs no compression (`SHIM_POLICY` is the `off` policy,
+`src/cli/proxy-runtime.ts:55`; DUSTSEC.12) and no third-party *stage*. Plugin
 redaction *rules* still do — the shim redacts, and dropping an org's own
 key-format rule the moment the proxy is "stopped" would weaken redaction exactly
 when the user thought they were safer.

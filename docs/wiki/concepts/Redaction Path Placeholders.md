@@ -39,8 +39,8 @@ confusing half of the bug in place.
 
 ## What to do when a path comes back as a placeholder
 
-1. **Do not trust the view you were just shown.** The write path is
-   byte-faithful; only the read-back VIEW into a model's context can be
+1. **Do not trust the view you were just shown.** The write path stores
+   the exact bytes; only the read-back VIEW into a model's context can be
    corrupted. Concluding "the write failed" from a placeholder in a heredoc
    readback or a `cat` result is the single most common wrong turn here — see
    `docs/plan/tasks/redaction-path-uuid.md`'s "Third sighting" for a
@@ -88,12 +88,17 @@ explicitly ("Note for whoever fixes it"):
   looks like once Claude Code's own request round-trips it back through
   Golem's proxy. A placeholder produced here has no restoration map. It is
   gone from that view, permanently, from the reader's side.
-- **`redactReversibleText`** — used for a one-shot dispatch to a non-local
-  `coder` target (R9.3; see `docs/wiki/debriefs/2026-08-09-r9.3-coder-any-target.md`).
-  Secrets are redacted going out, the target does its work on placeholder
-  text, and the SAME per-value restoration map (kept in memory for that one
-  dispatch only, never serialized or logged) puts the real values back into
-  the result before it returns.
+- **`redactReversibleText` / `redactReversibleTexts`**
+  (`src/pipeline/redaction.ts:223`, `:260`) — used for a one-shot dispatch to a
+  non-local `coder` target (R9.3; see
+  `docs/wiki/debriefs/2026-08-09-r9.3-coder-any-target.md`). The dispatcher calls
+  the multi-string form, `redactReversibleTexts`
+  (`src/inference/target-dispatcher.ts:917-923`, R13.11), so the prompt and every
+  prior attempt share one placeholder table; the single-string form is
+  implemented in terms of it. Secrets are redacted going out, the target does
+  its work on placeholder text, and the SAME per-value restoration map (kept in
+  memory for that one dispatch only, never serialized or logged) puts the real
+  values back into the result before it returns.
 
 Both produce placeholders that look identical:
 `[REDACTED:<kind>:<n>]`. There is no visual cue distinguishing "this will be
@@ -109,7 +114,7 @@ There is no fix implied here (the two entry points exist for good reasons —
 reversibility is only safe for a scoped, in-memory, one-shot round trip, not
 for anything that gets logged or stored) — only the practical rule: **treat
 every placeholder as non-restorable unless you know, from the calling code,
-that it passed through `redactReversibleText`.** For ordinary tool output —
+that it passed through the reversible form (`redactReversibleText`/`redactReversibleTexts`).** For ordinary tool output —
 the case this page is about — assume it is not.
 
 ## See also

@@ -4,7 +4,7 @@ type: concept
 tags: [architecture, pipeline, routing, observability, diagrams]
 sources: [docs/golem-spec.md#2, src/proxy, src/mcp/server.ts, src/pipeline/pipeline.ts, src/inference/service.ts, src/inference/catalog.ts, src/providers/index.ts, src/hooks/session-state.ts, src/autonomy/gate.ts]
 created: 2026-07-25
-updated: 2026-08-21
+updated: 2026-10-08
 ---
 
 # Architecture
@@ -25,11 +25,18 @@ Related pages: [[Compression Levels]] · [[Redaction Stage]] · [[Compression]] 
 
 ## 1. Component topology
 
-One local process exposes **two doors** (a transparent proxy and an MCP server) over
-**one shared engine**, and talks to three classes of backend: local models, an
-optional LAN worker, and the upstream LLM. Single-machine is the default; the LAN
-worker is optional (spec §2). Source: `docs/golem-spec.md §2`, `src/proxy/`,
+Golem exposes **two doors** (a transparent proxy and an MCP server) over **one
+engine**, and talks to three classes of backend: local models, an optional LAN
+worker, and the upstream LLM. Single-machine is the default; the LAN worker is
+optional (spec §2). Source: `docs/golem-spec.md §2`, `src/proxy/`,
 `src/mcp/server.ts`, `src/inference/`.
+
+**"One engine" is logical, not one process.** The two doors run as **two
+processes**: the proxy daemon (`golem proxy`, `src/cli/commands/proxy.ts`) and a
+separate `golem mcp serve` process that Claude Code spawns over stdio
+(`src/cli/commands/mcp-serve.ts`). Each loads its own config and plugin rules at
+start-up (both call `initPlugins`). (Default rule applied, decision A2: doc follows
+shipped code.)
 
 ```mermaid
 flowchart TB
@@ -39,9 +46,9 @@ flowchart TB
     SDK["Your API apps / SDK"]
   end
 
-  subgraph Hub["Golem hub — one local process (proxy + MCP, shared engine)"]
+  subgraph Hub["Golem hub — two processes (proxy daemon + mcp serve), one logical engine"]
     PX["Transparent proxy<br/>ANTHROPIC_BASE_URL to localhost"]
-    MCPS["MCP server<br/>search · fetch · expand · coder · ingest · stats"]
+    MCPS["MCP server (mcp serve)<br/>11 tools: code · coder · devices · expand · fetch · ingest · search · snooze · stats · wiki_read · wiki_upsert"]
     subgraph Core["Core engine"]
       PIPE["Request pipeline"]
       POLICY["Dial policy<br/>compression · brevity"]
@@ -69,13 +76,16 @@ flowchart TB
   MCPS --> CACHE
   PIPE --> POLICY
   PIPE --> CACHE
-  PIPE -->|"forward (byte-faithful at level <= 1)"| UP
+  PIPE -->|"forward (lossless and prefix-stable at level <= 1)"| UP
   KB --> INF
   INF --> LOCAL
   INF -.->|"optional"| LAN
   INF -.->|"Haiku fallback"| UP
   TEL -.-> PX
 ```
+
+The 11 MCP tool names are the reserved set in `src/plugins/loader.ts:43-55`
+(`BUILTIN_MCP_TOOL_NAMES`), which a plugin tool may not collide with.
 
 > **The two doors compose.** The proxy sees *every* request and does *implicit*
 > savings (redaction, dedup, caching); MCP is *explicit* delegation (Claude chooses
@@ -89,7 +99,9 @@ flowchart TB
 
 Every `POST /v1/messages` runs the pipeline in `src/pipeline/pipeline.ts`. **Stage
 order is a hard rule: redaction runs first and is never reordered after
-compression.** The lossy stages (semantic, context-substitution) are gated OFF on
+compression.** (A request-pipeline error does not break this: the proxy re-runs
+redaction alone and forwards that, or answers 502 if redaction itself throws —
+see [[Redaction Stage]].) The lossy stages (semantic, context-substitution) are gated OFF on
 Anthropic-style caching upstreams so the byte-identical cached prefix survives — see
 [[Compression]] and [[Compression Levels]].
 
@@ -99,17 +111,26 @@ flowchart TB
   B -->|"no"| FWD["Forward unchanged<br/>(byte-identical)"]
   B -->|"yes"| L0{"proxy.bypass_all?"}
   L0 -->|"true — full bypass"| FWD2["Forward RAW<br/>redaction OFF (CLI-only, ADR-0004)"]
-  L0 -->|"false (default)"| R["Stage 1 — Redaction<br/>always first, never reordered"]
-  R --> LA{"Stage 1.5 — Local answer?<br/>(opt-in, single-turn, decoupled from the dials)"}
+  L0 -->|"false (default)"| R["Stage 1 — Redaction<br/>always first, never reordered<br/>(Stage 0.9 join injection runs before it)"]
+  R --> LA{"Stage 1.5 — Local answer?<br/>(ON by default, single-turn, decoupled from the dials)"}
   LA -->|"confident KB hit"| RESP["Respond directly<br/>never forwarded upstream"]
-  LA -->|"decline / not eligible"| C2["Stage 2 — Lossless compression<br/>dedup · compaction · cache-align (level >= 1)"]
+  LA -->|"decline / not eligible"| C2["Stage 2 — Lossless compression<br/>dedup · compaction (level >= 1)"]
   C2 --> G{"caching upstream?<br/>(Anthropic-style)"}
   G -->|"yes"| EMIT["Emit telemetry event"]
   G -->|"no (non-caching gateway)"| C3["Stage 3 — Semantic (lossy, fail-open, level >= 2)"]
   C3 --> C4["Stage 4 — Context substitution<br/>webcache-known spans to CCR ref"]
-  C4 --> EMIT
+  C4 --> BR["Stage 5 — Brevity directive<br/>(output side, brevity.level)"]
+  BR --> EMIT
   EMIT --> UP["Upstream LLM"]
 ```
+
+Stage 1.7 (plugin pipeline stages, `pipeline.ts:587`) sits between local-answer and
+lossless compression and is omitted from the diagram; redaction re-runs over its
+output. Stage 5 is `pipeline.ts:734`. Local answer is **on by default**
+(`knowledge.local_answer_enabled: true`, `src/config/schema.ts:1150`), matching the
+distributed `golem-local-answer` rule; set it false to turn it off. (Default rule
+applied, decision A11, **flagged**: spec Decision 7's "never a global default" may
+be a recorded decision this contradicts; the code and the shipped rule say ON.)
 
 Notes that keep this honest (all from `pipeline.ts`): a request where **no stage
 changed anything** is returned as the original bytes; the local-answer stage
@@ -145,24 +166,27 @@ flowchart TB
   HAIKU -->|"no"| ERR["CapabilityUnavailableError"]
 ```
 
-### 3b. Upstream provider — byte-faithful vs translating
+### 3b. Upstream provider — passthrough vs translating
 
-Source: `src/providers/index.ts`. Anthropic-wire providers stay **byte-faithful**
-(only the auth header is remapped: strip the client's Anthropic key, inject the
-configured upstream key). OpenAI/Gemini/Ollama need genuine request/response/SSE
-**translation** and are a separate, non-byte-faithful code path.
+Source: `src/providers/index.ts`. Anthropic-wire providers get a **passthrough**: the provider layer does not touch
+the body (only the auth header is remapped: strip the client's Anthropic key,
+inject the configured upstream key). This is about the provider transport, after
+the pipeline has run; what the pipeline did to the body is covered in section 2.
+OpenAI/Gemini/Ollama need genuine request/response/SSE **translation** and are a
+separate code path.
 
 ```mermaid
 flowchart LR
   P["Selected upstream_provider"] --> K{"case?"}
-  K -->|"a — Anthropic wire protocol<br/>anthropic · azure-foundry · openrouter · custom"| CA["Byte-faithful passthrough<br/>+ auth-header remap"]
-  K -->|"b — needs translation<br/>openai · ollama · gemini"| CB["Translate request / response / SSE<br/>(NOT byte-faithful)"]
+  K -->|"a — Anthropic wire protocol<br/>anthropic · azure-foundry · openrouter · custom"| CA["Body passthrough<br/>+ auth-header remap"]
+  K -->|"b — needs translation<br/>openai · ollama · gemini"| CB["Translate request / response / SSE<br/>(body rewritten)"]
   CA --> ANT["Anthropic-protocol endpoint"]
   CB --> OAI["OpenAI / Gemini endpoint"]
 ```
 
-> Switching upstream account/provider is `golem account use <id>` + a proxy restart,
-> **not** the Claude Code model picker.
+> Switching upstream account/provider is `golem gateway use <id>`
+> (`src/cli/commands/gateway.ts:58`), **not** the Claude Code model picker. It
+> restarts a running proxy to apply the switch unless you pass `--no-restart`.
 
 ---
 

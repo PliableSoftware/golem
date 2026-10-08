@@ -4,41 +4,89 @@ type: concept
 tags: [security, pipeline, redaction, t-c3, r1-batch]
 sources: [src/pipeline/redaction-rules.ts, src/pipeline/redaction.ts, docs/plan/verification-notes.md, docs/plan/verification-notes.md#§55, docs/plan/verification-notes.md#§56, docs/plan/verification-notes.md#§140]
 created: 2026-07-10
-updated: 2026-08-22
+updated: 2026-10-08
 ---
 
 # Redaction Stage
 
 Golem strips secrets/PII from traffic before anything is transformed, stored, or
-forwarded (CLAUDE.md hard rule: never weaken or reorder this stage after
-compression). Two passes, always in this order:
+forwarded (CLAUDE.md hard rule: redaction is never weakened or reordered). Two passes, always in this order:
 
-1. **Rule table** (`REDACTION_RULES` in `src/pipeline/redaction-rules.ts`) — one
-   auditable list, applied in table order: PEM private-key blocks first (so
-   narrower rules can't shred their base64 body), then provider key shapes
-   (most-specific-first, e.g. `sk-ant-` before generic `sk-`), then structured
-   formats (JWT, connection-string passwords), then PII (Luhn-gated credit-card
-   numbers, emails). Order is part of the audit surface — see the file's
-   top-of-file doc comment.
-2. **High-entropy backstop** (`isHighEntropyToken`) — catches uncontexted
+1. **Rule table** — one auditable list, applied in table order (built-ins in
+   `BUILT_IN_RULES`, `src/pipeline/redaction-rules.ts:104`; the exported
+   `REDACTION_RULES` is a frozen copy, `:249`, so mutating it changes nothing —
+   DUSTSEC.7): PEM private-key blocks first (so narrower rules can't shred their
+   base64 body), then provider key shapes (most-specific-first, e.g. `sk-ant-`
+   before generic `sk-`), then structured formats (JWT, connection-string
+   passwords), then email PII (Luhn-gated credit-card numbers sit in the same
+   band). The last built-in is **not** PII: `nostr-secret-key` (`nsec1...`, R14.3,
+   `:225`) is appended after `email`. Plugin rules follow the built-ins
+   (`activeRedactionRules()`, `:521`; see [[Plugin Seams]]). Order is part of the
+   audit surface — see the file's top-of-file doc comment.
+2. **High-entropy backstop** (`isHighEntropyToken`, `:413`) — catches uncontexted
    secrets the table missed. Candidates are unbroken base64/base64url-charset
    runs bounded to 32-128 chars (`ENTROPY_CANDIDATE_RE` /
-   `ENTROPY_MAX_CANDIDATE_CHARS`), scored by Shannon entropy against a 4.2
-   bits/char threshold.
+   `ENTROPY_MAX_CANDIDATE_CHARS`, `:276-281`), scored by Shannon entropy against a
+   4.2 bits/char threshold (`:289`). Three exclusions apply before the score
+   (`:413-433`): integrity hashes (`sha512-...`), **pure-hex** tokens (dashes and
+   underscores ignored: git SHAs, sha256 digests, UUIDs, Golem's own CCR
+   `hash=<sha256>` markers), and tokens with **fewer than 2 of 3 character
+   classes** (lowercase, uppercase, digit), plus path-like tokens (below).
 
-Both passes are pure functions of the input (no clock, no randomness, no
-config) — required for prompt-cache prefix stability — and idempotent:
-placeholders (`[REDACTED:<kind>:<n>]`) use a charset no rule's pattern matches,
-so re-redacting redacted text is a no-op.
+## What "pure" and "idempotent" mean today
+
+Neither claim is as strong as earlier revisions of this page said.
+
+- **Not a pure function of the input alone.** The table is
+  `activeRedactionRules()` = built-ins plus whatever plugin rules this process
+  registered (`:521`). Plugin rules come from `plugins.load` config at startup,
+  and a plugin `validate` callback is arbitrary code and can be impure
+  (`src/plugins/loader.ts:248-257`). The built-in table has no clock, no
+  randomness and no config, and the table is sealed for the life of the process
+  once registered (`registerExtraRedactionRules`, `:483`), which is what keeps
+  prompt-cache prefixes stable within a process.
+- **Idempotent for most rules, not all.** Placeholders
+  (bracketed, carrying a kind and an ordinal) use a charset most rules do not match, so
+  re-redacting redacted text is normally a no-op. The exception is
+  `connection-password`: its capture group `([^\s@/]+)` accepts `[`, `]` and `:`
+  (`src/pipeline/redaction-rules.ts:195`), so it re-matches its own placeholder,
+  and a second pass over a body with several connection-string passwords can
+  renumber them. This is a **known bug** (DUST1.1 headline 6; audit item S10),
+  left for Phase 3. Do not rely on idempotence or on a re-redacted prefix being
+  stable for that rule. Plugin patterns are not constrained to avoid the
+  placeholder charset either.
 
 ## Where it runs
 
-Redaction is **stage 1 of the pipeline and is never reordered after compression**.
-The single exception is `proxy.bypass_all`, a deliberate full bypass where nothing
-runs. It is **not** a dial value: ADR-0004 gave it its own persisted setting
-precisely so that no number could turn redaction off, and it is CLI-only, never
-the default, and surfaced loudly wherever it is active — see
-[[Compression Levels]] and [[Architecture]].
+Redaction is **stage 1 of the pipeline and is never reordered after compression**
+(`src/pipeline/pipeline.ts:496-503`; it runs at every compression level). One
+stage runs before it by design: join injection (stage 0.9, `pipeline.ts:448`),
+and what it injects is then redacted by stage 1.
+
+The single exception is `proxy.bypass_all`, a deliberate full bypass where
+nothing runs. It is **not** a dial value: ADR-0004 gave it its own persisted
+setting precisely so that no number could turn redaction off, and it is CLI-only,
+never the default, and surfaced loudly wherever it is active — see
+[[Compression Levels]] and [[Architecture]]. There is no other redaction-off
+path:
+
+- The per-request `x-golem-bypass` header and the `POST /__golem/pipeline/*`
+  admin endpoint are **removed** (DUSTSEC.2); `#pipelineEnabled` is fixed from
+  `bypass_all` at construction and never changed afterwards
+  (`src/proxy/server.ts:108`).
+- **A pipeline error does not forward the raw body.** On any throw in
+  `pipeline.process`, the proxy re-runs redaction alone on the original request
+  (`redactOnly`, `src/pipeline/pipeline.ts:382`) and forwards that; if redaction
+  itself throws, or the pipeline has no `redactOnly`, it fails closed with a
+  **502** and forwards nothing (`src/proxy/server.ts:328-352`; DUSTSEC.1, USER
+  decision R1/S3). `redactOnly` leaves a body that is not a rewritable
+  Messages JSON request unchanged, the same verdict `process` reaches.
+- `bypass_all` is guarded against agents by a PreToolUse hook
+  (`src/hooks/bypass-guard.ts`, DUSTSEC.3) that denies `golem off`,
+  `golem config set` naming `proxy.bypass_all`, a truthy
+  `GOLEM_PROXY_BYPASS_ALL` assignment and edits of `.golem` settings JSON that set
+  it. This is a deny on the documented spellings, **not a sandbox**: an agent with
+  arbitrary shell has process authority (the file's own header says so).
 
 ```mermaid
 flowchart LR
@@ -47,6 +95,8 @@ flowchart LR
   L0 -->|"false (default)"| P1["Pass 1 — rule table (table order)"]
   P1 --> P2["Pass 2 — high-entropy backstop"]
   P2 --> NEXT["then compression / storage / forward"]
+  P1 -. "pipeline throws" .-> RO["redaction alone, then forward"]
+  RO -. "redaction throws" .-> F["502, nothing forwarded"]
 ```
 
 ## Known false-positive classes (entropy backstop)
