@@ -179,6 +179,8 @@ export function classifyPortalError(err: unknown): TeamLayerDisposition {
       case "token_exchange_failed":
       case "authorization_denied":
       case "state_mismatch":
+      case "origin_mismatch":
+      case "insecure_url":
         return { kind: "auth_failed", detail: err.message };
       case "not_configured":
         // A project that names a team on a machine with no portal configured.

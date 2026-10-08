@@ -270,6 +270,7 @@ export default function register(program: Command): void {
 
         const result = await linkPortal({
           issuerUrl: config.issuerUrl,
+          apiBaseUrl: config.apiBaseUrl,
           clientId: config.clientId,
           tokens,
           browser: opts.browser
@@ -536,6 +537,9 @@ export default function register(program: Command): void {
             metadata: () => discoverAuthorizationServer(config.issuerUrl),
             tokens,
           });
+          // Fail loudly (non-zero) rather than degrade to the cache when the
+          // token may not go to this portal: no request is made (DUSTSEC.4).
+          await client.assertBound?.();
           const result = await syncTeamLayer({
             binding: { ...binding, orgId: target.orgId, portalUrl: target.portalUrl },
             userDir,

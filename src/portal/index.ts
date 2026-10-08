@@ -172,6 +172,7 @@ export {
   PORTAL_ACCOUNT,
   type PortalTokenSet,
   type PortalTokenStore,
+  portalOrigin,
   portalTokenPresent,
   portalTokenStore,
   type TokenBinding,

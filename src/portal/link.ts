@@ -27,12 +27,15 @@ import {
   describeTokenSet,
   type PortalTokenSet,
   type PortalTokenStore,
+  portalOrigin,
   type TokenSummary,
 } from "./tokens.js";
 
 export interface LinkOptions {
   /** The authorization server (Clerk Frontend API URL). */
   readonly issuerUrl: string;
+  /** The portal API base the token will be used against; its origin is recorded with the token. */
+  readonly apiBaseUrl: string;
   readonly clientId: string;
   readonly tokens: PortalTokenStore;
   readonly browser: BrowserOpener;
@@ -55,6 +58,8 @@ export interface LinkResult {
 
 export async function linkPortal(options: LinkOptions): Promise<LinkResult> {
   const write = options.write ?? (() => {});
+  // Refuse before any browser opens if the API base can never hold a token.
+  const apiOrigin = portalOrigin(options.apiBaseUrl);
   const scopes = options.scopes ?? DEFAULT_SCOPES;
 
   write(`Discovering the portal's authorization server at ${options.issuerUrl}...\n`);
@@ -87,7 +92,7 @@ export async function linkPortal(options: LinkOptions): Promise<LinkResult> {
     const code = await listener.waitForCode();
     write("Sign-in received. Exchanging the authorization code...\n");
 
-    const tokens = await exchangeCode({
+    const exchanged = await exchangeCode({
       metadata,
       clientId: options.clientId,
       code,
@@ -96,6 +101,8 @@ export async function linkPortal(options: LinkOptions): Promise<LinkResult> {
       ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
       ...(options.now === undefined ? {} : { now: options.now }),
     });
+
+    const tokens: PortalTokenSet = { ...exchanged, api_origin: apiOrigin };
 
     if (tokens.refresh_token === undefined) {
       // Not fatal — the link works — but silence here becomes "why does it keep
