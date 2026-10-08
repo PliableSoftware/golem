@@ -175,7 +175,7 @@ const rollupFileSchema = z.object({
 type RollupFile = z.infer<typeof rollupFileSchema>;
 
 /** Real `projectId` values are never empty-and-NUL-wrapped, so this can't collide. */
-const ROLLUP_ALL_KEY = " all ";
+const ROLLUP_ALL_KEY = "\u0000all\u0000";
 
 /** `.golem/state/telemetry-rollup.json` for a project — {@link JsonlTelemetryStore#aggregate}'s cache. */
 export function telemetryRollupPath(projectDir: string): string {

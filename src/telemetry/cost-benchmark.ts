@@ -301,7 +301,7 @@ export function buildCostBenchmark(
     string,
     { calls: number; durationMs: number; resultBytes: number; draftChars: number }
   >();
-  // R8.8: per-model billed totals, keyed `model provider` so the same id
+  // R8.8: per-model billed totals, keyed `model + NUL + provider` so the same id
   // under two providers is never silently merged at one of their prices.
   const modelAcc = new Map<
     string,
@@ -332,7 +332,7 @@ export function buildCostBenchmark(
           unattributedUsageSamples += 1;
           break;
         }
-        const key = `${ev.model} ${ev.modelProvider ?? ""}`;
+        const key = `${ev.model}\u0000${ev.modelProvider ?? ""}`;
         const acc = modelAcc.get(key) ?? {
           model: ev.model,
           provider: ev.modelProvider,
