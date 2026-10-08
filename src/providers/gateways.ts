@@ -125,7 +125,8 @@ export function resolveActiveUpstream(
       resolved: legacyResolved,
       warning:
         `inference.model "${input.activeAccount}" is in neither proxy.gateways nor ` +
-        "proxy.targets — requests will be refused (fail closed); no substitute upstream is used.",
+        "proxy.targets — the proxy refuses requests (fail closed) and uses no substitute upstream; " +
+        "the shim does not fail closed and keeps serving its configured upstream.",
     };
   }
 
