@@ -136,7 +136,9 @@ export async function runQueueLocally(
 ): Promise<QueueRunResult> {
   const all = await store.list();
   const queued = all
-    .filter((t) => t.state === "queued")
+    // An escalated task is queued for the Claude tier (`golem task resume`), not
+    // for us: servicing it here would overwrite that hand-off and mark it done.
+    .filter((t) => t.state === "queued" && t.escalated !== true)
     .slice(0, opts.limit ?? Number.POSITIVE_INFINITY);
   if (queued.length === 0) {
     return { serviced: 0, failed: 0, total: 0, localModelUnavailable: false };

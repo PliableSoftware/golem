@@ -11,8 +11,8 @@ import {
   readDelegationLedger,
   unreviewedDelegations,
   unreviewedRefusal,
+  updateDelegationLedger,
   waiveReview,
-  writeDelegationLedger,
 } from "../../hooks/delegation-ledger.js";
 import {
   createProbeRunner,
@@ -339,39 +339,52 @@ export default function register(program: Command): void {
     )
     .action(async (id: string | undefined, opts: { dir: string; all: boolean; waive?: string }) => {
       try {
-        const ledger = await readDelegationLedger(opts.dir);
-        const outstanding = unreviewedDelegations(ledger);
-        if (outstanding.length === 0) {
-          process.stdout.write("no delegated runs are awaiting review\n");
-          return;
-        }
-        if (id === undefined && !opts.all && opts.waive === undefined) {
-          throw new InitError(
-            `${outstanding.length} delegated run(s) awaiting review. ` +
-              "Name one by id, or use --all. Ids:\n" +
-              outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
-          );
-        }
-        const nowIso = new Date().toISOString();
-        const result =
-          opts.waive !== undefined
-            ? waiveReview(ledger, nowIso, opts.waive, id)
-            : markReviewed(ledger, nowIso, id);
-        if (result.changed === 0) {
-          // Reporting success for a no-op is the dishonest-signal class this
-          // repo keeps closing.
-          throw new InitError(
-            id === undefined
-              ? "nothing changed — no outstanding delegated runs"
-              : `no outstanding delegated run with id "${id}"`,
-          );
-        }
-        await writeDelegationLedger(opts.dir, result.ledger);
-        process.stdout.write(
-          opts.waive !== undefined
-            ? `waived review for ${result.changed} delegated run(s): ${opts.waive}\n`
-            : `marked ${result.changed} delegated run(s) reviewed\n`,
-        );
+        // Read-modify-write under the same lock `recordDelegation` takes, so a spawn
+        // recorded between our read and write is not erased (which would let
+        // `task done` close past the R14.6 gate).
+        const message = await updateDelegationLedger(opts.dir, (ledger) => {
+          const outstanding = unreviewedDelegations(ledger);
+          if (outstanding.length === 0) {
+            return { ledger: null, result: "no delegated runs are awaiting review\n" };
+          }
+          if (id === undefined && !opts.all && opts.waive === undefined) {
+            throw new InitError(
+              `${outstanding.length} delegated run(s) awaiting review. ` +
+                "Name one by id, or use --all. Ids:\n" +
+                outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
+            );
+          }
+          if (opts.waive !== undefined && id === undefined && !opts.all) {
+            // A waiver is the deliberate escape hatch: it must name its target, never
+            // sweep every outstanding run by omission.
+            throw new InitError(
+              `--waive needs an id or an explicit --all. ${outstanding.length} outstanding. Ids:\n` +
+                outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
+            );
+          }
+          const nowIso = new Date().toISOString();
+          const result =
+            opts.waive !== undefined
+              ? waiveReview(ledger, nowIso, opts.waive, id)
+              : markReviewed(ledger, nowIso, id);
+          if (result.changed === 0) {
+            // Reporting success for a no-op is the dishonest-signal class this
+            // repo keeps closing.
+            throw new InitError(
+              id === undefined
+                ? "nothing changed — no outstanding delegated runs"
+                : `no outstanding delegated run with id "${id}"`,
+            );
+          }
+          return {
+            ledger: result.ledger,
+            result:
+              opts.waive !== undefined
+                ? `waived review for ${result.changed} delegated run(s): ${opts.waive}\n`
+                : `marked ${result.changed} delegated run(s) reviewed\n`,
+          };
+        });
+        process.stdout.write(message);
       } catch (err) {
         _fail(err);
       }

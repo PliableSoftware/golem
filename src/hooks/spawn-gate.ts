@@ -51,6 +51,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { LimitPrediction } from "../proxy/limit-prediction.js";
 import { STALE_AFTER_MS } from "./snooze-nudge.js";
+import { withFileLock } from "./state-lock.js";
 
 /**
  * Claude Code's subagent-spawn tool, under both names it has shipped with
@@ -166,6 +167,12 @@ export function decideSpawnGate(
   }
 
   const { utilization, resetAtIso } = prediction.fiveHour;
+  // The window has already reset: the utilization describes a window that no
+  // longer exists (same check as `decideSnoozeNudge`), so never refuse on it.
+  if (resetAtIso !== null) {
+    const resetMs = Date.parse(resetAtIso);
+    if (Number.isFinite(resetMs) && resetMs <= nowMs) return { kind: "allow" };
+  }
   const inFlight = countInFlight(state, prediction.observedAtIso);
   const projected = utilization + costFraction * (inFlight + 1);
   if (projected <= 1) return { kind: "allow" };
@@ -266,6 +273,19 @@ export async function writeSpawnGateState(
   const tmp = `${file}.${process.pid}.tmp`;
   await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   await rename(tmp, file);
+}
+
+/**
+ * Load -> `fn` -> save the spawn ledger under a lock, so concurrent hook
+ * processes cannot overwrite each other's update.
+ */
+export async function updateSpawnGateState(
+  projectDir: string,
+  fn: (state: SpawnGateState) => SpawnGateState,
+): Promise<void> {
+  await withFileLock(spawnGateStatePath(projectDir), async () => {
+    await writeSpawnGateState(projectDir, fn(await readSpawnGateState(projectDir)));
+  });
 }
 
 /**

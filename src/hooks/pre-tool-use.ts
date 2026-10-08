@@ -33,11 +33,7 @@ import {
   readCoderFirstNudgeState,
   writeCoderFirstNudgeState,
 } from "./coder-first-nudge.js";
-import {
-  appendDelegation,
-  readDelegationLedger,
-  writeDelegationLedger,
-} from "./delegation-ledger.js";
+import { recordDelegation } from "./delegation-ledger.js";
 import { guidanceEnabled } from "./guidance.js";
 import { type HookIo, readAll } from "./hook-io.js";
 import { writePendingToolCall } from "./session-state.js";
@@ -56,9 +52,11 @@ import {
   readSpawnGateState,
   recordSpawn,
   spawnBlindReason,
+  spawnGateStatePath,
   spawnRefusalReason,
   writeSpawnGateState,
 } from "./spawn-gate.js";
+import { withFileLock } from "./state-lock.js";
 import { toolArgument } from "./tool-argument.js";
 
 /**
@@ -154,16 +152,12 @@ async function recordDelegationSpawn(
         ? input.subagent_type
         : "agent";
     const description = typeof input.description === "string" ? input.description : undefined;
-    const ledger = await readDelegationLedger(projectDir);
-    await writeDelegationLedger(
-      projectDir,
-      appendDelegation(ledger, {
-        at: nowIso,
-        agentType,
-        ...(description === undefined ? {} : { description }),
-        ...(sessionId === undefined ? {} : { sessionId }),
-      }),
-    );
+    await recordDelegation(projectDir, {
+      at: nowIso,
+      agentType,
+      ...(description === undefined ? {} : { description }),
+      ...(sessionId === undefined ? {} : { sessionId }),
+    });
   } catch {
     // Bookkeeping only — never block a dispatch on it.
   }
@@ -318,40 +312,44 @@ export async function runPreToolUseHook(
         const nowMs = options.now?.() ?? Date.now();
         const nowIso = options.nowIso ?? new Date(nowMs).toISOString();
         const prediction = await readPrediction(projectDir);
-        const state = await readSpawnGateState(projectDir);
-        const spawn = decideSpawnGate(prediction, state, nowMs, {
-          costFraction: spawnSettings.costFraction,
+        // load -> decide -> save under one lock: parallel spawns each run this in
+        // their own hook process, and an unlocked read-modify-write loses records.
+        const denyReason = await withFileLock(spawnGateStatePath(projectDir), async () => {
+          const state = await readSpawnGateState(projectDir);
+          const spawn = decideSpawnGate(prediction, state, nowMs, {
+            costFraction: spawnSettings.costFraction,
+          });
+          if (spawn.kind === "refuse") {
+            // No marker written: the refusal must persist while the projection
+            // holds, exactly like the enforcing park. Utilization falling (or the
+            // window resetting) is what lifts it.
+            return spawnRefusalReason(spawn);
+          }
+          if (spawn.kind === "blind") {
+            // One-shot per reading — informs, never deadlocks. Re-issue to proceed.
+            await writeSpawnGateState(projectDir, {
+              ...state,
+              blindWarnedForReading: spawn.reading,
+            });
+            return spawnBlindReason(spawn);
+          }
+          // Allowed: record it, so a sibling dispatched in the same fan-out is
+          // charged for even though this reading predates its spend.
+          await writeSpawnGateState(projectDir, recordSpawn(state, nowMs, nowIso));
+          return null;
         });
-        const emitSpawnDeny = (reason: string): void => {
+        if (denyReason !== null) {
           io.stdout.write(
             `${JSON.stringify({
               hookSpecificOutput: {
                 hookEventName: "PreToolUse",
                 permissionDecision: "deny",
-                permissionDecisionReason: reason,
+                permissionDecisionReason: denyReason,
               },
             })}\n`,
           );
-        };
-        if (spawn.kind === "refuse") {
-          // No marker written: the refusal must persist while the projection holds,
-          // exactly like the enforcing park. Utilization falling (or the window
-          // resetting) is what lifts it.
-          emitSpawnDeny(spawnRefusalReason(spawn));
           return 0;
         }
-        if (spawn.kind === "blind") {
-          // One-shot per reading — informs, never deadlocks. Re-issue to proceed.
-          await writeSpawnGateState(projectDir, {
-            ...state,
-            blindWarnedForReading: spawn.reading,
-          });
-          emitSpawnDeny(spawnBlindReason(spawn));
-          return 0;
-        }
-        // Allowed: record it, so a sibling dispatched in the same fan-out is charged
-        // for even though this reading predates its spend.
-        await writeSpawnGateState(projectDir, recordSpawn(state, nowMs, nowIso));
       }
 
       // R14.6 — record the DELEGATION itself, separately from the headroom
