@@ -4,7 +4,7 @@ type: concept
 tags: [tools, tokens, prompt-caching, proxy-fidelity]
 sources: ["https://docs.claude.com/en/docs/agents-and-tools/tool-use/tool-search-tool", "docs/plan/verification-notes.md (§89, §100)", "src/cli/init.ts", "src/proxy/context-ledger.ts", "tests/integration/proxy-tool-search.test.ts"]
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-10-08
 ---
 
 # Tool Search
@@ -51,9 +51,15 @@ earlier do not support it.
    non-deferred, and it should be the search tool.
 
 Anthropic's own threshold: worth enabling at **≥10 tools or >10k tokens** of
-definitions; standard calling is better under 10 tools. Golem's own 11 tools are
-~902 description tokens and ~1,128 of input schemas, which puts Golem alone under
-the threshold — the aggregate with Claude Code's built-ins is what crosses it, and
+definitions; standard calling is better under 10 tools. **Figures as of 2026-07-30
+(§89/§100):** Golem's own 11 tools were ~902 description tokens and ~1,128 of input
+schemas. **Live count, 2026-10-08** (`golemToolCensus()`, `src/tools/catalog.ts:132`,
+via the DUST1.5 audit): still 11 tools, but a different 11 (`level` is gone; `code` and
+`snooze` were added), at **1116 description tokens** (+24%) and 4579 full-definition
+tokens, the latter counting `outputSchema` that Claude Code never bills. The live
+input-schema-only figure was not measured: UNVERIFIED. The two 11s match by
+coincidence, and 1116 is close to the 700-1200 band `catalog.test.ts:40-43` asserts. All
+of which still puts Golem alone under the threshold — the aggregate with Claude Code's built-ins is what crosses it, and
 per §100 that aggregate is **93.9% built-ins**.
 
 ### What Claude Code does is not this (observed, undocumented)
@@ -62,7 +68,8 @@ Fact 1 above describes the **API feature**. Claude Code's own MCP deferral looks
 different on the wire (§100): the forwarded array carries an entry literally named
 `DeferredToolPlaceholder` (51 tokens) plus a client tool `ToolSearch`, and **no**
 `tool_search_tool_*` server tool at all. Only the tools already discovered in the
-session appear as full definitions — 6 of Golem's 11, in the measured capture.
+session appear as full definitions — 6 of Golem's 11, in the capture measured at the
+time (2026-07-30).
 
 So Claude Code's deferral **does** shrink the wire, and an unused Golem tool costs
 approximately nothing. Recorded as an observation, not a contract: it is the
@@ -71,7 +78,7 @@ obligation is unchanged either way — relay it faithfully.
 
 ## Who actually owns the tools block
 
-Measured with the [[Context Ledger]] on a real 139,327-token request (§100):
+Measured with the [[Context Ledger]] on a real 139,327-token request (§100, 2026-07-30; the Golem rows predate `code` and `snooze`):
 
 | owner | tokens | share | tools |
 |---|--:|--:|--:|
@@ -91,8 +98,13 @@ which means **Claude Code forwards none of the MCP metadata** (`outputSchema`,
 ## Why Golem does not shrink the tools block itself
 
 Measured and rejected twice, not merely deferred. `golem bench tools` A/Bs a
-candidate transform against 27 labelled selection cases and reports the token
-saving beside the accuracy delta.
+candidate transform against 27 labelled selection cases (`src/tools/cases.ts`) and
+reports the token saving beside the accuracy delta. As of 2026-10-08 two of those cases
+(`level-1`, `level-2`) expect the retired `level` tool and can never pass, capping
+selection accuracy at 25/27 = 92.6%; `arg-level-1` is skipped; and the `code` tool has no
+selection case. There is also a sixth mode, `ext-caveman-shrink`, not covered below.
+Everything in the two tables below was measured on the 2026-07-30 tool set and has not
+been re-measured.
 
 **Descriptions (§89).** Whitespace normalisation saves **exactly zero** tokens (the
 descriptions have no redundant whitespace); trimming each to its first sentence
@@ -134,8 +146,8 @@ in carries the obligation to not corrupt the flow — see [[Architecture]] §2 f
 where in the pipeline this sits, and [[Compression Levels]] for what each level is
 allowed to touch.
 
-Guarded by `tests/integration/proxy-tool-search.test.ts`: byte-faithful
-forwarding at levels 0/1, and preservation of `defer_loading`, the search-tool
+Guarded by `tests/integration/proxy-tool-search.test.ts`: lossless and
+prefix-stable forwarding at level <= 1 (`off` and `1`; the test asserts the body is unchanged), and preservation of `defer_loading`, the search-tool
 `type`, `tools` ordering, and `cache_control` placement at every level. Fidelity
 already held when the tests were written — nothing was broken — but it is now an
 asserted invariant rather than an assumption.
