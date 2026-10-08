@@ -263,6 +263,46 @@ describe("local-answer time budget (R10.23)", () => {
     }
   });
 
+  it("names the local-answer stage when a SLOW local answer is what held the request", async () => {
+    vi.useFakeTimers();
+    const writes: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    try {
+      const slow: LocalAnswerService = {
+        tryAnswer: () =>
+          new Promise<LocalAnswerResult>((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  answered: true,
+                  text: "the answer",
+                  sources: [{ sourcePath: "docs/wiki/x.md", score: 0.9 }],
+                }),
+              1_000,
+            ),
+          ),
+      };
+      const pipe = makePipeline(slow, () => {});
+      const pending = pipe.process(
+        messagesRequest([{ role: "user", content: "how do I deploy?" }]),
+      );
+      await vi.advanceTimersByTimeAsync(1_500);
+      const out = await pending;
+      expect(out.respondDirectly).toBeDefined();
+
+      const log = writes.join("");
+      expect(log).toContain("pipeline held this request");
+      expect(log).toContain("answered locally");
+      expect(log).toContain("local-answer=");
+    } finally {
+      stderr.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("stays silent about timing on a fast request", async () => {
     const writes: string[] = [];
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {

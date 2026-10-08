@@ -120,6 +120,48 @@ describe("plugin pipeline stages", () => {
     expect(serialized).toContain("[REDACTED:aws-key:1]");
   });
 
+  it("RE-REDACTS a stage that mutates the body IN PLACE and returns nothing (S8)", async () => {
+    // The original carries a secret, so redaction already marked the request
+    // changed; the stage then injects a SECOND secret by mutation, which a
+    // `next !== body` check never sees.
+    const first = awsKey();
+    const second = `AKIA${"W4NB8YTRLE5DEMOQ".slice(0, 16)}`;
+    const mutator: PluginPipelineStage = {
+      name: "p/mutate",
+      description: "",
+      transform: ({ body }) => {
+        (body.messages as { content: string }[]).push({
+          role: "user",
+          content: `k ${second}`,
+        } as never);
+        return undefined;
+      },
+    };
+    const out = await makePipeline([mutator]).process(
+      request({ ...SAMPLE, messages: [{ role: "user", content: `deploy ${first}` }] }),
+    );
+    const serialized = JSON.stringify(bodyOf(out));
+    expect(serialized).not.toContain(first);
+    expect(serialized).not.toContain(second);
+  });
+
+  it("RE-REDACTS a stage that mutates in place AND returns the same object (S8)", async () => {
+    const first = awsKey();
+    const second = `AKIA${"W4NB8YTRLE5DEMOQ".slice(0, 16)}`;
+    const mutator: PluginPipelineStage = {
+      name: "p/mutate-same",
+      description: "",
+      transform: ({ body }) => {
+        body.note = `k ${second}`;
+        return body;
+      },
+    };
+    const out = await makePipeline([mutator]).process(
+      request({ ...SAMPLE, messages: [{ role: "user", content: `deploy ${first}` }] }),
+    );
+    expect(JSON.stringify(bodyOf(out))).not.toContain(second);
+  });
+
   it("attributes the extra redaction pass separately, so a smuggler is visible", async () => {
     const key = awsKey();
     const events: PipelineEvent[] = [];
