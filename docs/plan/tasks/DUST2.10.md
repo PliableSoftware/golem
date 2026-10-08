@@ -1,7 +1,7 @@
 ---
 task: DUST2.10
 title: "Code-owned claims: tool descriptions, doc comments and CLI/dashboard labels that drifted"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each row below is fixed; the only behavioural changes are label text and 
 depends_on: [DUST2.1]
 touches: [src/mcp, src/inference, src/cli, src/hooks, src/interfaces, src/cli/skills]
 created: 2026-10-08
+updated: 2026-10-08T12:19:12.712Z
 ---
 
 ## What this is
@@ -46,3 +47,7 @@ DUST1.x note.
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

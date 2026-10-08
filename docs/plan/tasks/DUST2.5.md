@@ -1,7 +1,7 @@
 ---
 task: DUST2.5
 title: "Wiki rebaseline: knowledge base, web cache, distillation and tool pages"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "Every row listed below is fixed with the code evidence from its DUST1.x n
 depends_on: [DUST2.1]
 touches: [docs/wiki/concepts]
 created: 2026-10-08
+updated: 2026-10-08T12:19:10.044Z
 ---
 
 ## Rows
@@ -34,3 +35,7 @@ ADR-0001's dangling `docs/plan/next_batch.md` source is DUST2.3's (superseding A
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

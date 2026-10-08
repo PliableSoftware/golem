@@ -1,7 +1,7 @@
 ---
 task: DUST2.3
 title: "ADR amendment notes for the drifted ADRs (0001–0008) and the 2026-10-08 decisions"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: write
@@ -10,6 +10,7 @@ gate: "Each listed ADR carries a dated amendment note (or a new superseding ADR 
 depends_on: [DUST2.1]
 touches: [docs/decisions]
 created: 2026-10-08
+updated: 2026-10-08T12:19:08.987Z
 ---
 
 ## What this is
@@ -41,3 +42,7 @@ implemented by DUSTSEC.n" — do not claim it ships.
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

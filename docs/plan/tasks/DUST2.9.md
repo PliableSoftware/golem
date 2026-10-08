@@ -1,7 +1,7 @@
 ---
 task: DUST2.9
 title: "README, CLAUDE.md drift and plan/index hygiene (XS sizes, quoted titles, stale task docs, ROADMAP prose)"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: docs
@@ -10,6 +10,7 @@ gate: "README and CLAUDE.md rows below fixed; R8.23/R8.25/R8.26/R8.29 parse (siz
 depends_on: [DUST2.1, DUSTSEC.16]
 touches: [README.md, CLAUDE.md, docs/plan/tasks, docs/plan/ROADMAP.md]
 created: 2026-10-08
+updated: 2026-10-08T12:19:12.169Z
 ---
 
 ## README / CLAUDE.md
@@ -50,3 +51,7 @@ created: 2026-10-08
 ## Verification bar
 
 `golem task index --write` leaves ROADMAP clean; `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240

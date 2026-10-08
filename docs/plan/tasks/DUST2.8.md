@@ -1,7 +1,7 @@
 ---
 task: DUST2.8
 title: "Wiki rebaseline: syntheses/sources drift and the WIKI.md index"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: write
@@ -10,6 +10,7 @@ gate: "The 8 syntheses/sources rows carry a dated note correcting the drifted cl
 depends_on: [DUST2.3, DUST2.4, DUST2.5, DUST2.6, DUST2.7]
 touches: [docs/wiki/WIKI.md, docs/wiki/syntheses, docs/wiki/sources]
 created: 2026-10-08
+updated: 2026-10-08T12:19:11.649Z
 ---
 
 ## Rows
@@ -34,3 +35,7 @@ Runs LAST among the wiki tasks so the index reflects their edits.
 ## Verification bar
 
 `golem wiki check` green by exit code. Commit on your own branch.
+
+## Outcome
+
+shipped; fact-checked by sampling (58 claims), follow-ups in PR 240
