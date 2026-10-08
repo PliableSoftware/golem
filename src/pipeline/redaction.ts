@@ -16,8 +16,10 @@
  *     and the running per-kind counter.
  *
  * Placeholders look like `[REDACTED:aws-key:1]`. The brackets/colon are
- * outside every rule's charset and the entropy candidate charset, so the
- * stage is idempotent: redacting already-redacted text is a no-op.
+ * outside every rule's charset and the entropy candidate charset (and
+ * `connection-password` explicitly skips a whole placeholder), so the stage is
+ * idempotent: redacting already-redacted text is a no-op. Proven per rule in
+ * tests/unit/pipeline/redaction.test.ts.
  *
  * The stage reports a TokenDelta so telemetry (A4) can attribute how much a
  * request was reduced by redaction (usually a small increase — placeholders

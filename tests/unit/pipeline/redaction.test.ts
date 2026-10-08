@@ -147,6 +147,69 @@ describe("R14.3 nsec (Nostr secret key) redaction — glue and case", () => {
   });
 });
 
+/** `scheme://user:password@host`, assembled from pieces so no literal credentialed URL sits in source. */
+function conn(scheme: string, user: string, password: string, host: string): string {
+  return `${[`${scheme}://${user}`, password].join(":")}@${host}`;
+}
+
+/** A placeholder, built at runtime so no literal one is committed as content. */
+function ph(n: number, kind = "connection-password"): string {
+  return ["[REDACTED", kind, `${n}]`].join(":");
+}
+
+describe("idempotence over every built-in rule (S10)", () => {
+  it("redacting the redacted output of each rule's positive case is a no-op", () => {
+    for (const c of CASES) {
+      const once = redact(c.positive);
+      expect(redact(once), c.rule).toBe(once);
+    }
+  });
+
+  it("redacting the redacted output of ALL positives together is a no-op", () => {
+    const joined = CASES.map((c) => c.positive).join("\n");
+    const once = redact(joined);
+    expect(redact(once)).toBe(once);
+  });
+
+  it("does not renumber connection-password placeholders when already-redacted URLs are reordered", () => {
+    const first = redact(
+      `${conn("postgres", "u", "pw-alpha-1", "h/db")} ${conn("postgres", "v", "pw-beta-22", "h/db")}`,
+    );
+    const [a, b] = first.split(" ");
+    const swapped = `${b} ${a}`;
+    expect(redact(swapped)).toBe(swapped);
+    expect(redact(first)).toBe(first);
+  });
+});
+
+describe("connection-password: what it redacts is unchanged by the S10 fix (before/after guard)", () => {
+  // [input, expected output]. Every row held on the code BEFORE the fix.
+  const TABLE: readonly (readonly [string, string])[] = [
+    [conn("postgres", "u", "hunter2", "h/db"), conn("postgres", "u", ph(1), "h/db")],
+    [conn("mysql", "root", "p%40ss:w", "host:3306/x"), conn("mysql", "root", ph(1), "host:3306/x")],
+    [
+      `${conn("a", "u", "same-pw", "h")} ${conn("b", "v", "same-pw", "h")}`,
+      `${conn("a", "u", ph(1), "h")} ${conn("b", "v", ph(1), "h")}`,
+    ],
+    [
+      `${conn("a", "u", "pw-one", "h")} ${conn("b", "v", "pw-two", "h")}`,
+      `${conn("a", "u", ph(1), "h")} ${conn("b", "v", ph(2), "h")}`,
+    ],
+    ["redis://:pw@h", "redis://:pw@h"],
+    ["postgres://u@h/db", "postgres://u@h/db"],
+    [conn("a", "u", "x[y]z", "h"), conn("a", "u", ph(1), "h")],
+    // Placeholder-LOOKING but not a whole connection-password placeholder: still a password.
+    [conn("a", "u", ["[REDACTED", "x]"].join(":"), "h"), conn("a", "u", ph(1), "h")],
+    [conn("a", "u", `${ph(1)}tail`, "h"), conn("a", "u", ph(1), "h")],
+    [conn("a", "u", `head${ph(1)}`, "h"), conn("a", "u", ph(1), "h")],
+  ];
+  for (const [i, [input, expected]] of TABLE.entries()) {
+    it(`row ${i}`, () => {
+      expect(redact(input)).toBe(expected);
+    });
+  }
+});
+
 describe("high-entropy heuristic", () => {
   it("redacts an unlabeled high-entropy secret", () => {
     const secret = "Xq7Zk2Lp9Rw4Tv8Nb3Md6Yh1Gj5Fs0Ac2Ee4";

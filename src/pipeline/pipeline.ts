@@ -597,8 +597,8 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       //
       // Then redaction RE-RUNS after ANY stage ran — not only when a stage
       // returned a new object, because a stage may also mutate `body` in place
-      // (S8). Redaction is idempotent (placeholders are outside every rule's
-      // charset), so the second pass cannot renumber anything — what it buys is
+      // (S8). Redaction is idempotent (proven per rule in
+      // redaction.test.ts), so the second pass cannot renumber anything — what it buys is
       // that a plugin stage cannot introduce unredacted content into the request,
       // however it obtained it. That is a structural answer to "can a plugin
       // weaken redaction", rather than a promise that we read the plugin.
