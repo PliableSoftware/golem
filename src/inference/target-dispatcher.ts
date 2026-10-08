@@ -109,11 +109,7 @@ import {
   TargetDispatchError,
 } from "../proxy/rate-limit-retry.js";
 import type { PersonaConfig } from "./personas.js";
-import {
-  assertWorkerDispatchable,
-  PersonaNotDispatchableError,
-  workerTargetFromPersona,
-} from "./personas.js";
+import { assertWorkerDispatchable, PersonaNotDispatchableError } from "./personas.js";
 import { workerTarget } from "./workers.js";
 
 /** Hosts for which `trust: "local"` is believable — context never leaves the machine. */
@@ -218,7 +214,7 @@ export type DispatchRoute =
   | "explicit"
   /**
    * This worker's target from {@link workerTarget}: its `inference.worker_targets`
-   * entry, or, failing that, `inference.personas[worker].model`.
+   * entry (a persona-sourced value is labelled {@link DispatchRoute} `persona_worker`).
    */
   | "worker"
   /** `inference.personas[worker].model` resolved as a target. */
@@ -234,7 +230,7 @@ export function describeRoute(route: DispatchRoute, worker?: string | undefined)
     case "explicit":
       return "target named by the caller";
     case "worker":
-      return `inference.worker_targets.${worker ?? "?"} (or inference.personas.${worker ?? "?"}.model)`;
+      return `inference.worker_targets.${worker ?? "?"}`;
     case "persona_worker":
       return `inference.personas.${worker ?? "?"}.model`;
     case "model":
@@ -739,20 +735,16 @@ export function selectTarget(
   if (request.targetId !== undefined && request.targetId !== "") {
     return { id: request.targetId, route: "explicit" };
   }
-  // First worker_targets (live, highest after explicit), then personas[worker].model
-  const fromWorkerRaw =
-    request.worker !== undefined
-      ? workerTarget(options.workerTargets, request.worker, options.personas)
-      : undefined;
-  const fromWorker = fromWorkerRaw === "" ? undefined : fromWorkerRaw;
-  if (fromWorker !== undefined) return { id: fromWorker, route: "worker" };
-
-  const fromPersonaWorkerRaw =
-    request.worker !== undefined
-      ? workerTargetFromPersona(options.personas ?? {}, request.worker)
-      : undefined;
-  const fromPersonaWorker = fromPersonaWorkerRaw === "" ? undefined : fromPersonaWorkerRaw;
-  if (fromPersonaWorker !== undefined) return { id: fromPersonaWorker, route: "persona_worker" };
+  // worker_targets first (live, highest after explicit), then personas[worker].model.
+  // They are read separately so the route label says which one answered.
+  if (request.worker !== undefined) {
+    const fromMap = options.workerTargets?.[request.worker];
+    if (fromMap !== undefined && fromMap !== "") return { id: fromMap, route: "worker" };
+    const fromPersona = workerTarget(undefined, request.worker, options.personas);
+    if (fromPersona !== undefined && fromPersona !== "") {
+      return { id: fromPersona, route: "persona_worker" };
+    }
+  }
 
   const configured = options.settings.model;
   return {

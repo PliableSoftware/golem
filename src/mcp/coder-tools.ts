@@ -502,7 +502,9 @@ export function registerCoderTool(
                   ? "; via inference.model"
                   : dispatched.route === "worker"
                     ? "; via inference.worker_targets.coder"
-                    : "") +
+                    : dispatched.route === "persona_worker"
+                      ? "; via inference.personas.coder.model"
+                      : "") +
               (dispatched.redactedCount > 0
                 ? `; ${dispatched.redactedCount} secret(s) redacted before dispatch, restored here`
                 : "") +

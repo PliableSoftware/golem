@@ -76,7 +76,7 @@ describe("selectTarget", () => {
   it("still routes an owner: agent persona", () => {
     expect(selectTarget({ ...base, personas: AGENT_OWNED }, { worker: "coder" })).toEqual({
       id: "cheap",
-      route: "worker",
+      route: "persona_worker",
     });
   });
 });
