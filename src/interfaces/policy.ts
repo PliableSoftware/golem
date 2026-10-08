@@ -16,7 +16,7 @@
  * How much of the request pipeline runs.
  *
  * - `off` — redaction ONLY. Nothing else touches the request.
- * - `1` — + lossless dedup/compaction/cache-align. Byte-faithful.
+ * - `1` — + lossless dedup/compaction/cache-align. Lossless and prefix-stable.
  * - `2` — + lossy semantic compression (stale-turn drop) + semantic cache.
  * - `3` — + max semantic compression + loose semantic cache.
  *
@@ -146,7 +146,7 @@ const LEVEL_TABLE: Readonly<Record<string, StageConfig>> = Object.freeze({
     semanticCompression: "off",
     semanticCache: "off",
   } as const),
-  // 1 "lossless": redaction + byte-faithful lossless compression.
+  // 1 "lossless": redaction + lossless, prefix-stable compression.
   1: Object.freeze({
     redaction: true,
     losslessCompression: true,

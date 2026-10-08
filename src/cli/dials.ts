@@ -207,7 +207,7 @@ export function compressionEffectNote(value: string): string {
         "(To forward requests untouched, redaction included, that is `golem off` — which persists `proxy.bypass_all` until `golem on`.)"
       );
     case "1":
-      return "lossless — byte-faithful dedup/compaction. Meaning is preserved exactly.";
+      return "lossless and prefix-stable dedup/compaction. Meaning is preserved exactly.";
     case "2":
       return (
         "balanced — adds lossy semantic compression (stale-turn drop) and a semantic cache. " +
