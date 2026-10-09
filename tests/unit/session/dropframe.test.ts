@@ -101,4 +101,16 @@ describe("backpressure drop frame", () => {
   it("sseFrame still stamps id: for a real event", () => {
     expect(sseFrame({ type: "text", seq: 7, text: "x" }).startsWith("id: 7\n")).toBe(true);
   });
+
+  it("a host shutdown sends a real stamped ended event, never the dropped frame", () => {
+    const bus = new SessionBus("s", 10_000);
+    const session: TransportSession = { bus, projectDir: "/nowhere", deliver: async () => {} };
+    const { chunks } = connect(session, { writeOk: true });
+    bus.publish({ type: "text", text: "a" });
+    bus.closeAll("shutting down");
+    expect(chunks.some((c) => c.includes('"dropped"'))).toBe(false);
+    const ended = chunks.find((c) => c.includes("\nevent: ended\n"));
+    expect(ended).toMatch(/^id: 2$/m);
+    expect(chunks.find((c) => c.includes("event: attached"))).toContain(`"epoch":"${bus.epoch}"`);
+  });
 });

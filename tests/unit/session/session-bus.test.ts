@@ -169,4 +169,35 @@ describe("the wire", () => {
     expect(parseSessionPath("/session/abc")).toBeNull();
     expect(parseSessionPath("/api/whoami")).toBeNull();
   });
+
+  it("closeAll publishes a real ended event first and closes with kind shutdown", () => {
+    const bus = new SessionBus("s");
+    const got: string[] = [];
+    const kinds: Array<string | undefined> = [];
+    bus.subscribe({
+      send: (e) => {
+        got.push(`${e.type}:${e.seq}`);
+        return true;
+      },
+      close: (_r, kind) => void kinds.push(kind),
+    });
+    bus.closeAll("host going away");
+    expect(got).toEqual(["ended:1"]);
+    expect(kinds).toEqual(["shutdown"]);
+    expect(bus.endedEvent).toMatchObject({ type: "ended", seq: 1 });
+    expect(bus.subscriberCount).toBe(0);
+  });
+
+  it("a backpressure drop closes with kind dropped", () => {
+    const bus = new SessionBus("s", 10_000);
+    const kinds: Array<string | undefined> = [];
+    bus.subscribe({ send: () => false, close: (_r, kind) => void kinds.push(kind) });
+    for (let i = 0; i <= SUBSCRIBER_QUEUE_LIMIT + 1; i += 1)
+      bus.publish({ type: "text", text: "t" });
+    expect(kinds).toEqual(["dropped"]);
+  });
+
+  it("each bus instance has its own epoch", () => {
+    expect(new SessionBus("s").epoch).not.toBe(new SessionBus("s").epoch);
+  });
 });
