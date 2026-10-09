@@ -19,16 +19,46 @@
  * logs, because there are two relationships. See `host-gate.ts` for the same
  * argument about the decision type.
  *
- * Append-only JSONL, one file per project, bounded by line count so a long-lived
- * session cannot fill a disk.
+ * Append-only JSONL, one live file per project, bounded by ROTATION BY RENAME
+ * so a long-lived session cannot fill a disk (DUST3.15, USER decision LOG,
+ * 2026-10-09). Past {@link HOST_LOG_MAX_BYTES} the live file is renamed aside to
+ * `host-log.<epoch-ms>-<pid>-<rand>.jsonl` and the next append starts a fresh
+ * one; only the newest {@link HOST_LOG_KEEP_ROTATED} rotated files are kept.
+ *
+ * Nothing on the append path reads the file back and rewrites it. An earlier
+ * trim-on-append did, without a lock, and lost concurrent appends — including
+ * `turn` attribution lines, which ADR-0007 invariant 4 says must survive. A
+ * rename moves the inode: an append already holding the old file lands in the
+ * rotated file, and one that opens after lands in the new file. Either way the
+ * line exists. The cost is that two writers can both decide to rotate; the
+ * loser's rename finds nothing (ENOENT, ignored) or, rarely, renames a young
+ * file early. That shortens retention; it never drops a line.
+ *
+ * Retention is a constant, not a setting: 5 MiB x (1 live + 3 rotated) caps the
+ * trail near 20 MiB, far above what a session's turns and decisions produce.
  */
 
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { appendFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
+import { renameWithRetry } from "../shared/win-fs-retry.js";
 import type { HostDecision } from "./host-gate.js";
 
-/** Keep the newest N lines. A session's audit trail, not an archive. */
-export const HOST_LOG_MAX_LINES = 5_000;
+/** Rotate the live log aside once it grows past this many bytes. */
+export const HOST_LOG_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Rotated files kept beside the live one; the oldest beyond this are deleted. */
+export const HOST_LOG_KEEP_ROTATED = 3;
+
+export interface HostLogRotation {
+  readonly maxBytes?: number;
+  readonly keep?: number;
+}
+
+/** Strictly increasing within this process, so two rotations in one ms still sort in order. */
+let lastStamp = 0;
+
+const ROTATED_RE = /^host-log\.(\d{13})-[^/\\]+\.jsonl$/;
 
 export function hostLogPath(projectDir: string): string {
   return path.join(projectDir, ".golem", "state", "host-log.jsonl");
@@ -73,25 +103,92 @@ export type HostLogEntry = HostTurnEntry | HostDecisionEntry | HostLifecycleEntr
 /**
  * Append one entry. Awaited by callers that must not proceed until it lands —
  * notably {@link HostTurnEntry}, whose whole point is that it is written first.
+ *
+ * Rotation runs AFTER the line is durable and its failure is swallowed: a
+ * housekeeping error must never turn into an unattributed turn.
  */
-export async function appendHostLog(projectDir: string, entry: HostLogEntry): Promise<void> {
+export async function appendHostLog(
+  projectDir: string,
+  entry: HostLogEntry,
+  rotation: HostLogRotation = {},
+): Promise<void> {
   const file = hostLogPath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
   await appendFile(file, `${JSON.stringify(entry)}\n`, "utf8");
+  try {
+    await rotateIfLarge(
+      file,
+      rotation.maxBytes ?? HOST_LOG_MAX_BYTES,
+      rotation.keep ?? HOST_LOG_KEEP_ROTATED,
+    );
+  } catch {
+    // Retention is best-effort; the audit line above has already landed.
+  }
 }
 
-/** Newest last. A malformed line is skipped rather than failing the read. */
+async function rotateIfLarge(file: string, maxBytes: number, keep: number): Promise<void> {
+  let size: number;
+  try {
+    size = (await stat(file)).size;
+  } catch (err) {
+    // A concurrent writer already rotated it away.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  if (size <= maxBytes) return;
+  const dir = path.dirname(file);
+  lastStamp = Math.max(Date.now(), lastStamp + 1);
+  const aside = path.join(
+    dir,
+    `host-log.${String(lastStamp).padStart(13, "0")}-${process.pid}-${randomBytes(4).toString("hex")}.jsonl`,
+  );
+  try {
+    await renameWithRetry(file, aside);
+  } catch (err) {
+    // Another writer rotated first: nothing left to move.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  const rotated = await listRotated(dir);
+  for (const name of rotated.slice(0, Math.max(0, rotated.length - keep))) {
+    await unlink(path.join(dir, name)).catch(() => undefined);
+  }
+}
+
+/** Rotated file names, oldest first (the name leads with a fixed-width epoch). */
+async function listRotated(dir: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  return names.filter((n) => ROTATED_RE.test(n)).sort();
+}
+
+/**
+ * Newest last. A malformed line is skipped rather than failing the read. When
+ * the live file holds fewer than `limit` lines (just after a rotation) the
+ * newest rotated files fill the rest, so a rotation never makes the trail
+ * look empty.
+ */
 export async function readHostLog(
   projectDir: string,
   limit = 200,
 ): Promise<readonly HostLogEntry[]> {
-  let raw: string;
-  try {
-    raw = await readFile(hostLogPath(projectDir), "utf8");
-  } catch {
-    return [];
+  const live = hostLogPath(projectDir);
+  const dir = path.dirname(live);
+  const files = [...(await listRotated(dir)).map((n) => path.join(dir, n)), live];
+  let lines: string[] = [];
+  for (let i = files.length - 1; i >= 0 && lines.length < limit; i -= 1) {
+    let raw: string;
+    try {
+      raw = await readFile(files[i] as string, "utf8");
+    } catch {
+      continue;
+    }
+    lines = [...raw.split("\n").filter((l) => l.trim() !== ""), ...lines];
   }
-  const lines = raw.split("\n").filter((l) => l.trim() !== "");
   const out: HostLogEntry[] = [];
   for (const line of lines.slice(-limit)) {
     try {
@@ -101,22 +198,4 @@ export async function readHostLog(
     }
   }
   return out;
-}
-
-/**
- * Trim to {@link HOST_LOG_MAX_LINES}. Called opportunistically rather than on
- * every append: rewriting the file per turn would turn an append-only log into
- * a read-modify-write on the hot path.
- */
-export async function trimHostLog(projectDir: string): Promise<void> {
-  const file = hostLogPath(projectDir);
-  let raw: string;
-  try {
-    raw = await readFile(file, "utf8");
-  } catch {
-    return;
-  }
-  const lines = raw.split("\n").filter((l) => l.trim() !== "");
-  if (lines.length <= HOST_LOG_MAX_LINES) return;
-  await writeFile(file, `${lines.slice(-HOST_LOG_MAX_LINES).join("\n")}\n`, "utf8");
 }

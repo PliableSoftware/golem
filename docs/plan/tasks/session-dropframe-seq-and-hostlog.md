@@ -16,6 +16,11 @@ created: 2026-10-08
 
 Drop frame: carry no `seq` (or a reserved sentinel), amend the contract, update the client. Host log: rotate by rename (not a locked trim). `docs/plan/audit/dust-1/DECISIONS.md` DROP and LOG. Pick the retention size and file count and write them in the task. The original brief follows.
 
+### Implemented (2026-10-09)
+
+- Drop frame: `SessionDroppedFrame` `{type:"ended", dropped:true, reason}`, NO `seq` and NO SSE `id:` line (an absent id leaves `lastEventId` alone; no sentinel can collide). Not a `SessionEvent`. Contract amended with a dated note; `chat-page.ts` reconnects instead of saying "ended" and skips already-rendered seqs.
+- Host log: rotate by rename past `HOST_LOG_MAX_BYTES` = 5 MiB, keep `HOST_LOG_KEEP_ROTATED` = 3 old files. Constants, not settings. `trimHostLog` and `HOST_LOG_MAX_LINES` removed.
+
 ## What this is (original brief)
 
 Two decisions that the Phase 3 reviews showed cannot be made as a bug fix. Recorded here so they are not rediscovered a third time.

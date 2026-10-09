@@ -128,11 +128,14 @@ turn is written to the host log — device id or `"local"`, timestamp, exact tex
 too, `allow` included: a log that only records refusals cannot answer "what did
 this session do".
 
-The log is meant to be bounded to `HOST_LOG_MAX_LINES` = 5,000 lines
-(`src/session/host-log.ts:31`), but `trimHostLog` (`host-log.ts:111`) is exported
-and has **no caller** in `src/` (it is only re-exported from
-`src/session/index.ts:55`). Today the file grows without limit; the bound is
-intent, not behaviour (DUST1.10 row 19; DUST2.19).
+The log is bounded by **rotation by rename** (DUST3.15, 2026-10-09): past
+`HOST_LOG_MAX_BYTES` = 5 MiB the live `host-log.jsonl` is renamed aside to
+`host-log.<epoch-ms>-<pid>-<rand>.jsonl` and the next append starts a new file;
+the newest `HOST_LOG_KEEP_ROTATED` = 3 rotated files are kept (about 20 MiB in
+all). Nothing on the append path reads and rewrites the file, so concurrent
+appends and `turn` attribution lines are never lost; a rename failure is
+swallowed after the line has landed. `readHostLog` spans the rotated files. The
+earlier line-count trim (`trimHostLog`, never called) was removed.
 
 This is not `src/autonomy/log.ts`. That log is tool-shaped and written by a hook
 inside someone else's session; this one records turns, decisions and lifecycle
