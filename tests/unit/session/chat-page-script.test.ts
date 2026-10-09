@@ -65,17 +65,6 @@ async function boot(): Promise<{
   const log = fakeEl();
   const elements = new Map<string, Record<string, unknown>>([["log", log]]);
   const timers: Array<() => void> = [];
-  const promiseLike = {
-    then: (f: (v: unknown) => unknown) => {
-      f({ ok: false, json: () => ({ turns: [] }) });
-      return promiseLike;
-    },
-    catch: () => promiseLike,
-    finally: (f: () => void) => {
-      f();
-      return promiseLike;
-    },
-  };
   const ctx = {
     document: {
       getElementById: (id: string) => {
@@ -93,7 +82,7 @@ async function boot(): Promise<{
     },
     window: { addEventListener: () => undefined },
     EventSource: FakeEventSource,
-    fetch: () => promiseLike,
+    fetch: () => Promise.resolve({ ok: false, json: () => ({ turns: [] }) }),
     setTimeout: (f: () => void) => {
       timers.push(f);
       return 0;
@@ -104,6 +93,7 @@ async function boot(): Promise<{
     JSON,
   };
   vm.runInNewContext(script, ctx);
+  await new Promise((r) => setImmediate(r)); // the history fetch resolves, then connect()
   return { log, timers, rendered: () => text(log) };
 }
 
