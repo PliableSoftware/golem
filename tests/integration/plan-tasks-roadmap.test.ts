@@ -34,6 +34,11 @@ describe("this repo's plan tasks", () => {
     expect(all.length).toBeGreaterThan(1);
   });
 
+  it("no plan-task document is unparseable (the store would silently drop it)", async () => {
+    const { problems } = await new PlanTaskStore(REPO).listWithProblems();
+    expect(problems.map((p) => `${p.name}: ${p.reason}`)).toStrictEqual([]);
+  });
+
   it("all have a title and a non-empty brief", async () => {
     for (const task of await tasks()) {
       expect(task.title, `${task.id} has no title`).toBeDefined();

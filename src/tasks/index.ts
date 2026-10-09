@@ -15,6 +15,7 @@ export {
   serviceTaskLocally,
 } from "./multiplex.js";
 export {
+  type PlanTaskProblem,
   PlanTaskStore,
   parsePlanTask,
   planTaskSlug,
@@ -41,3 +42,11 @@ export {
   taskSchema,
   type Worktree,
 } from "./types.js";
+export {
+  captureWorktree,
+  describeWorktree,
+  normalizeGitPath,
+  resumeCwd,
+  samePath,
+  worktreeDrift,
+} from "./worktree.js";

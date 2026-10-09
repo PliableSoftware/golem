@@ -93,6 +93,8 @@ export type Checkpoint = z.infer<typeof checkpointSchema>;
 const worktreeSchema = z.object({
   path: z.string(),
   baseCommit: z.string(),
+  /** Branch checked out at capture time; absent on a detached HEAD. */
+  branch: z.string().optional(),
   /** Files dirty at capture time — restored/re-verified on resume. */
   dirtyFiles: z.array(z.string()).default([]),
 });

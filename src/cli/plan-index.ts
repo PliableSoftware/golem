@@ -13,7 +13,7 @@
  * best-effort diff.
  */
 
-import type { Task } from "../tasks/index.js";
+import type { PlanTaskProblem, Task } from "../tasks/index.js";
 import { planTaskSlug, TERMINAL_TASK_STATES } from "../tasks/index.js";
 
 export const PLAN_INDEX_BEGIN = "<!-- golem:task-index:begin -->";
@@ -92,7 +92,10 @@ const HEADER = [
  * Render the index. Markers are always emitted so the region stays splice-able even
  * when there is nothing in a group.
  */
-export function renderPlanIndex(tasks: readonly Task[]): string {
+export function renderPlanIndex(
+  tasks: readonly Task[],
+  problems: readonly PlanTaskProblem[] = [],
+): string {
   const { ready, blocked, done } = groupPlanTasks(tasks);
   const out: string[] = [PLAN_INDEX_BEGIN, ""];
   out.push(
@@ -115,6 +118,20 @@ export function renderPlanIndex(tasks: readonly Task[]): string {
       out.push(
         `| [${task.id}](${planTaskLink(task)}) | ${escapeCell(task.title ?? task.id)} | ${task.state} |`,
       );
+    }
+  }
+
+  // A doc the parser rejected is NOT in any table above. Say so in the generated
+  // region, so a reviewer of the ROADMAP diff sees it and the drift test goes red.
+  if (problems.length > 0) {
+    out.push(
+      "",
+      "### Unparseable task documents (fix these — they are missing from the tables)",
+      "",
+    );
+    out.push("| document | reason |", "|---|---|");
+    for (const p of problems) {
+      out.push(`| [${escapeCell(p.name)}](tasks/${encodeURI(p.name)}) | ${escapeCell(p.reason)} |`);
     }
   }
 
@@ -143,7 +160,10 @@ export function splicePlanIndex(
 }
 
 /** Human-readable one-screen summary for `golem task index --summary`. */
-export function renderPlanSummary(tasks: readonly Task[]): string {
+export function renderPlanSummary(
+  tasks: readonly Task[],
+  problems: readonly PlanTaskProblem[] = [],
+): string {
   const { ready, blocked, done } = groupPlanTasks(tasks);
   const lines = [
     `plan tasks — ${ready.length} ready, ${blocked.length} blocked, ${done.length} done`,
@@ -165,6 +185,10 @@ export function renderPlanSummary(tasks: readonly Task[]): string {
       );
     }
     lines.push("");
+  }
+  if (problems.length > 0) {
+    lines.push(`UNPARSEABLE (${problems.length}) — missing from the counts above:`);
+    for (const p of problems) lines.push(`  ${p.path}: ${p.reason}`);
   }
   return `${lines.join("\n").trimEnd()}\n`;
 }
