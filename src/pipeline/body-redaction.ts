@@ -12,8 +12,11 @@
  * - Text (anything not declared opaque that is not binary): the standalone text
  *   redactor runs over the whole body. A form-urlencoded body also has its
  *   percent-encoded names and values decoded, redacted and re-encoded.
- * - Opaque (multipart, octet-stream, image/audio/video, PDF and archive types, or
- *   an unlabelled body containing NUL bytes): forwarded UNCHANGED. Binary payloads
+ * - JSON under ANY label (including opaque labels) is walked as JSON; only a body
+ *   that does not parse as JSON reaches the opaque rule.
+ * - Opaque (a body that is not JSON and is labelled multipart, octet-stream,
+ *   image/audio/video, PDF or an archive type, or is unlabelled with NUL bytes
+ *   that are not UTF-16/32 shaped): forwarded UNCHANGED. Binary payloads
  *   cannot be scanned reliably (a secret may sit inside compressed data, and a
  *   rewrite would corrupt the file), so they are NOT redacted. That is a stated
  *   limit, not an oversight; the request size limit still applies to them.
@@ -64,6 +67,30 @@ function isWideEncoded(body: Buffer, contentType: string): boolean {
   );
 }
 
+/**
+ * UTF-16/32 text without a byte-order mark: mostly-ASCII text puts a NUL in
+ * every other byte (UTF-16, all on one parity) or three of every four (UTF-32).
+ * Looked for in the first 4 KiB. True binary has few NULs, or NULs on both
+ * parities in no such proportion, so it is not caught.
+ */
+function looksLikeWideText(body: Buffer): boolean {
+  const n = Math.min(body.length, 4096);
+  if (n < 4) return false;
+  let even = 0;
+  let odd = 0;
+  for (let i = 0; i < n; i += 1) {
+    if (body[i] === 0) {
+      if (i % 2 === 0) even += 1;
+      else odd += 1;
+    }
+  }
+  const half = n / 2;
+  const major = Math.max(even, odd);
+  const minor = Math.min(even, odd);
+  if (major >= 0.3 * half && minor <= 0.1 * major) return true; // UTF-16
+  return even + odd >= 0.6 * n; // UTF-32 and other NUL-dominated text
+}
+
 function decodeText(body: Buffer): { text: string; lossless: "utf8" | "latin1" } {
   try {
     return { text: new TextDecoder("utf-8", { fatal: true }).decode(body), lossless: "utf8" };
@@ -109,14 +136,11 @@ export function redactAnyBody(input: ProxyRequest): ProxyRequest {
 
   const contentType = headerOf(request, "content-type");
   const mime = contentType.split(";")[0]?.trim() ?? "";
-  if (OPAQUE_TYPE.test(mime)) return request;
-  if (isWideEncoded(body, contentType)) {
-    throw new Error(
-      "request body is UTF-16/UTF-32 encoded and cannot be scanned for secrets; refusing it",
-    );
-  }
+  const opaqueLabel = OPAQUE_TYPE.test(mime);
 
-  // JSON first, whatever the label says: a client may send JSON as text/plain.
+  // JSON first, whatever the label says (a client may send JSON as text/plain,
+  // or under an opaque label such as application/octet-stream): only a body that
+  // does NOT parse as JSON reaches the opaque-label rule below.
   let parsed: unknown;
   let isJson = true;
   try {
@@ -130,10 +154,17 @@ export function redactAnyBody(input: ProxyRequest): ProxyRequest {
     return { ...request, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
   }
 
+  if (opaqueLabel) return request;
+  if (isWideEncoded(body, contentType) || looksLikeWideText(body)) {
+    throw new Error(
+      "request body is UTF-16/UTF-32 encoded and cannot be scanned for secrets; refusing it",
+    );
+  }
+
   if (body.includes(0)) {
-    // A NUL byte: binary payload. Unlabelled/unknown binary is opaque; but a body
-    // that CLAIMS to be JSON or text and holds NULs may be an encoding we cannot
-    // read (UTF-16 with no BOM), so it is refused rather than forwarded unread.
+    // A NUL byte that is not UTF-16/32 shaped: a binary payload. Unlabelled or
+    // unknown binary is opaque; but a body that CLAIMS to be JSON or text and
+    // holds NULs may be an encoding we cannot read, so it is refused.
     if (/json|^text\//.test(mime)) {
       throw new Error(
         `request body labelled "${mime}" contains NUL bytes and cannot be scanned for secrets; refusing it`,
