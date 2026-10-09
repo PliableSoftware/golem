@@ -32,7 +32,7 @@ The never-auto column is the invariant: **no autonomy level auto-approves a
 destructive or outward action.** `allow` is the only value that removes a
 prompt, and it is emitted narrowly.
 
-## The two hooks (R12.12)
+## The two hooks (R12.12; PermissionRequest inert since DUSTSEC.10)
 
 The gate is **two** hooks, wired and unwired together. Installing one without
 the other is a half-installed gate.
@@ -44,24 +44,41 @@ the other is a half-installed gate.
    nudge, which is why it fires even when the gate itself is disabled.
 
 2. **`PermissionRequest`** (`src/hooks/permission-request.ts`) — runs only when
-   Claude Code is about to ask for permission. Returns a real `deny` for
-   `destructive` / `outward`; defers on everything else. Writes nothing.
+   Claude Code is about to ask for permission. **Inert since 2026-10-09
+   (DUSTSEC.10):** returns NO decision for any class at any level, so the native
+   dialog opens and a human decides. Writes nothing.
 
-### Why the second one exists
+### History: the R12.12 deny, and why it was removed
 
-`ask` forces a question; it does not answer one. A permission dialog — once it
-exists — is what a connected permission-relay channel is notified of, so an
-`ask` on `rm -rf` was relayable like any other prompt (R12.11,
-`docs/plan/verification-notes.md` §141). A `PermissionRequest` decision stands
-in for the dialog, so no dialog is shown and there is nothing to relay. See
+R12.11 found that `ask` forces a question but does not answer one, and a
+permission dialog is what a connected permission-relay channel is notified of
+(`docs/plan/verification-notes.md` §141). R12.12 therefore made this hook
+return a real `deny` for `destructive` / `outward`, so no dialog existed to
+relay. It denied for everyone, so a human at the terminal was never asked
+either. See
 [[R12.12 -- the gate moved one event earlier, where a decision can actually resolve the request]].
+
+**USER decision 2026-10-09, against the recommendation to keep the deny:** ask
+the human again. A conditional deny (only while a relay is connected) was not
+possible, because no "relay connected" signal exists at the hook. Consequence,
+recorded in ADR-0002: with a relay channel connected, the relay may now be
+notified when the dialog opens. R12.13 (does it?) is unconfirmed. `allow` is
+still never emitted for either class. The hook stays wired so existing installs
+keep resolving it.
+
+### Before / after, per class (all three autonomy levels behave the same here)
+
+| class | `PreToolUse` (unchanged) | `PermissionRequest` before | `PermissionRequest` after |
+|---|---|---|---|
+| destructive, outward | `ask` | `deny` | no decision (native dialog) |
+| read, write, unknown | per matrix above | no decision | no decision |
 
 ### The shapes are not interchangeable
 
 | event | field | reason field |
 |---|---|---|
 | `PreToolUse` | `hookSpecificOutput.permissionDecision` (flat) | `permissionDecisionReason` |
-| `PermissionRequest` | `hookSpecificOutput.decision.behavior` (nested) | `message`, deny only |
+| `PermissionRequest` | `hookSpecificOutput.decision.behavior` (nested; Golem no longer emits one) | `message`, deny only |
 
 Emitting the wrong shape is a **silent no-op** — no error anywhere.
 
@@ -73,8 +90,7 @@ permission flow — the human — governs. **No path ever emits `allow` on error
 Neither hook uses exit 2, which would hard-block.
 
 Deferring at `PermissionRequest` is byte-for-byte what a project with no such
-hook registered already does, which is why adding the layer changed nothing for
-the classes it does not act on.
+hook registered already does; since DUSTSEC.10 that is true for every class.
 
 ## Controls
 

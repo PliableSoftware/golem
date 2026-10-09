@@ -150,7 +150,7 @@ the opposite — read this paragraph together with the block below.]**
 > **What does not change:** the class line itself (§2) is unamended; this
 > re-verification is about which layer enforces it.
 >
-> **SHIPPED 2026-08-28 (R12.12) — the fix half.** Golem now registers a
+> **SHIPPED 2026-08-28 (R12.12) — the fix half. (The deny described here was removed 2026-10-09, DUSTSEC.10, USER decision: the hook now emits no decision and the native dialog asks the human. See ADR-0002.)** Golem now registers a
 > `PermissionRequest` hook (`src/hooks/permission-request.ts`, wired by `golem
 > init` and `golem autonomy wire` alongside its `PreToolUse` sibling) that
 > returns `hookSpecificOutput.decision.behavior: "deny"` for `destructive` and
@@ -544,8 +544,8 @@ carried no pointer to any of them.
   such key exists in the `security` settings today. What ships is the opposite
   extreme. A hosted session always denies those classes
   (`src/hooks/host-gate.ts:68-82`), and the R12.12 `PermissionRequest` deny
-  applies to every session when the gate is enabled (see the ADR-0002 amendment
-  of the same date). The threat-model rows that repeat "no setting" carry the same
+  applied to every session when the gate was enabled (removed 2026-10-09,
+  DUSTSEC.10; see the ADR-0002 amendments). The threat-model rows that repeat "no setting" carry the same
   pointer. Whether Decision 61 reaches hosted sessions is a separate open
   contradiction (P3) and is not decided here.
 - **Section 8, "No remote surface that changes settings".** Whether

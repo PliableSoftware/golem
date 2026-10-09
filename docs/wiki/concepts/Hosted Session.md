@@ -93,9 +93,11 @@ a `PermissionRequest` deny hook installed **and never fired it**. `PreToolUse`
 fires before every tool call, and its deny stops the call with the reason
 delivered to the model as the tool result.
 
-R12.12 was still right for the guest: its problem was a *dialog* opening and a
+R12.12 was aimed at the guest: its problem was a *dialog* opening and a
 connected channel answering it, and `PermissionRequest` is what precedes a dialog.
-Different problems, different events.
+Different problems, different events. (R12.12's deny was removed 2026-10-09,
+DUSTSEC.10, by USER decision: the guest hook is now inert and the human answers
+the native dialog; see ADR-0002.)
 
 > The shapes are not interchangeable and the wrong one is a **silent no-op**:
 > `PreToolUse` takes a flat `permissionDecision` + `permissionDecisionReason`;
