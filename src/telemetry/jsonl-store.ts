@@ -55,9 +55,10 @@
  */
 
 import { createReadStream } from "node:fs";
-import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import type { CompressionStats, TokenDelta } from "../interfaces/compression.js";
 import { isRecord } from "../shared/json.js";
 import type {
@@ -241,9 +242,7 @@ async function writeTelemetryRollupEntry(
       entries: { ...(existing?.entries ?? {}), [key]: entry },
     };
     await mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    await rename(tmp, file);
+    await replaceViaTemp(file, `${JSON.stringify(next, null, 2)}\n`);
   } catch {
     // Best-effort — see doc comment above.
   }

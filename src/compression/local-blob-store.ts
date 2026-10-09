@@ -28,6 +28,7 @@ import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/pr
 import { dirname, join } from "node:path";
 import type { BlobStore } from "../interfaces/storage.js";
 import { BlobNotFoundError } from "../interfaces/storage.js";
+import { renameWithRetry } from "../shared/win-fs-retry.js";
 
 /** Keys are caller-chosen content hashes; forbid anything path-ambiguous. */
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -62,7 +63,7 @@ export class LocalDirBlobStore implements BlobStore {
     const tmp = `${target}.${randomUUID()}.tmp`;
     await writeFile(tmp, data);
     try {
-      await rename(tmp, target);
+      await renameWithRetry(tmp, target);
     } catch (err) {
       // Content-addressed contract: same key = same content. If the target
       // already exists (another writer won the race), treat it as success
