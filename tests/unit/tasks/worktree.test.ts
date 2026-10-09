@@ -101,7 +101,7 @@ describe("describeWorktree", () => {
   it("prints path, branch and short commit", () => {
     expect(
       describeWorktree({ path: "/w", branch: "b", baseCommit: "0123456789abcdef", dirtyFiles: [] }),
-    ).toBe("/w [b] @ 0123456789");
+    ).toBe(`${normalizeGitPath("/w")} [b] @ 0123456789`);
   });
 });
 
