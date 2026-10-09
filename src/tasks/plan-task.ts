@@ -30,8 +30,9 @@
  * justify a YAML dependency (CLAUDE.md's dependency rule, Decision 53's tier ladder).
  */
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { replaceViaTemp } from "../config/file-io.js";
 import { planMetaSchema, TASK_STATES, type Task, taskSchema } from "./types.js";
 
 /** `docs/plan/tasks/` for a project. */
@@ -219,9 +220,7 @@ export class PlanTaskStore {
     });
     await mkdir(this.#dir, { recursive: true });
     const file = this.#pathFor(stored.id);
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, serializePlanTask(stored), "utf8");
-    await rename(tmp, file);
+    await replaceViaTemp(file, serializePlanTask(stored));
     return stored;
   }
 

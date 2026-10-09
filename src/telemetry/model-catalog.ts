@@ -35,9 +35,10 @@
  *   matching the telemetry store's convention.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import { CACHE_READ_MULTIPLIER, CACHE_WRITE_MULTIPLIER } from "./usage-report.js";
 
 /** One model's price and limits. Every field past the id is optional — absence is a fact. */
@@ -485,9 +486,7 @@ export function modelCatalogPath(projectDir: string): string {
 export async function writeModelCatalog(projectDir: string, catalog: ModelCatalog): Promise<void> {
   const file = modelCatalogPath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(catalog, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(catalog, null, 2)}\n`);
 }
 
 /** Read the cached catalog, or null (missing / corrupt / schema drift). */

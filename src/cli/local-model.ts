@@ -10,8 +10,9 @@
  * turn (the doc's "cache slow ops" guidance, verification-notes §28).
  */
 
-import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { replaceViaTemp } from "../config/file-io.js";
 // `../inference/index.js` is NOT imported statically: it reaches ollama-client.ts,
 // which imports `undici` (~270ms — the heaviest leaf in the CLI). Only
 // `resolveCoderModel` needs it, while the cache READERS in this file
@@ -130,14 +131,12 @@ export async function writeLocalModelCache(
   const path = localModelCachePath(projectDir);
   try {
     await mkdir(dirname(path), { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
     const payload = {
       reachable,
       ...(coderModel !== undefined && coderModel !== "" ? { coderModel } : {}),
       ts: new Date().toISOString(),
     };
-    await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await rename(tmp, path);
+    await replaceViaTemp(path, `${JSON.stringify(payload, null, 2)}\n`);
   } catch {
     // best-effort cache; never fail the caller
   }

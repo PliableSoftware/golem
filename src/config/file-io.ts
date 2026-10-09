@@ -25,6 +25,11 @@ export function splitDotted(dotted: string): readonly [string, string | undefine
   return [dotted.slice(0, i), dotted.slice(i + 1)];
 }
 
+/** {@link RenameRetryOptions} plus the file mode the temp (and so the result) is created with. */
+export interface ReplaceViaTempOptions extends RenameRetryOptions {
+  readonly mode?: number;
+}
+
 /**
  * Replace `file` with `text` via a sibling temp file and a rename (which
  * replaces atomically on Windows too), so a crash mid-write leaves the original
@@ -45,12 +50,13 @@ export function splitDotted(dotted: string): readonly [string, string | undefine
 export async function replaceViaTemp(
   file: string,
   text: string,
-  retry: RenameRetryOptions = {},
+  retry: ReplaceViaTempOptions = {},
 ): Promise<void> {
   const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  const { mode, ...renameOptions } = retry;
   try {
-    await writeFile(tmp, text, "utf8");
-    await renameWithRetry(tmp, file, retry);
+    await writeFile(tmp, text, mode === undefined ? "utf8" : { encoding: "utf8", mode });
+    await renameWithRetry(tmp, file, renameOptions);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
