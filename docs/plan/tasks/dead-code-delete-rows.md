@@ -65,6 +65,25 @@ no plugin or MCP PR.
 Counts: 10 EXECUTE rows. config 2 (13, 9), CLI and internal 4 (15, 16, 17, 21), inference 2 (10, 11),
 frozen interfaces 2 (7, 8), plugin seams 0, MCP 0 (row 6 shipped). NEEDS-REVIEW: 7, 8, 9, 21.
 
+### Grep proofs, inference rows (10, 11), 2026-10-09
+
+Searched `src tests docs .claude vscode-extension scripts package.json` (excluding `node_modules`, `dist`);
+there is no top-level `skills/`. String lookups and dynamic imports checked separately.
+
+**Row 10.** `grep -rnE "allowHaiku|HaikuFallbackRequired|allow_haiku"`: code hits are only
+`src/inference/service.ts` (declaration, `#allowHaiku`, the throw), `src/inference/index.ts:76` (barrel),
+and `tests/unit/inference/service.test.ts` (import, `allowHaiku: false` at `:103,:118`, the case at `:128-136`).
+No `allow_haiku` or similar in `src/config`. `grep -rnE "fallback:|stepDownTier" src scripts`: no
+construction site passes `fallback`. Dynamic imports of the inference barrel
+(`src/cli/local-model.ts:167`, `scripts/extract-commands.mjs:223`) name only `OllamaInferenceService`,
+`OllamaClient`, `detectCapability`, `createProbeRunner`. No `catch`/`instanceof HaikuFallbackRequired`
+anywhere. The rest are prose: spec `:157`, `docs/wiki/concepts/Architecture.md` (diagram), `docs/marketing/CLAIMS.md` B-10,
+dated audit and task docs (historical, left). Prose in live docs is reworded in the same commit.
+
+**Row 11.** `grep -rn coderRouteConflict`: one caller (`src/cli/commands/mcp-serve.ts:274`), tests
+`coder-route.test.ts:157-185`, docs only. Only the second branch is removed; the function stays.
+
+
 Order, zero-risk first: 13, 16, 15, 11, 10, 17 (tests-only subjects), then 21, then 9, then 7+8.
 
 ### Row notes: CLI and internal test-only exports (rows 15, 16, 17, 21), executed 2026-10-09
