@@ -30,7 +30,7 @@ flowchart LR
     WEB["fetched page (webcache)"]
     DRAFT[".golem/distill/*.md draft"]
   end
-  subgraph Z2["Zone 2 — wiki (committed to git)"]
+  subgraph Z2["Zone 2 — wiki (files; commit to review)"]
     PAGE["concepts/ · sources/ · syntheses/ …"]
   end
   NOTE -->|"capture (redact first)"| DRAFT

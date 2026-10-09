@@ -55,7 +55,7 @@ function wikiSchemaTemplate(date: string): string {
     "| Zone | Where | Who writes | Rule |",
     "|---|---|---|---|",
     "| 1 — raw | local raw-capture stores (gitignored) | tooling/hooks | never committed; never hand-edited |",
-    "| 2 — wiki | `concepts/ entities/ sources/ syntheses/ questions/ artifacts/ debriefs/` | agent + human | **author freely** — create or refine pages without prior approval. Every write is committed to git, so it is diffable, reviewable, and revertible in history. Prefer append-and-refine over wholesale rewrites. |",
+    "| 2 — wiki | `concepts/ entities/ sources/ syntheses/ questions/ artifacts/ debriefs/` | agent + human | **author freely** — create or refine pages without prior approval. Writes are plain files, not commits — commit them to make them diffable, reviewable, and revertible in history. Prefer append-and-refine over wholesale rewrites. |",
     "",
     "> **Decisions (ADRs) live at `docs/decisions/`, outside this wiki.** They are",
     "> human-driven dev artifacts with a stricter rule — accepted ADRs immutable",

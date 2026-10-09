@@ -19,7 +19,7 @@ derived, rebuildable cache of these pages — never the truth.
 | Zone | Where | Who writes | Rule |
 |---|---|---|---|
 | 1 — raw | `.golem/webcache`, `.golem/ccr` (local, gitignored) | Golem hooks | never committed; never hand-edited |
-| 2 — wiki | `concepts/ entities/ sources/ syntheses/ questions/ artifacts/ debriefs/` | agent + human | **author freely** — create or refine pages without prior approval (spec Decision 44). Every write is committed to git, so it is diffable, reviewable, and revertible in history. Prefer append-and-refine over wholesale rewrites. |
+| 2 — wiki | `concepts/ entities/ sources/ syntheses/ questions/ artifacts/ debriefs/` | agent + human | **author freely** — create or refine pages without prior approval (spec Decision 44). Writes are plain files, not commits — commit them to make them diffable, reviewable, and revertible in history. Prefer append-and-refine over wholesale rewrites. |
 
 > **Decisions (ADRs) live at `docs/decisions/`, outside this wiki** (spec Decision 44).
 > They are human-driven dev artifacts with a stricter rule — accepted ADRs are

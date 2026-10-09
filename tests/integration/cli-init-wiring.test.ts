@@ -356,7 +356,7 @@ describe("golem init", () => {
     const perms = settings.permissions as { allow?: string[]; ask?: string[] };
     // All Golem tools auto-approved via the anchored wildcard rule. wiki_upsert is
     // NOT held on `ask` (USER decision 2026-07-30): Decision 44 un-gated wiki
-    // authoring because git makes every write reviewable, and an `ask` rule prompts
+    // authoring because wiki writes are reviewable once committed, and an `ask` rule prompts
     // even when an `allow` rule also matches (deny → ask → allow precedence), so
     // leaving one here would have silently kept the gate.
     expect(perms.allow).toContain("mcp__golem__*");
