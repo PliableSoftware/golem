@@ -111,6 +111,12 @@ export default function register(program: Command): void {
     .option("--foundry <url>", "front an Azure AI Foundry resource base URL")
     .option("--upstream <url>", "front a generic Anthropic-compatible gateway (e.g. OpenRouter)")
     .option(
+      "--restore-skill <cmd>",
+      'recreate a Golem skill you deleted (repeatable; "all" for every one)',
+      (v: string, prev: string[]) => [...prev, v],
+      [] as string[],
+    )
+    .option(
       "--no-loopback-cert",
       "don't generate or trust Golem's loopback CA (cache-served WebFetches keep showing as denied/red)",
     )
@@ -120,6 +126,7 @@ export default function register(program: Command): void {
         dryRun: boolean;
         foundry?: string;
         upstream?: string;
+        restoreSkill: string[];
         loopbackCert: boolean;
       }) => {
         try {
@@ -128,6 +135,7 @@ export default function register(program: Command): void {
             dryRun: opts.dryRun,
             ...(opts.foundry !== undefined ? { foundry: opts.foundry } : {}),
             ...(opts.upstream !== undefined ? { upstream: opts.upstream } : {}),
+            ...(opts.restoreSkill.length > 0 ? { restoreSkills: opts.restoreSkill } : {}),
             // commander maps `--no-loopback-cert` onto `loopbackCert: false`
             ...(opts.loopbackCert === false ? { noLoopbackCert: true } : {}),
           });
