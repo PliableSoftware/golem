@@ -19,7 +19,7 @@ import {
 } from "../../credentials/index.js";
 import { probeCredential } from "../../credentials/probe.js";
 import { PromptCancelled, promptSecret } from "../../credentials/prompt.js";
-import { assertUsableSecret, MalformedSecretError } from "../../credentials/validate.js";
+import { MalformedSecretError, normalizeGatewayKey } from "../../credentials/validate.js";
 import { accountsReferencedByTargets } from "../../providers/index.js";
 import { InitError } from "../init.js";
 import type { GatewayTarget } from "./registry.js";
@@ -139,13 +139,15 @@ export async function loginGateway(
       throw err;
     }
   }
-  if (secret.trim() === "") throw new InitError("empty key — nothing stored.");
   try {
-    assertUsableSecret(secret); // also covers the prompt and a caller-supplied key
+    // Trims all surrounding whitespace and refuses control/non-Latin-1 characters,
+    // whichever route the key came by (piped, prompted, supplied).
+    secret = normalizeGatewayKey(secret);
   } catch (err) {
     if (err instanceof MalformedSecretError) throw new InitError(`${err.message} Nothing stored.`);
     throw err;
   }
+  if (secret === "") throw new InitError("empty key — nothing stored.");
 
   // 2. Probe it against the upstream before storing (unless disabled).
   let probeVerdict = "skipped";
@@ -244,6 +246,34 @@ export async function credentialEnvForProxy(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<Record<string, string>> {
+  const { env: out, malformed } = await resolveProxyCredentials(projectDir, env, opts);
+  // A malformed key is skipped like a missing one (the proxy must still start for the
+  // keyed targets) but NOT silently: name the account and the fix.
+  for (const m of malformed) {
+    process.stderr.write(`warning: credential "${m.account}" not loaded — ${m.message}\n`);
+  }
+  return out;
+}
+
+/** An account whose stored value is unusable, with the fix. Never carries the value. */
+export interface MalformedCredentialReport {
+  readonly account: string;
+  readonly message: string;
+}
+
+/**
+ * The resolution behind {@link credentialEnvForProxy}, also returning which
+ * accounts were stored-but-malformed. Shared with `golem status`, which reports
+ * them without spawning anything.
+ */
+export async function resolveProxyCredentials(
+  projectDir: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  opts: { readonly store_backend?: CredentialStore } = {},
+): Promise<{
+  readonly env: Record<string, string>;
+  readonly malformed: readonly MalformedCredentialReport[];
+}> {
   const { settings } = await loadEffectiveConfig({ projectDir, env });
   const selected = settings.inference.model ?? null;
   const defaultId = defaultGatewayId(settings.proxy.upstream_provider);
@@ -278,7 +308,13 @@ export async function credentialEnvForProxy(
   // rather than thrown — an unkeyed target must not stop the proxy starting for
   // the targets that ARE keyed. `golem gateway list` reports it.
   const referenced = accountsReferencedByTargets(settings.proxy);
-  const resolved = await store.resolveMany([activeStoreId, ...referenced]);
+  const detailed = await store.resolveManyDetailed([activeStoreId, ...referenced]);
+  const resolved = new Map([...detailed].map(([k, v]) => [k, v.hit] as const));
+  const malformed: MalformedCredentialReport[] = [];
+  for (const [account, { faults }] of detailed) {
+    const bad = faults.find((f) => f.malformed === true);
+    if (bad !== undefined) malformed.push({ account, message: bad.message });
+  }
 
   const out: Record<string, string> = {};
   const active = resolved.get(activeStoreId) ?? null;
@@ -290,5 +326,5 @@ export async function credentialEnvForProxy(
     const hit = resolved.get(accountId) ?? null;
     if (hit !== null) out[varName] = hit.secret;
   }
-  return out;
+  return { env: out, malformed };
 }

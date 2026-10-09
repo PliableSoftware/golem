@@ -364,6 +364,9 @@ export function renderStatus(report: StatusReport): string {
   if (report.teams !== undefined) {
     lines.push(...renderTeams(report.teams));
   }
+  for (const f of report.credential_faults ?? []) {
+    lines.push(`Credential: "${f.account}" NOT USABLE — ${f.message}`);
+  }
   if (report.limits !== undefined) {
     lines.push(renderLimits(report.limits));
   }

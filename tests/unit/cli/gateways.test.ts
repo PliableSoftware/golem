@@ -15,7 +15,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addGateway,
   collectGateways,
@@ -580,31 +580,41 @@ describe("renderGateways", () => {
 
 describe("loginGateway key validation (R8.29)", () => {
   const BODY = ["k", String(Date.now())].join("-");
-
-  it("stores a key with spaces byte-exact", async () => {
-    const secret = `  ${BODY} mid  `;
-    await loginGateway(dir, "work", new Date().toISOString(), {
+  const login = (secret: string) =>
+    loginGateway(dir, "work", new Date().toISOString(), {
       secret,
       probe: false,
       store: "file",
       store_backend: store,
     });
-    expect((await store.resolve("work"))?.secret).toBe(secret);
+
+  it("trims surrounding whitespace, keeps interior spaces", async () => {
+    await login(`  ${BODY} mid \t\n`);
+    expect((await store.resolve("work"))?.secret).toBe(`${BODY} mid`);
   });
 
   it.each([
-    ["a line break", `${BODY}\n`],
-    ["a BOM", `\ufeff${BODY}`],
+    ["a line break", `${BODY}\n${BODY}`],
+    ["a BOM inside", `${BODY}${String.fromCharCode(0xfeff)}${BODY}`],
     ["a control character", `${BODY}\u0001`],
+    ["a zero-width space", `${BODY}${String.fromCharCode(0x200b)}`],
   ])("refuses a key with %s and stores nothing", async (_n, secret) => {
-    await expect(
-      loginGateway(dir, "work", new Date().toISOString(), {
-        secret,
-        probe: false,
-        store: "file",
-        store_backend: store,
-      }),
-    ).rejects.toThrow(/control character.*Nothing stored/);
+    await expect(login(secret)).rejects.toThrow(/Nothing stored/);
     expect(await store.resolve("work")).toBeNull();
+  });
+
+  it("proxy start skips a malformed stored key WITH a warning naming the account and fix", async () => {
+    await store.store("work", `${BODY}${String.fromCharCode(0x200b)}`, "file");
+    await useGateway(dir, "work", "2026-07-23T00:00:00.000Z", {
+      store_backend: store,
+      assumeYes: true,
+    });
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const env = await credentialEnvForProxy(dir, {}, { store_backend: store });
+    const text = err.mock.calls.map((c) => String(c[0])).join("");
+    vi.restoreAllMocks();
+    expect(Object.values(env)).not.toContain(`${BODY}${String.fromCharCode(0x200b)}`);
+    expect(text).not.toContain(BODY);
+    expect(text).toMatch(/credential "work" not loaded.*golem gateway login work/);
   });
 });

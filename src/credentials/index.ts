@@ -41,10 +41,13 @@ export {
 } from "./prompt.js";
 export {
   type CredentialFault,
+  type CredentialKind,
   type CredentialStatus,
   type CredentialStore,
   type CredentialStoreOptions,
   createCredentialStore,
+  credentialKind,
+  MalformedCredentialError,
   type ResolvedCredential,
   type StoreTarget,
 } from "./store.js";

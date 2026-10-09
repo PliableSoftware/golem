@@ -306,6 +306,9 @@ export async function mintIdentity(
   const account = buzzAccount(project, personaId);
   const store = storeFrom(deps);
 
+  // `resolve` THROWS MalformedCredentialError for a stored-but-unusable secret, so a
+  // malformed secret never reads as "absent" here and is never overwritten by a new
+  // keypair (an irreversible identity rotation). Only rotateIdentity re-mints.
   const existing = await store.resolve(account);
   if (existing !== null && existing.secret !== "") {
     // A stored secret with a manifest pubkey is a healthy identity: keep both.

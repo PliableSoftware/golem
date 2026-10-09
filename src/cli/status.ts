@@ -307,6 +307,12 @@ export interface StatusReport {
    * machine holds none, so a solo install's status says nothing about teams.
    */
   readonly teams?: readonly TeamCacheStatus[];
+  /**
+   * R8.29 — gateway accounts whose STORED key is malformed (control character,
+   * non-Latin-1 character, surrounding whitespace), each with the fix. Absent when
+   * every stored key is usable (or none is stored). Never carries the key.
+   */
+  readonly credential_faults?: readonly { readonly account: string; readonly message: string }[];
   readonly limits?: {
     readonly five_hour_utilization: number;
     readonly seven_day_utilization?: number;
@@ -377,6 +383,8 @@ export interface StatusOptions {
   readonly readLimit?: (projectDir: string) => Promise<LimitPrediction | null>;
   /** Injected clock (epoch ms) for the prediction-freshness age; default `Date.now()`. */
   readonly now?: () => number;
+  /** Test injection for the credential store; default is the machine's chain. */
+  readonly credentialStore?: import("../credentials/index.js").CredentialStore;
 }
 
 // The engine itself, re-exported so `./status.js` stays the one import path.

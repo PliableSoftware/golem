@@ -89,37 +89,71 @@ describe("golem gateway", () => {
   it.each([
     ["LF", "\n"],
     ["CRLF", "\r\n"],
-  ])("login keeps a piped secret's own whitespace, dropping only one %s", async (_n, eol) => {
-    const secret = `  ${PIPED} mid ${PIPED}  `;
-    pipeStdin(`${secret}${eol}`);
+    ["a blank line", "\n\n"],
+    ["a doubled CR", "\r\r\n"],
+    ["a cmd-style trailing space", " \r\n"],
+  ])("login trims all surrounding whitespace from a piped key (%s)", async (_n, eol) => {
+    pipeStdin(`  ${PIPED} mid ${PIPED}${eol}`);
     const program = await build();
     await program.parseAsync(["node", "golem", "gateway", "login", "g"]);
-    expect(loginGateway.mock.calls[0]?.[3]).toMatchObject({ secret });
+    expect(loginGateway.mock.calls[0]?.[3]).toMatchObject({ secret: `${PIPED} mid ${PIPED}` });
   });
 
   it("login strips a leading BOM along with the newline", async () => {
-    pipeStdin(`\ufeff${PIPED}\r\n`);
+    pipeStdin(`${String.fromCharCode(0xfeff)}${PIPED}\r\n`);
     const program = await build();
     await program.parseAsync(["node", "golem", "gateway", "login", "g"]);
     expect(loginGateway.mock.calls[0]?.[3]).toMatchObject({ secret: PIPED });
   });
 
-  it.each([
-    ["a trailing blank line", `${PIPED}\n\n`],
-    ["a doubled CR", `${PIPED}\r\r\n`],
-    ["an embedded control character", `${PIPED}\u0007x\n`],
-  ])("login refuses piped input with %s, without echoing it", async (_n, text) => {
-    pipeStdin(text);
+  async function runExpectingExit(argv: string[]): Promise<{ code: number; written: string }> {
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const exit = vi.spyOn(process, "exit").mockImplementation((() => {
+    let code = -1;
+    vi.spyOn(process, "exit").mockImplementation(((c?: number) => {
+      code = c ?? 0;
       throw new Error("exit");
     }) as never);
     const program = await build();
-    await expect(program.parseAsync(["node", "golem", "gateway", "login", "g"])).rejects.toThrow();
-    expect(exit).toHaveBeenCalled();
+    await expect(program.parseAsync(["node", "golem", ...argv])).rejects.toThrow();
+    return { code, written: err.mock.calls.map((c) => String(c[0])).join("") };
+  }
+
+  it.each([
+    ["an embedded newline", `${PIPED}\n${PIPED}\n`],
+    ["an embedded control character", `${PIPED}\u0007x\n`],
+    ["a zero-width space", `${PIPED}${String.fromCharCode(0x200b)}\n`],
+  ])("login refuses piped input with %s: exit 2, 'Nothing stored.', no echo", async (_n, text) => {
+    pipeStdin(text);
+    const { code, written } = await runExpectingExit(["gateway", "login", "g"]);
+    expect(code).toBe(2);
     expect(loginGateway).not.toHaveBeenCalled();
-    const written = err.mock.calls.map((c) => String(c[0])).join("");
-    expect(written).toMatch(/control character/);
+    expect(written).toMatch(/Nothing stored\./);
     expect(written).not.toContain(PIPED);
+  });
+
+  it("login on newline-only stdin says no key was provided (not 'cannot prompt')", async () => {
+    pipeStdin("\n");
+    const { code, written } = await runExpectingExit(["gateway", "login", "g"]);
+    expect(code).toBe(2);
+    expect(written).toMatch(/no key was provided/);
+    expect(written).not.toMatch(/cannot prompt/);
+    expect(loginGateway).not.toHaveBeenCalled();
+  });
+
+  it("add --login refuses a malformed piped key the same way", async () => {
+    pipeStdin(`${PIPED}\u0001\n`);
+    const { code, written } = await runExpectingExit([
+      "gateway",
+      "add",
+      "g2",
+      "--provider",
+      "openai",
+      "--base-url",
+      "https://example.test/v1",
+      "--login",
+    ]);
+    expect(code).toBe(2);
+    expect(written).toMatch(/Nothing stored\./);
+    expect(loginGateway).not.toHaveBeenCalled();
   });
 });
