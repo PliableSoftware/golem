@@ -20,10 +20,11 @@
  * - UTF-16/32 text cannot be scanned as bytes: a non-opaque body that shows
  *   UTF-16/32 shape anywhere is REFUSED by throwing (the proxy turns a throw into
  *   its fail-closed 502).
- * - A JSON body with duplicate object keys is guarded: `JSON.parse` keeps the
- *   LAST value, so a secret in a shadowed first value would otherwise survive.
+ * - A JSON body with duplicate object keys is REFUSED (400): `JSON.parse` keeps
+ *   the LAST value, so a secret in a shadowed first value would otherwise survive.
  */
 
+import { RequestBodyRefusal } from "../proxy/request-body.js";
 import type { ProxyRequest } from "../proxy/types.js";
 import { redactRequestBody, redactStandaloneText } from "./redaction.js";
 
@@ -55,6 +56,26 @@ function hasBinaryMagic(body: Buffer): boolean {
   if (MAGIC.some((sig) => sig.every((byte, i) => body[i] === byte))) return true;
   // ISO base media (MP4/MOV): "ftyp" at offset 4.
   return body.length >= 8 && body.toString("latin1", 4, 8) === "ftyp";
+}
+
+/**
+ * A magic signature alone is not enough (GIF8, ID3, BZh, %PDF, RIFF, OggS, Rar!
+ * and ftyp are printable ASCII, and plain text can start with them). The body must
+ * ALSO look binary: a C0 control byte other than tab/newline/carriage return in
+ * its first 4 KiB (NUL included), or not valid UTF-8.
+ */
+function looksBinary(body: Buffer): boolean {
+  const n = Math.min(body.length, 4096);
+  for (let i = 0; i < n; i += 1) {
+    const c = body[i] as number;
+    if (c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) return true;
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(body);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function headerOf(request: ProxyRequest, name: string): string {
@@ -129,28 +150,23 @@ export function hasDuplicateKeys(body: Buffer): boolean {
 }
 
 /**
- * Duplicate-key guard. `JSON.parse` keeps the last value of a repeated key, so a
+ * Duplicate-key refusal. `JSON.parse` keeps the last value of a repeated key, so a
  * walk of the parsed value never sees a secret in a shadowed earlier one, while
- * the original bytes still carry it. When (and only when) the body has duplicate
- * keys, run the text redactor over the raw text: a changed result is used if it
- * still parses as JSON, otherwise the request is refused (throws). Returns the
- * same request when there is nothing to do.
+ * the original bytes still carry it (and a raw-text redaction cannot help: the
+ * secret there may be JSON-escaped). No legitimate client sends duplicate keys
+ * (`JSON.stringify` never emits them), so such a body is REFUSED: 400, nothing
+ * forwarded. Both `process` and `redactOnly` throw this, and the proxy answers it
+ * directly rather than falling back to another path.
  */
-export function guardDuplicateKeys(request: ProxyRequest): ProxyRequest {
-  const body = request.body;
-  if (body === null || !hasDuplicateKeys(body)) return request;
-  const text = stripUtf8Bom(body).toString("utf8");
-  const out = redactStandaloneText(text);
-  if (out === text) return request;
-  const candidate = Buffer.from(out, "utf8");
-  try {
-    JSON.parse(out);
-  } catch {
-    throw new Error(
-      "JSON body with duplicate keys holds a secret and could not be redacted as valid JSON; refusing it",
+export function refuseDuplicateKeys(body: Buffer | null): void {
+  if (body !== null && hasDuplicateKeys(body)) {
+    throw new RequestBodyRefusal(
+      400,
+      "golem proxy: the JSON request body repeats an object key (duplicate keys). Parsers " +
+        "disagree about which value wins, so a secret could hide in the ignored one. " +
+        "Nothing was forwarded.",
     );
   }
-  return { ...request, body: candidate };
 }
 
 function isWideEncoded(body: Buffer, contentType: string): boolean {
@@ -195,18 +211,49 @@ function looksLikeWideText(body: Buffer): boolean {
 }
 
 /**
- * Sparse UTF-16: a secret short enough that NULs are a tiny share of the body.
- * Decode the whole body as UTF-16 at both byte alignments and both endiannesses;
- * if the text redactor finds a secret in any view, the body is UTF-16 holding one.
+ * Project the body's ASCII characters out of a UTF-16/32 reading at one byte
+ * alignment: a code unit holding an ASCII value becomes that byte, anything else
+ * a space (secrets are ASCII; a non-ASCII unit acts as a boundary, as a space
+ * does). Done unit by unit with no decode of the whole body.
+ */
+function asciiView(body: Buffer, unit: 2 | 4, bigEndian: boolean, offset: number): string {
+  const count = Math.floor((body.length - offset) / unit);
+  const out = Buffer.alloc(count, 0x20);
+  for (let u = 0; u < count; u += 1) {
+    const at = offset + u * unit;
+    const low = bigEndian ? at + unit - 1 : at;
+    const v = body[low] as number;
+    if (v >= 0x80) continue;
+    let zero = true;
+    for (let k = 0; k < unit; k += 1) {
+      if (at + k !== low && body[at + k] !== 0) {
+        zero = false;
+        break;
+      }
+    }
+    if (zero) out[u] = v;
+  }
+  return out.toString("latin1");
+}
+
+/**
+ * A secret hidden in UTF-16 or UTF-32 text, however sparse (a short wide-encoded
+ * secret inside a long ASCII body has almost no NULs, so no density test sees it).
+ * Read the whole body as UTF-16 (2 alignments x 2 endiannesses) and UTF-32
+ * (4 alignments x 2 endiannesses); if the text redactor finds a secret in any
+ * view, the body is wide-encoded and holding one: refuse it.
  */
 function wideViewHoldsSecret(body: Buffer): boolean {
-  for (const offset of [0, 1]) {
-    const view = body.subarray(offset, body.length - ((body.length - offset) % 2));
-    if (view.length < 2) continue;
-    const le = view.toString("utf16le");
-    if (redactStandaloneText(le) !== le) return true;
-    const be = Buffer.from(view).swap16().toString("utf16le");
-    if (redactStandaloneText(be) !== be) return true;
+  for (const [unit, alignments] of [
+    [2, 2],
+    [4, 4],
+  ] as const) {
+    for (let offset = 0; offset < alignments; offset += 1) {
+      for (const bigEndian of [false, true]) {
+        const view = asciiView(body, unit, bigEndian, offset);
+        if (redactStandaloneText(view) !== view) return true;
+      }
+    }
   }
   return false;
 }
@@ -268,18 +315,15 @@ export function redactAnyBody(input: ProxyRequest): ProxyRequest {
     isJson = false;
   }
   if (isJson) {
-    const request = guardDuplicateKeys(input);
-    if (request !== input) {
-      parsed = parseJsonBody(request.body as Buffer);
-    }
+    refuseDuplicateKeys(body);
     const redacted = redactRequestBody(parsed);
-    if (redacted.count === 0) return request;
-    return { ...request, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
+    if (redacted.count === 0) return input;
+    return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
   }
 
   // (a) a known-binary label, or (b) a magic signature under no/unknown/text label.
   if (BINARY_LABEL.test(mime)) return input;
-  if (!/json/.test(mime) && hasBinaryMagic(body)) return input;
+  if (!/json/.test(mime) && hasBinaryMagic(body) && looksBinary(body)) return input;
 
   if (isWideEncoded(body, contentType)) {
     throw new Error(

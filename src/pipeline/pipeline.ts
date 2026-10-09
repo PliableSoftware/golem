@@ -48,7 +48,7 @@ import { buildContextLedger, type ContextLedgerCore } from "../proxy/context-led
 import type { ProxyRequest, RequestPipeline } from "../proxy/types.js";
 import { isRecord } from "../shared/json.js";
 import { proxyLog } from "../shared/proxy-log.js";
-import { guardDuplicateKeys, parseJsonBody, redactAnyBody } from "./body-redaction.js";
+import { parseJsonBody, redactAnyBody, refuseDuplicateKeys } from "./body-redaction.js";
 import { applyBrevity } from "./brevity.js";
 import { applyJoinMessages, canInject } from "./join-injection.js";
 import { eligibleLocalAnswerText, synthesizeLocalAnswerResponse } from "./local-answer-response.js";
@@ -394,11 +394,10 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       // An array or bare scalar is not a Messages body, but it is still scanned.
       if (!isRecord(parsed)) return redactAnyBody(input);
       // Duplicate keys: the parsed value hides a shadowed secret the bytes still carry.
-      const request = guardDuplicateKeys(input);
-      if (request !== input) parsed = parseJsonBody(request.body as Buffer);
+      refuseDuplicateKeys(input.body);
       const redacted = redactRequestBody(parsed);
-      if (redacted.count === 0 || !isRecord(redacted.value)) return request;
-      return { ...request, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
+      if (redacted.count === 0 || !isRecord(redacted.value)) return input;
+      return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
     },
     async process(input: ProxyRequest): Promise<ProxyRequest> {
       // R10.23 — every stage below runs BEFORE the request is forwarded, so
@@ -425,10 +424,9 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         return redactAnyBody(input);
       }
       // DUSTSEC.21: a body with duplicate keys may hide a secret in a shadowed
-      // value the parse dropped; redact the raw text first, then carry on from it.
-      const request = guardDuplicateKeys(input);
-      if (request !== input) parsed = parseJsonBody(request.body as Buffer);
-      if (!isRecord(parsed)) return redactAnyBody(request);
+      // value the parse dropped: refuse it (400, nothing forwarded).
+      refuseDuplicateKeys(input.body);
+      const request = input;
 
       // R8.S3 — observe for session tree (fire-and-forget, never affects the request).
       if (options.sessionRecorder !== undefined) {

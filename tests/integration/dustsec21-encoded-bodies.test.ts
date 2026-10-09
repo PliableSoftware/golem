@@ -669,33 +669,51 @@ describe("DUSTSEC.21 review 2: UTF-16/32 anywhere in the body is refused", () =>
   });
 });
 
-describe("DUSTSEC.21 review 2: duplicate JSON keys", () => {
-  const first = (shape: string) => {
-    const tail = shape === "messages" ? ',"messages":[]' : "";
-    return {
-      top: `{"a":"${SECRET}","a":"x"${tail}}`,
-      nested: `{"o":{"k":"${SECRET}","k":"x"}${tail}}`,
-      array: `{"l":[{"k":"hi"},{"k":"${SECRET}","k":"x"}]${tail}}`,
-      escaped: `{"a":"${SECRET}","\\u0061":"x"${tail}}`,
-    };
-  };
+describe("DUSTSEC.21 review 3: duplicate JSON keys are refused", () => {
+  /** The secret with every third character written as a JSON \\u escape. */
+  const escapedSecret = [...SECRET]
+    .map((c, i) => (i % 3 === 0 ? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}` : c))
+    .join("");
+  const shapes = (tail: string): Record<string, string> => ({
+    top: `{"a":"${SECRET}","a":"x"${tail}}`,
+    nested: `{"o":{"k":"${SECRET}","k":"x"}${tail}}`,
+    array: `{"l":[{"k":"hi"},{"k":"${SECRET}","k":"x"}]${tail}}`,
+    "escaped key spelling": `{"a":"${SECRET}","\\u0061":"x"${tail}}`,
+    "escaped secret value": `{"a":"${escapedSecret}","a":"x"${tail}}`,
+    "non-secret duplicate": `{"a":"1","a":"2"${tail}}`,
+  });
   for (const path of routes) {
-    for (const [name, body] of Object.entries(first(path === "/v1/messages" ? "messages" : ""))) {
-      it(`${name} duplicate to ${path} does not forward the shadowed secret`, async () => {
+    const tail = path === "/v1/messages" ? ',"messages":[]' : "";
+    for (const [name, body] of Object.entries(shapes(tail))) {
+      it(`${name} to ${path} is refused with 400 and nothing is forwarded`, async () => {
         const r = await send(await build(), path, { headers: jsonHeaders, body });
-        expect(r.status).toBe(200);
-        expect(r.raw.includes(Buffer.from(SECRET))).toBe(false);
-        expect(() => JSON.parse(r.body)).not.toThrow();
+        expectRefusedNothingForwarded(r, 400);
+        expect(r.responseBody).not.toContain(SECRET);
+        expect(r.responseBody).toMatch(/duplicate/i);
       });
     }
   }
 
-  it("the redactOnly fail-safe covers duplicate keys", async () => {
+  it("redactOnly refuses a duplicate-key body too", async () => {
+    const p = await build();
+    for (const url of routes) {
+      const body = Buffer.from(
+        shapes(url === "/v1/messages" ? ',"messages":[]' : "").top as string,
+      );
+      expect(() => p.redactOnly?.({ method: "POST", url, headers: {}, body })).toThrow(
+        /duplicate/i,
+      );
+    }
+  });
+
+  it("a duplicate-key body is refused even when the pipeline is failing", async () => {
     const pipeline = await build({ policy: () => Promise.reject(new Error("policy boom")) });
     for (const path of routes) {
-      const body = first(path === "/v1/messages" ? "messages" : "").top;
-      const r = await send(pipeline, path, { headers: jsonHeaders, body });
-      expect(r.raw.includes(Buffer.from(SECRET))).toBe(false);
+      const r = await send(pipeline, path, {
+        headers: jsonHeaders,
+        body: shapes("").top as string,
+      });
+      expectRefusedNothingForwarded(r, 400);
     }
   });
 
@@ -704,6 +722,101 @@ describe("DUSTSEC.21 review 2: duplicate JSON keys", () => {
     const r = await send(await build(), "/v1/other", { headers: jsonHeaders, body });
     expect(r.body).toBe(body);
   });
+});
+
+describe("DUSTSEC.21 review 3: sparse UTF-32 and printable magic prefixes", () => {
+  const u32 = (s: string, be = false) =>
+    Buffer.concat(
+      [...s].map((c) => {
+        const b = Buffer.alloc(4);
+        if (be) b.writeUInt32BE(c.codePointAt(0) ?? 0);
+        else b.writeUInt32LE(c.codePointAt(0) ?? 0);
+        return b;
+      }),
+    );
+  const sparse = (be: boolean, pad = 0) =>
+    Buffer.concat([
+      Buffer.from("hello ".repeat(400)),
+      Buffer.from("x".repeat(pad)),
+      u32(SECRET, be),
+      Buffer.from(" bye".repeat(400)),
+    ]);
+  for (const be of [false, true]) {
+    for (const pad of [0, 1, 2, 3]) {
+      for (const headers of [{ "content-type": "text/plain" }, jsonHeaders, {}]) {
+        it(`sparse UTF-32${be ? "BE" : "LE"} secret, alignment ${pad}, ${JSON.stringify(headers)} is refused`, async () => {
+          const r = await send(await build(), "/v1/other", { headers, body: sparse(be, pad) });
+          expectRefusedNothingForwarded(r, 502);
+        });
+      }
+    }
+  }
+
+  it("a 1 MB ASCII body with a short UTF-32 secret near the end is refused", async () => {
+    const body = Buffer.concat([
+      Buffer.from("a b ".repeat(262_144)),
+      u32(SECRET),
+      Buffer.from(" z"),
+    ]);
+    const r = await send(await build(), "/v1/other", {
+      headers: { "content-type": "text/plain" },
+      body,
+    });
+    expectRefusedNothingForwarded(r, 502);
+  });
+
+  const prefixes: Record<string, string> = {
+    GIF8: "GIF8 note",
+    ID3: "ID3 note",
+    BZh: "BZh note",
+    "%PDF": "%PDF note",
+    RIFF: "RIFF note",
+    OggS: "OggS note",
+    "Rar!": "Rar! note",
+    "ftyp at 4": "abcdftyp note",
+  };
+  for (const [name, head] of Object.entries(prefixes)) {
+    for (const headers of [{ "content-type": "text/plain" }, {}]) {
+      it(`printable text starting with ${name} is redacted (${JSON.stringify(headers)})`, async () => {
+        const r = await send(await build(), "/v1/other", {
+          headers,
+          body: `${head}: key=${SECRET}\nmore text\n`,
+        });
+        expect(r.status).toBe(200);
+        expect(r.body).not.toContain(SECRET);
+        expect(r.body).toContain(PLACEHOLDER);
+      });
+    }
+  }
+
+  const gif = Buffer.concat([
+    Buffer.from("GIF89a"),
+    Buffer.from([0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00]),
+    Buffer.from(SECRET),
+  ]);
+  const mp3 = Buffer.concat([
+    Buffer.from("ID3"),
+    Buffer.from([0x03, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x76]),
+    Buffer.from(`TIT2${SECRET}`),
+    Buffer.from([0xff, 0xfb, 0x90, 0x44, 0x00]),
+  ]);
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(SECRET),
+  ]);
+  const gz = gzipSync(Buffer.from("hello".repeat(100)));
+  const pdf = Buffer.concat([
+    Buffer.from("%PDF-1.7\n%"),
+    Buffer.from([0xe2, 0xe3, 0xcf, 0xd3, 0x0a]),
+    Buffer.from(SECRET),
+  ]);
+  for (const [name, body] of Object.entries({ gif, mp3, png, gz, pdf })) {
+    it(`genuine ${name} with no label stays byte-identical`, async () => {
+      const r = await send(await build(), "/v1/files", { body });
+      expect(r.status).toBe(200);
+      expect(r.raw.equals(body)).toBe(true);
+    });
+  }
 });
 
 describe("DUSTSEC.21 review 2: the in-flight reservation is released", () => {

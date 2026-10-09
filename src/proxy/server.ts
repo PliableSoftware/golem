@@ -365,12 +365,22 @@ export class GolemProxy {
       try {
         forward = await this.config.pipeline.process(original);
       } catch (err) {
+        if (err instanceof RequestBodyRefusal) {
+          // The pipeline refused the BODY itself (e.g. duplicate JSON keys): a
+          // client error, answered directly. Nothing is forwarded.
+          failProxy(err.status, err.message);
+          return;
+        }
         this.config.onPipelineError?.(err, original);
         try {
           const redactOnly = this.config.pipeline.redactOnly;
           if (redactOnly === undefined) throw new Error("pipeline has no redaction-only fallback");
           forward = redactOnly.call(this.config.pipeline, original);
         } catch (redactErr) {
+          if (redactErr instanceof RequestBodyRefusal) {
+            failProxy(redactErr.status, redactErr.message);
+            return;
+          }
           failProxy(
             502,
             "golem proxy: the request pipeline failed and redaction could not be " +
