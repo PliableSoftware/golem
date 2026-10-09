@@ -100,3 +100,27 @@ the rule is NOT applied (exception), the item is left open and named here.
 | X10 | Default rule applied: D (stable-id rename `runtime:slider` → `runtime:compression` documented) | DUST2.6 |
 | X11 | Default rule applied: D (wiki file locations fixed) | DUST2.6 |
 | X12 | Default rule applied: adapter-plus-pin is the shipped shape | DUST2.2 |
+
+## USER decisions, 2026-10-09 (the closing questions session)
+
+Decided by the user after the Dust initiative, in answer to the questions the agents had left open. Each names the task that carries it out. Where the user chose differently from the recommendation, that is recorded and followed.
+
+| id | Decision | Task / effect |
+|---|---|---|
+| REL | **Release without a security advisory.** Cut a release from `development` with the DUSTSEC fixes (no tag contains any); do not publish an advisory. The user runs the release; an agent never does. | `DUST5.8` (the user's); the changelog draft stays a draft |
+| NPM | **Leave `golem-run` unclaimed.** The squatting risk is accepted. | `npm-claim-golem-run` cancelled |
+| R8 | **Back to ask the human.** Remove the unconditional R12.12 hard deny at `PermissionRequest`, so destructive and outward prompts reach Claude Code's own dialog again. (Recommendation was to accept the deny and amend ADR-0002; the user chose to restore asking.) `allow` is still never emitted for those classes (invariant 5). | `DUSTSEC.10`; ADR-0002 amendment |
+| README | **Reword the README claim** "real billed-token telemetry, not estimates": savings figures are estimates, the cache report uses billed usage. | `readme-estimates-claim` |
+| TRL | **Leave the trailers in merged history.** No force-push. | none |
+| DROP | **The dropped-subscriber `ended` frame carries no `seq`** (or a reserved sentinel); amend the frozen SessionEvent contract and update the chat client. | `session-dropframe-seq-and-hostlog` |
+| LOG | **Host log retention by rotate-by-rename**: past a size, rename the log aside and start a new file, keep N old files. No read-modify-write. | `session-dropframe-seq-and-hostlog` |
+| DEAD | **Do the planner's 'delete' rows** from the 25 NEEDS-USER dead-code proposals in `PHASE3-INDEX.md`, one reviewed PR per area; leave the 'keep' rows alone. | `dead-code-delete-rows` |
+| G3 | **Team policy applies everywhere**: every surface that reads settings (`config`, the TUI, VS Code, hooks, MCP, hot-reload, status) goes through the one loader that includes the team layer. An invalid team value still warns and is skipped (ADR-0008). | `team-layer-everywhere` |
+| M2 | **Remove the `slider` prompt** from the frozen MCP prompt set and amend the contract. (Recommendation was to keep it as a rewritten pointer.) | `remove-slider-prompt` |
+| H2 | **`blocked` is metadata**, not a task state (matches D55(d), the wiki and CLAUDE.md). Fix the README and `TASK_STATES`; keep accepting an old `state: blocked` on read. | `blocked-is-metadata` |
+| FLEET | **Park fleet.** `DUST2.25` stays blocked on hardware and out of active planning. | `DUST2.25` note |
+| P3 | **Decision 61 reaches hosted sessions**: a device may answer a destructive or outward prompt in a hosted session too when the opt-in setting is on. Decision 60(d) is amended. (Recommendation was that hosted stays locked; the user chose otherwise.) The setting is not built yet (R13.9), so nothing is exposed today. | spec and ADR-0006 amendment notes; R13.9 must honour it |
+| P4 | **Teams may set `security.*` settings.** `REMOTE_DENIED_SETTINGS` stays as it is today and gains no `security.*` key. (Recommendation was to deny them remotely; the user chose otherwise.) Consequence recorded plainly: a team push or a compromised portal could switch the phone-approval setting on for every member once R13.9 exists. | spec and ADR-0008 amendment notes |
+| SL0 | **Default (recommendation, not asked): remove the slider-0 `needsConfirm` branch** in `src/tui/state.ts` and rewrite the four tests that pin it. | `tui-slider-0-branch` |
+| ZERO | **Default (recommendation, not asked): keep the "about 0 percent, measured" figure dropped** from the marketing drafts (B-26 wins). | none |
+| CONT | **Default (not asked): `container_` ids stay rewritten** by redaction until an official id format is found. | `DUSTSEC.20` note |
