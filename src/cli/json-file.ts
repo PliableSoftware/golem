@@ -1,29 +1,6 @@
-/**
- * Reading and rewriting the small JSON files Golem wires — `.claude/settings.json`,
- * `.mcp.json`, `.vscode/settings.json`, `.golem/settings*.json`.
- *
- * Three modules had grown their own copy of this: `init.ts`, `proxy-wiring.ts`
- * and `wiki.ts`. They were not the same, and the difference was not cosmetic —
- * they disagreed about what a MALFORMED file means:
- *
- * - `init.ts` threw, so `golem init` stopped and told you to fix the file.
- * - `proxy-wiring.ts` returned null, so `golem proxy wire` and `golem status`
- *   silently reported "nothing wired" for a file that was actually corrupt.
- *
- * Both behaviours are wanted, so both are kept — as two functions whose names
- * say which you are getting. That is the point of this module: a caller now
- * CHOOSES loud or quiet, instead of inheriting whichever copy it happened to
- * call. Consolidating to one behaviour would have silently changed a command.
- *
- * Rule of thumb, and how the callers are wired today: a command that WRITES a
- * file should refuse to clobber what it cannot parse ({@link readJsonObject}),
- * while a surface that merely REPORTS should degrade rather than throw at a
- * user who only asked for status ({@link readJsonObjectOrNull}).
- */
-
-import { randomBytes } from "node:crypto";
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { replaceViaTemp } from "../config/file-io.js";
 import { InitError } from "./init-error.js";
 
 export type JsonObject = Record<string, unknown>;
@@ -108,14 +85,7 @@ export async function readJsonObjectOrNull(file: string): Promise<JsonObject | n
  */
 export async function writeJsonObject(file: string, value: JsonObject): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  try {
-    await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await rename(tmp, file);
-  } catch (err) {
-    await rm(tmp, { force: true }).catch(() => {});
-    throw err;
-  }
+  await replaceViaTemp(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 /**

@@ -15,9 +15,10 @@
  * call — only an explicit `golem update --check` (or a stale cache) hits the net.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 
 export const PACKAGE_NAME = "@pliable/golem";
 const REGISTRY_URL = "https://registry.npmjs.org";
@@ -158,9 +159,7 @@ async function writeCache(cacheDir: string, check: UpdateCheck): Promise<void> {
   try {
     await mkdir(cacheDir, { recursive: true });
     const file = cachePath(cacheDir);
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(check, null, 2)}\n`, "utf8");
-    await rename(tmp, file);
+    await replaceViaTemp(file, `${JSON.stringify(check, null, 2)}\n`);
   } catch {
     // Best-effort cache; a write failure must never break the check.
   }
