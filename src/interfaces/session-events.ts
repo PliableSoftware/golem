@@ -30,6 +30,12 @@
  *   {@link SessionEndedEvent} (never the dropped frame) and the client must not
  *   reconnect.
  *
+ * - **Amendment 2026-10-09 (second review): `attached` has no SSE `id:` line.**
+ *   It is stamped `seq: 0` but is not a ring event. An `id: 0` made a native
+ *   `EventSource` reconnect send `Last-Event-ID: 0`, which the server reads as a
+ *   fresh attach (events past the ring lost, no gap warning). Only seq > 0 frames
+ *   carry an `id:`.
+ *
  * - **Amendment 2026-10-09 (review fix): `attached` carries an `epoch`.** A bus
  *   rebuilt under the same session id restarts `seq` at 1. `epoch` identifies the
  *   bus instance; when it differs from the one a client last saw, the client's

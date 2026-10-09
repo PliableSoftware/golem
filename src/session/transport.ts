@@ -18,6 +18,7 @@ import type {
   LiveConversation,
 } from "../interfaces/join-queue.js";
 import type {
+  SessionAttachedEvent,
   SessionDroppedFrame,
   SessionEvent,
   SessionMessageResponse,
@@ -181,7 +182,10 @@ export function parseSessionPath(
  * with a real event on resume (2026-10-09 amendment).
  */
 export function sseFrame(event: SessionEvent | SessionDroppedFrame): string {
-  const id = "seq" in event ? `id: ${event.seq}\n` : "";
+  // `attached` is stamped seq 0 (it is not a ring event). `id: 0` would make a native
+  // EventSource reconnect send `Last-Event-ID: 0`, which the server reads as a fresh
+  // attach: events past the ring lost with no gap warning. So seq 0 gets no id either.
+  const id = "seq" in event && event.seq > 0 ? `id: ${event.seq}\n` : "";
   return `${id}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
@@ -260,7 +264,7 @@ export function handleStream(
       epoch: session.bus.epoch,
       resumedFrom: after,
       gap: attach.gap,
-    } as SessionEvent),
+    } satisfies SessionAttachedEvent),
   );
   for (const event of attach.replay) write(sseFrame(event));
 
@@ -268,6 +272,12 @@ export function handleStream(
   // than left to time out: silence never means "gone".
   const ended = session.bus.endedEvent;
   if (ended !== undefined) write(sseFrame(ended));
+  // A bus that was closed (host shutdown) accepts no new subscriber: the late
+  // attacher has been told everything, so end its stream rather than hold it open.
+  if (attach.closed) {
+    res.end();
+    return;
+  }
 
   const heartbeat = setInterval(() => {
     // An SSE comment: keeps the socket warm, carries no event, cannot be

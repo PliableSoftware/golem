@@ -28,6 +28,7 @@ class FakeEventSource {
     this.readyState = 2;
   }
   emit(ev: Record<string, unknown>): void {
+    if (this.closed) return; // a closed EventSource delivers nothing
     this.listeners.get(String(ev.type))?.({ data: JSON.stringify(ev) });
   }
 }
@@ -57,6 +58,7 @@ function text(node: unknown): string {
 async function boot(): Promise<{
   log: Record<string, unknown>;
   timers: Array<() => void>;
+  delays: number[];
   rendered: () => string;
 }> {
   FakeEventSource.all = [];
@@ -65,6 +67,7 @@ async function boot(): Promise<{
   const log = fakeEl();
   const elements = new Map<string, Record<string, unknown>>([["log", log]]);
   const timers: Array<() => void> = [];
+  const delays: number[] = [];
   const ctx = {
     document: {
       getElementById: (id: string) => {
@@ -83,8 +86,9 @@ async function boot(): Promise<{
     window: { addEventListener: () => undefined },
     EventSource: FakeEventSource,
     fetch: () => Promise.resolve({ ok: false, json: () => ({ turns: [] }) }),
-    setTimeout: (f: () => void) => {
+    setTimeout: (f: () => void, ms: number) => {
       timers.push(f);
+      delays.push(ms);
       return 0;
     },
     confirm: () => true,
@@ -94,7 +98,7 @@ async function boot(): Promise<{
   };
   vm.runInNewContext(script, ctx);
   await new Promise((r) => setImmediate(r)); // the history fetch resolves, then connect()
-  return { log, timers, rendered: () => text(log) };
+  return { log, timers, delays, rendered: () => text(log) };
 }
 
 const attached = (epoch: string, resumedFrom = 0) => ({
@@ -152,8 +156,26 @@ describe("chat page script", () => {
     es.emit({ type: "ended", seq: 2, reason: "host shutting down" });
     expect(page.rendered()).toContain("session ended");
     expect(es.closed).toBe(true);
+    es.emit({ type: "text", seq: 3, text: "after close" }); // delivered to nothing
+    expect(page.rendered()).not.toContain("after close");
     es.onerror?.();
     page.timers.forEach((f) => void f());
     expect(FakeEventSource.all).toHaveLength(1);
+  });
+
+  it("backs off exponentially on repeated drops, capped, and resets on a real event", async () => {
+    const page = await boot();
+    const drop = { type: "ended", dropped: true, reason: "slow" };
+    const dropOnce = (): void => {
+      const es = FakeEventSource.all[FakeEventSource.all.length - 1] as FakeEventSource;
+      es.emit(drop);
+      page.timers.splice(0).forEach((f) => void f());
+    };
+    for (let i = 0; i < 7; i += 1) dropOnce();
+    expect(page.delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+    const live = FakeEventSource.all[FakeEventSource.all.length - 1] as FakeEventSource;
+    live.emit({ type: "text", seq: 1, text: "recovered" });
+    dropOnce();
+    expect(page.delays[page.delays.length - 1]).toBe(1000);
   });
 });

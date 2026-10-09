@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -99,22 +99,38 @@ describe("host log rotation", () => {
 
   it("does not rotate a young file that replaced the one measured", async () => {
     const dir = await newTempDir();
-    await appendHostLog(dir, turn(0)); // creates the live file, tiny
-    // A tiny live file under a huge cap is the state a losing writer sees after the
-    // winner rotated: it must be left alone.
-    await appendHostLog(dir, turn(1), { maxBytes: 10_000_000 });
-    expect(await logFiles(dir)).toEqual(["host-log.jsonl"]);
+    const file = hostLogPath(dir);
+    for (let n = 0; n < 10; n += 1) await appendHostLog(dir, turn(n), { maxBytes: 10_000_000 });
+    // The live file is over the cap when measured; before the rename another writer
+    // rotates it away and starts a young file at the same path.
+    await appendHostLog(dir, turn(10), {
+      maxBytes: 300,
+      keep: 100,
+      afterMeasure: async () => {
+        await rename(file, path.join(path.dirname(file), "elsewhere.tmp"));
+        await writeFile(file, `${JSON.stringify(turn(99))}\n`);
+      },
+    });
+    // No rotated file was created from the young file; it is still the live log.
+    expect((await logFiles(dir)).filter((f) => f !== "host-log.jsonl")).toEqual([]);
+    expect(await readFile(file, "utf8")).toContain("turn 99");
   });
 
-  it("readHostLog tolerates a stray rotated-looking name and a vanished file", async () => {
+  it("readHostLog retries when a rotation lands between listing and reading", async () => {
     const dir = await newTempDir();
-    for (let n = 0; n < 12; n += 1) {
-      await appendHostLog(dir, turn(n), { maxBytes: 300, keep: 100 });
+    for (let n = 0; n < 6; n += 1) {
+      await appendHostLog(dir, turn(n), { maxBytes: 10_000_000 });
     }
-    const stateDir = path.dirname(hostLogPath(dir));
-    await writeFile(path.join(stateDir, "host-log.0000000000001-zz.jsonl"), "not json\n");
-    const entries = await readHostLog(dir, 500);
-    expect(entries).toHaveLength(12);
+    let passes = 0;
+    const entries = await readHostLog(dir, 500, async () => {
+      passes += 1;
+      if (passes === 1) {
+        // Rotate the live file away after the first pass listed the directory.
+        await appendHostLog(dir, turn(6), { maxBytes: 100, keep: 100 });
+      }
+    });
+    expect(passes).toBeGreaterThan(1); // the retry loop ran a second pass
+    expect(entries).toHaveLength(7); // nothing missed
   });
 
   it("separate processes appending across the threshold lose nothing", async () => {

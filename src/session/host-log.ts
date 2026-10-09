@@ -53,6 +53,8 @@ export const HOST_LOG_KEEP_ROTATED = 3;
 export interface HostLogRotation {
   readonly maxBytes?: number;
   readonly keep?: number;
+  /** Test seam: runs between measuring the live file and re-checking it before the rename. */
+  readonly afterMeasure?: () => Promise<void>;
 }
 
 /** Strictly increasing within this process, so two rotations in one ms still sort in order. */
@@ -120,6 +122,7 @@ export async function appendHostLog(
       file,
       rotation.maxBytes ?? HOST_LOG_MAX_BYTES,
       rotation.keep ?? HOST_LOG_KEEP_ROTATED,
+      rotation.afterMeasure,
     );
   } catch {
     // Retention is best-effort; the audit line above has already landed.
@@ -137,9 +140,15 @@ async function statOrNull(file: string): Promise<{ size: number; ino: number } |
   }
 }
 
-async function rotateIfLarge(file: string, maxBytes: number, keep: number): Promise<void> {
+async function rotateIfLarge(
+  file: string,
+  maxBytes: number,
+  keep: number,
+  afterMeasure?: () => Promise<void>,
+): Promise<void> {
   const measured = await statOrNull(file);
   if (measured === null || measured.size <= maxBytes) return;
+  await afterMeasure?.();
   // Re-check right before the rename: if another writer rotated meanwhile, the path
   // now names a young file (different inode, or back under the threshold) and
   // renaming it would shorten retention for nothing. ino is 0 on some Windows
@@ -188,6 +197,8 @@ async function listRotated(dir: string): Promise<string[]> {
 export async function readHostLog(
   projectDir: string,
   limit = 200,
+  /** Test seam: runs after each pass lists the rotated files, before it reads them. */
+  afterList?: () => Promise<void>,
 ): Promise<readonly HostLogEntry[]> {
   const live = hostLogPath(projectDir);
   const dir = path.dirname(live);
@@ -196,6 +207,7 @@ export async function readHostLog(
   // rotated name appearing). Re-list after reading and retry when the set changed.
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const listed = await listRotated(dir);
+    await afterList?.();
     const files = [...listed.map((n) => path.join(dir, n)), live];
     lines = [];
     let vanished = false;

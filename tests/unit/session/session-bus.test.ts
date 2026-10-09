@@ -200,4 +200,31 @@ describe("the wire", () => {
   it("each bus instance has its own epoch", () => {
     expect(new SessionBus("s").epoch).not.toBe(new SessionBus("s").epoch);
   });
+
+  it("ends once: a second ended after closeAll is not stamped or fanned out", () => {
+    const bus = new SessionBus("s");
+    const seen: string[] = [];
+    bus.subscribe({
+      send: (e) => {
+        seen.push(`${e.type}:${e.seq}`);
+        return true;
+      },
+      close: () => {},
+    });
+    bus.closeAll("shutdown");
+    const again = bus.publish({ type: "ended", reason: "runner exited" });
+    expect(again.seq).toBe(1);
+    expect(seen).toEqual(["ended:1"]);
+    expect(bus.cursor).toBe(1);
+  });
+
+  it("refuses new subscribers after closeAll but still replays", () => {
+    const bus = new SessionBus("s");
+    bus.publish({ type: "text", text: "x" });
+    bus.closeAll("shutdown");
+    const attach = bus.subscribe({ send: () => true, close: () => {} });
+    expect(attach.closed).toBe(true);
+    expect(attach.replay.map((e) => e.type)).toEqual(["text", "ended"]);
+    expect(bus.subscriberCount).toBe(0);
+  });
 });

@@ -186,6 +186,7 @@ export function renderChatPage(options: ChatPageOptions): string {
   var body = document.body;
   var lastSeq = 0;
   var epoch = null;   // bus instance the held seqs belong to
+  var drops = 0;      // consecutive backpressure drops, for reconnect backoff
   var over = false;   // the session really ended: never reconnect
   var es = null;
 
@@ -256,7 +257,9 @@ export function renderChatPage(options: ChatPageOptions): string {
     if (ev.type === "ended" && ev.dropped === true) {
       if (es !== null) es.close();
       append(el("div", "gap", "Connection dropped (" + ev.reason + ") — reconnecting."));
-      setTimeout(connect, 1000);
+      // Capped exponential backoff: 1s, 2s, 4s ... 30s. Reset by any real event.
+      setTimeout(connect, Math.min(1000 * Math.pow(2, drops), 30000));
+      drops += 1;
       return;
     }
     // A bus rebuilt under this session id restarts seq at 1: the seqs held belong to
@@ -276,6 +279,7 @@ export function renderChatPage(options: ChatPageOptions): string {
       // A resume must never repeat an event already rendered.
       if (ev.seq <= lastSeq) return;
       lastSeq = ev.seq;
+      drops = 0;
     }
     switch (ev.type) {
       case "attached":

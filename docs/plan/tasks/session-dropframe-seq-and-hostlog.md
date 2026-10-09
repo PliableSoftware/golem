@@ -20,6 +20,7 @@ Drop frame: carry no `seq` (or a reserved sentinel), amend the contract, update 
 
 - Drop frame: `SessionDroppedFrame` `{type:"ended", dropped:true, reason}`, NO `seq` and NO SSE `id:` line (an absent id leaves `lastEventId` alone; no sentinel can collide). Not a `SessionEvent`. Contract amended with a dated note; `chat-page.ts` reconnects instead of saying "ended" and skips already-rendered seqs.
 - Host log: rotate by rename past `HOST_LOG_MAX_BYTES` = 5 MiB, keep `HOST_LOG_KEEP_ROTATED` = 3 old files. Constants, not settings. `trimHostLog` and `HOST_LOG_MAX_LINES` removed.
+- Note: the `epoch` on `attached` rarely fires on a resume (a rebuilt bus under the same session id is uncommon); it is a guard, not a hot path. `attached` and the dropped frame both carry no SSE `id:`.
 
 ## What this is (original brief)
 

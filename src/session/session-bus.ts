@@ -48,7 +48,7 @@ export interface Subscriber {
    * backpressure drop (the session is live; reconnect and resume), `shutdown` is the
    * host going away (the session is over; a real `ended` event was published first).
    */
-  readonly close: (reason: string, kind?: SubscriberCloseKind) => void;
+  readonly close: (reason: string, kind: SubscriberCloseKind) => void;
 }
 
 export interface AttachResult {
@@ -56,6 +56,8 @@ export interface AttachResult {
   readonly replay: readonly SessionEvent[];
   /** True when the requested cursor has already fallen out of the ring. */
   readonly gap: boolean;
+  /** True when the bus was closed by a shutdown: nothing more will ever arrive. */
+  readonly closed: boolean;
   /** Stop receiving. */
   readonly detach: () => void;
 }
@@ -74,6 +76,8 @@ export class SessionBus {
   private readonly backlog = new WeakMap<Subscriber, number>();
   /** Set once the session is over; a late attach is told immediately. */
   private ended: SessionEvent | undefined;
+  /** Set by {@link closeAll}: no new subscriber is accepted afterwards. */
+  private closed = false;
 
   /**
    * Identifies THIS bus instance. A bus rebuilt under the same session id (a host
@@ -103,6 +107,9 @@ export class SessionBus {
    * choose its own — a caller-chosen seq is how a ring stops being ordered.
    */
   publish<T extends Omit<SessionEvent, "seq">>(event: T): SessionEvent {
+    // A session ends once. A second `ended` (shutdown's closeAll, then the runner's
+    // exit handler) must not be stamped, stored or fanned out again.
+    if (event.type === "ended" && this.ended !== undefined) return this.ended;
     const stamped = { ...event, seq: this.nextSeq } as SessionEvent;
     this.nextSeq += 1;
     this.ring.push(stamped);
@@ -143,11 +150,14 @@ export class SessionBus {
     const gap = after > 0 && oldest !== undefined && after + 1 < oldest;
     const replay = this.ring.filter((e) => e.seq > after);
 
-    this.subscribers.add(sub);
-    this.backlog.set(sub, 0);
+    if (!this.closed) {
+      this.subscribers.add(sub);
+      this.backlog.set(sub, 0);
+    }
     return {
       replay,
       gap,
+      closed: this.closed,
       detach: () => {
         this.subscribers.delete(sub);
       },
@@ -165,7 +175,8 @@ export class SessionBus {
    * a client must never have to conclude it from a closed socket.
    */
   closeAll(reason: string): void {
-    if (this.ended === undefined) this.publish({ type: "ended", reason });
+    this.publish({ type: "ended", reason }); // no-op when the session already ended
+    this.closed = true;
     for (const sub of [...this.subscribers]) {
       this.subscribers.delete(sub);
       sub.close(reason, "shutdown");

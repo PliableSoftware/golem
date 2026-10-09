@@ -22,8 +22,9 @@ beforeEach(() => resetLedgers());
 function connect(
   session: TransportSession,
   opts: { writeOk: boolean; lastEventId?: string | undefined },
-): { chunks: string[] } {
+): { chunks: string[]; ended: () => boolean } {
   const chunks: string[] = [];
+  let isEnded = false;
   const res = {
     on: () => undefined,
     writeHead: () => undefined,
@@ -31,7 +32,9 @@ function connect(
       chunks.push(c);
       return opts.writeOk;
     },
-    end: () => undefined,
+    end: () => {
+      isEnded = true;
+    },
   } as unknown as ServerResponse;
   const headers: Record<string, string> =
     opts.lastEventId === undefined ? {} : { "last-event-id": opts.lastEventId };
@@ -43,7 +46,7 @@ function connect(
     new URL("http://x/session/s/stream"),
     { lookup: () => session, heartbeatMs: 3_600_000 },
   );
-  return { chunks };
+  return { chunks, ended: () => isEnded };
 }
 
 /** What an EventSource would do: remember the last `id:` it saw. */
@@ -112,5 +115,24 @@ describe("backpressure drop frame", () => {
     const ended = chunks.find((c) => c.includes("\nevent: ended\n"));
     expect(ended).toMatch(/^id: 2$/m);
     expect(chunks.find((c) => c.includes("event: attached"))).toContain(`"epoch":"${bus.epoch}"`);
+  });
+
+  it("the attached frame has no id: line (id 0 would reset a native reconnect) and carries the epoch", () => {
+    const bus = new SessionBus("s", 10_000);
+    const session: TransportSession = { bus, projectDir: "/nowhere", deliver: async () => {} };
+    const { chunks } = connect(session, { writeOk: true });
+    const attached = chunks.find((c) => c.includes("event: attached")) ?? "";
+    expect(attached).not.toMatch(/^id:/m);
+    expect(attached).toContain(`"epoch":"${bus.epoch}"`);
+  });
+
+  it("a late attach to a closed bus is told it ended and its stream is closed", () => {
+    const bus = new SessionBus("s", 10_000);
+    bus.closeAll("gone");
+    const session: TransportSession = { bus, projectDir: "/nowhere", deliver: async () => {} };
+    const { chunks, ended } = connect(session, { writeOk: true });
+    expect(chunks.some((c) => c.includes("event: ended"))).toBe(true);
+    expect(ended()).toBe(true);
+    expect(bus.subscriberCount).toBe(0);
   });
 });
