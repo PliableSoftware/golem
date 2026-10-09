@@ -55,14 +55,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, node: "22" }
-          - { os: ubuntu-latest, node: "24" }
+          - { os: ubuntu-24.04, node: "22" }
+          - { os: ubuntu-24.04, node: "24" }
           - { os: windows-latest, node: "24" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -110,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
         node: ["22", "24"]
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         exclude:
@@ -119,9 +119,9 @@ jobs:
           - { os: windows-latest, node: "22" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -152,9 +152,41 @@ jobs:
         shard: [1, 2, 3, 4]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Tests (shard ${{ matrix.shard }}/4)
+        run: npm test -- --shard ${{ matrix.shard }}/4
+
+  # Ubuntu 26.04 is ADVISORY, for the same reason as macOS above. GitHub moves the
+  # `ubuntu-latest` label to 26.04 over several weeks from 2026-10-19 (runner-images
+  # issue 14748). The gating jobs and every release job are PINNED to ubuntu-24.04 so
+  # that move cannot change what gates a merge or what builds a release without a
+  # deliberate edit here. This job runs the suite on the new image now, so the
+  # breakage (system libraries, glibc for the standalone binaries, package versions)
+  # is seen in advance and not on the day the pin is lifted. When it has been green
+  # for a few runs, move the pin to ubuntu-26.04 in one reviewed change. It is NOT in
+  # `ci-gate`'s needs.
+  test-ubuntu26:
+    name: "test (advisory) / ubuntu-26.04 / shard ${{ matrix.shard }}"
+    needs: quality
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: npm
@@ -169,7 +201,7 @@ jobs:
   # passed".
   #
   # Pinning protection to the individual jobs would mean listing 30+ names
-  # (`quality / ubuntu-latest / node 22`, `test / windows-latest / node 24 / shard
+  # (`quality / ubuntu-24.04 / node 22`, `test / windows-latest / node 24 / shard
   # 7`, …), and both the OS matrix and the shard count are
   # explicitly a tuning dial in the comment above. Changing it would silently leave
   # protection requiring checks that no longer exist — which blocks every merge —
@@ -184,14 +216,18 @@ jobs:
     name: CI gate
     if: always()
     needs: [quality, test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Verify every CI job succeeded
         run: |
           echo "quality: ${{ needs.quality.result }}"
           echo "test:    ${{ needs.test.result }}"
           if [ "${{ needs.quality.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ]; then
-            echo "::error::CI gate failed — see the quality/test jobs above for the cause."
+            if [ "${{ needs.quality.result }}" = "cancelled" ] || [ "${{ needs.test.result }}" = "cancelled" ]; then
+              echo "::error::CI gate: the run was CANCELLED (a newer push or a reopen replaced it), not failed. Read the gate of the newest run for this commit."
+            else
+              echo "::error::CI gate failed — see the quality/test jobs above for the cause."
+            fi
             exit 1
           fi
           echo "All CI jobs succeeded."

@@ -77,12 +77,12 @@ jobs:
     # run would have no tag to notify about. Every other path still requires ci
     # to have gone green.
     if: ${{ !cancelled() && (needs.ci.result == 'success' || inputs.notify_only) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Resolve the tag from package.json
         id: resolve
@@ -117,11 +117,11 @@ jobs:
     name: Standalone binaries (Bun)
     needs: resolve
     if: ${{ !inputs.notify_only }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: npm
@@ -138,7 +138,7 @@ jobs:
         working-directory: dist-bin
         run: sha256sum golem-* > SHA256SUMS
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: golem-binaries
           path: dist-bin/*
@@ -150,11 +150,11 @@ jobs:
     name: Package + schema
     needs: resolve
     if: ${{ !inputs.notify_only }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: npm
@@ -194,7 +194,7 @@ jobs:
           # into the published schema. With both isolated, every value is a
           # built-in default.
           #
-          # This job runs on ubuntu-latest, which is what makes HOME sufficient:
+          # This job runs on ubuntu-24.04, which is what makes HOME sufficient:
           # the user dir comes from os.homedir() (src/config/paths.ts), and that
           # reads $HOME on POSIX but USERPROFILE on Windows. So reproducing this
           # render on a Windows dev box needs USERPROFILE isolated as well, or a
@@ -221,7 +221,7 @@ jobs:
           cp install/install.sh install/install.ps1 dist-assets/
           ls -l dist-assets
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: golem-assets
           path: dist-assets/*
@@ -232,16 +232,16 @@ jobs:
     needs: [resolve, binaries, assets]
     # notify_only re-pushes the webhook for a tag that is ALREADY released.
     if: ${{ !inputs.notify_only }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: golem-binaries
           path: dist-bin
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: golem-assets
           path: dist-assets
@@ -320,7 +320,7 @@ jobs:
     # rebuilding anything, so `release` is skipped and its result is not
     # 'success'. Every other path still requires it.
     if: ${{ !cancelled() && (needs.release.result == 'success' || inputs.notify_only) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read # read the published assets in notify_only mode
       # NEW — without this the token cannot be minted. On this job only, not
@@ -333,7 +333,7 @@ jobs:
       # It defaults to the portal's own public origin (its NEXT_PUBLIC_APP_URL).
       PORTAL_OIDC_AUDIENCE: ${{ vars.PORTAL_OIDC_AUDIENCE || 'https://golem.run' }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         if: ${{ env.PORTAL_WEBHOOK_URL != '' && !inputs.notify_only }}
         with:
           name: golem-assets
@@ -476,14 +476,14 @@ jobs:
   npm-publish:
     name: Publish to npm
     needs: [resolve, release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write # mints the OIDC token npm's Trusted Publisher flow exchanges
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: npm
@@ -501,13 +501,13 @@ jobs:
   vscode-publish:
     name: Publish VS Code extension (optional)
     needs: [resolve, release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
 
