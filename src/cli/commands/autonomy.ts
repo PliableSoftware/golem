@@ -18,9 +18,9 @@ import { addEventHook, removeEventHook } from "../../hooks/index.js";
 const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 /**
  * The gate is TWO hooks, wired and unwired together (R12.12): `PreToolUse`
- * classifies and asks, `PermissionRequest` answers a destructive/outward request
- * outright before a dialog can open. Wiring one without the other is a
- * half-installed gate, so `wire`/`unwire` always act on both.
+ * classifies and asks; `PermissionRequest` is inert (DUSTSEC.10: no decision, the
+ * native dialog asks the human) but stays wired so existing installs keep
+ * resolving it. `wire`/`unwire` always act on both.
  */
 const GATE_HOOKS: readonly (readonly [event: string, command: string])[] = [
   ["PreToolUse", "golem hook pre-tool-use"],

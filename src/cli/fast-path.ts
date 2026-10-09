@@ -319,10 +319,9 @@ async function runHook(argv: readonly string[]): Promise<void> {
       return;
     }
     case "permission-request": {
-      // R12.12 — fires only when a permission decision is pending, i.e. with a
-      // human already waiting. Commander's ~725ms module graph is the difference
-      // between resolving the request and losing the race to the dialog it
-      // exists to pre-empt.
+      // Inert since DUSTSEC.10: emits no decision, so the native dialog asks the
+      // human. Kept on the fast path because it fires with a human already
+      // waiting and must not add Commander's module-graph latency.
       try {
         const { runPermissionRequestHook } = await import("../hooks/permission-request.js");
         process.exitCode = await runPermissionRequestHook(stdio());
