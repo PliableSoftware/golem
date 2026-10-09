@@ -25,6 +25,7 @@ import { type Dispatcher, Pool } from "undici";
 import { mapUpstreamError, PROXY_ERROR_HEADER } from "./errors.js";
 import { forwardableRequestHeaders, forwardableResponseHeaders } from "./headers.js";
 import { classifyRateLimit, decideRetry } from "./rate-limit-retry.js";
+import { normalizeRequestBody, RequestBodyRefusal, readBody } from "./request-body.js";
 import {
   type ProxyConfig,
   type ProxyRequest,
@@ -33,27 +34,6 @@ import {
   resolveProxyConfig,
 } from "./types.js";
 import { UsageSniffer } from "./usage-sniffer.js";
-
-/**
- * Buffer the whole request body. Deliberately uncapped: the proxy binds
- * loopback-only and serves the local developer's own Claude Code traffic
- * (bounded JSON documents), so a size limit would only add a failure mode.
- * Revisit if the proxy ever binds a non-loopback interface.
- */
-function readBody(req: IncomingMessage): Promise<Buffer | null> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      if (chunks.length === 0) {
-        resolve(null);
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    });
-    req.on("error", reject);
-  });
-}
 
 /**
  * R9.2: replace the body's `model` with the target's real model id, for a
@@ -271,14 +251,30 @@ export class GolemProxy {
 
     let forward: ProxyRequest;
     try {
-      const body = await readBody(req);
+      const body = await readBody(req, this.config.maxRequestBodyBytes);
+      let headers = forwardableRequestHeaders(req.headers);
+      let readable = body;
+      // DUSTSEC.21: decode a content-encoded body so redaction can read it. Only
+      // when the pipeline is on: `proxy.bypass_all` forwards byte-faithfully.
+      if (body !== null && this.#pipelineEnabled) {
+        const normalized = normalizeRequestBody(body, headers, this.config.maxRequestBodyBytes);
+        readable = normalized.body;
+        headers = normalized.headers;
+      }
       forward = {
         method: req.method ?? "GET",
         url: req.url ?? "/",
-        headers: forwardableRequestHeaders(req.headers),
-        body,
+        headers,
+        body: readable,
       };
     } catch (err) {
+      if (err instanceof RequestBodyRefusal) {
+        // Fail closed: nothing was forwarded. `connection: close` because an
+        // oversized body may still be arriving and is not worth draining.
+        res.setHeader("connection", "close");
+        failProxy(err.status, err.message);
+        return;
+      }
       // We could not even read the client request — nothing to forward.
       failProxy(400, `golem proxy: could not read request (${String(err)})`);
       return;

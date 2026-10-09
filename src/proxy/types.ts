@@ -21,6 +21,7 @@
  */
 
 import type { Transform } from "node:stream";
+import { DEFAULT_MAX_REQUEST_BODY_BYTES } from "./request-body.js";
 
 /**
  * The Anthropic Messages API `usage` block (R1.1 — net-of-cache measurement,
@@ -192,6 +193,12 @@ export interface ProxyServerOptions {
    * (Anthropic SSE streams emit `ping` events well within this.)
    */
   readonly bodyTimeoutMs?: number;
+  /**
+   * DUSTSEC.21: largest request body accepted, in bytes, on the wire and after
+   * decompression. Over it the proxy answers 413 and forwards nothing. Default
+   * 64 MiB.
+   */
+  readonly maxRequestBodyBytes?: number;
   /** Request pipeline hook. Default: {@link identityPipeline}. */
   readonly pipeline?: RequestPipeline;
   /**
@@ -373,6 +380,7 @@ export interface ProxyConfig {
   readonly connectTimeoutMs: number;
   readonly headersTimeoutMs: number;
   readonly bodyTimeoutMs: number;
+  readonly maxRequestBodyBytes: number;
   readonly pipeline: RequestPipeline;
   readonly onPipelineError?: (err: unknown, request: ProxyRequest) => void;
   readonly onResponseUsage?: (usage: ResponseUsage | null, request: ProxyRequest) => void;
@@ -418,6 +426,7 @@ export function resolveProxyConfig(options: ProxyServerOptions = {}): ProxyConfi
     connectTimeoutMs: options.connectTimeoutMs ?? 10_000,
     headersTimeoutMs: options.headersTimeoutMs ?? 300_000,
     bodyTimeoutMs: options.bodyTimeoutMs ?? 300_000,
+    maxRequestBodyBytes: options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES,
     pipeline: options.pipeline ?? identityPipeline,
     ...(options.onPipelineError !== undefined ? { onPipelineError: options.onPipelineError } : {}),
     ...(options.onResponseUsage !== undefined ? { onResponseUsage: options.onResponseUsage } : {}),
