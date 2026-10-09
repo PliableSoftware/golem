@@ -1,12 +1,11 @@
 ---
 task: npm-claim-golem-run
 title: "Claim golem-run on npm defensively — a deprecation stub pointing at @pliable/golem"
-state: queued
+state: cancelled
 owner: user
 size: S
 design: "docs/plan/audit/dust-1/DECISIONS.md A1/S1 (USER, 2026-10-08); SUMMARY.md S1"
 gate: "`npm view golem-run` resolves to a stub owned by the project's npm account, marked deprecated with a message pointing at @pliable/golem, with no install scripts and no code beyond a pointer."
-blocked: "outward, credentialed act — only the user can publish to npm"
 created: 2026-10-08
 ---
 
@@ -28,3 +27,7 @@ machines. Claim it with a harmless stub.
 ## Out of scope
 
 - Everything in the repo (DUSTSEC.16). Agents must not publish, deprecate or claim anything.
+
+## Closed by USER decision, 2026-10-09
+
+The user chose to leave `golem-run` unclaimed and accept the squatting risk (`docs/plan/audit/dust-1/DECISIONS.md` NPM). Anyone can publish that name; older installs that still query it (`golem update` and the installers before the rename to `@pliable/golem`) could be redirected by whoever does. Reopen this task if that changes.

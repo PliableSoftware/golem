@@ -25,3 +25,7 @@ Decisions the drafts leave open for the user:
 ## Out of scope
 
 - Any agent action. Agents may revise drafts only on a new agent task.
+
+## USER decision, 2026-10-09
+
+Release WITHOUT a security advisory: the user will cut a release from `development` with the DUSTSEC fixes and will not publish an advisory (`DECISIONS.md` REL). The user does the release and any publishing; an agent never does. The changelog draft still lists every fix as unreleased until a release exists; after one, that draft needs a re-check against the tag.

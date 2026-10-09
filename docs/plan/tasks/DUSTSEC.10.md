@@ -1,18 +1,21 @@
 ---
 task: DUSTSEC.10
-title: "R12.12 PermissionRequest deny applies only when a relay channel is connected — verify the signal first"
+title: "Restore asking the human at PermissionRequest: remove the unconditional R12.12 hard deny (USER decision 2026-10-09)"
 state: queued
 owner: agent
 size: M
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md R8 (USER, 2026-10-08); SUMMARY.md contradiction R8; ADR-0002; R12.12, R12.13; src/hooks/permission-request.ts header"
-gate: "Step 1 report exists: whether a 'relay channel connected' signal is observable from the PermissionRequest hook, with evidence. If yes: with no channel connected a destructive/outward call reaches the native permission dialog (before: denied, the human never asked); with a channel connected it is still denied. If no: the task stops after step 1 and records the gap — it does not invent a heuristic. golem verify green by exit code."
-blocked: "USER decision (2026-10-08 verify step): nothing at the PermissionRequest hook reports a connected relay channel (see the dated note at the end of docs/plan/verification-notes.md). Either accept the unconditional deny and amend ADR-0002 via DUST2.3, or build a Golem-owned channel server that writes a connected marker. R12.13 is still unconfirmed."
+gate: "With the hard deny removed, a destructive or outward call reaches Claude Code's own permission dialog (the hook returns no decision for those classes); `allow` is still NEVER emitted for them (ADR-0002 invariant 5); the other classes behave as before; a regression test fails on the current code (it denies) and passes after; ADR-0002 is amended with a dated note recording the restored behaviour and the open R12.13 question (does a connected channel relay now get notified when the dialog opens: unconfirmed); golem verify exit 0; an independent read-only review before merge, because this is the autonomy gate."
 touches: [src/hooks/permission-request.ts, src/autonomy/gate.ts, src/autonomy/index.ts, docs/plan/verification-notes.md, tests]
 created: 2026-10-08
 ---
 
-## What this is
+## DECIDED (USER, 2026-10-09)
+
+Back to ask the human. The recommendation was to accept the unconditional deny and amend ADR-0002; the user chose to restore asking instead. The 2026-10-08 verify step found no signal for a connected relay at this hook, so the conditional version is not possible: remove the hard deny at `PermissionRequest` for the destructive and outward classes so the native dialog appears again. Consequence to record in ADR-0002: with a permission-relay channel connected, the relay may be notified when the dialog opens (the very thing R12.12 prevented); R12.13 (does it) stays unconfirmed. See `docs/plan/audit/dust-1/DECISIONS.md` R8.
+
+## What this is (original brief, superseded by the decision above)
 
 ADR-0002 promises destructive/outward → `ask` (a human decides). R12.12 added a hard `deny` at
 `PermissionRequest` so a connected channel's permission relay is never triggered — but it denies

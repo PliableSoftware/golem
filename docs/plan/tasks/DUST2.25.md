@@ -25,3 +25,7 @@ hub routing and hub↔worker mTLS are not started.
 ## Out of scope
 
 - Canary evals, per-device dashboard utilisation (spec register).
+
+## USER decision, 2026-10-09
+
+Parked: stays blocked on multi-machine hardware and is out of active planning. The spec already marks the fleet as mostly not built (`DECISIONS.md` FLEET).
