@@ -575,3 +575,21 @@ carried no pointer to any of them.
 
 Not amended here: the relay and account design (§3b, §3c) is not started; the
 DUST1.10 audit found nothing for it in `src/` (R13.10 is the task).
+
+## Amendment (2026-10-09, P3, USER decision)
+
+**Amended 2026-10-09 (DECISIONS.md P3, USER decision; spec Decision 60 and 61
+amendment notes).** The text above is unchanged and is history.
+
+- **Decision 61's opt-in setting reaches hosted sessions.** Decision 60(d) said that in
+  a hosted session `destructive` and `outward` are refused outright and that no
+  setting changes that. That sentence is amended: when the setting is on, a device may
+  answer a `destructive` or `outward` prompt in a hosted session too. This is consistent
+  with local sessions. ADR-0007 invariant 2 is therefore also amended for the
+  setting-on case.
+- **Decision 61's safeguards apply there unchanged:** off by default, fresh
+  re-authentication per answer, a loud log, and a kill switch.
+- **Not built.** The setting belongs to R13.9, which is queued. Until it exists nothing
+  is exposed and the shipped refusal stands. R13.9 must honour this amendment.
+- **How it was decided.** The recommendation was that hosted sessions stay locked. The
+  user chose otherwise.

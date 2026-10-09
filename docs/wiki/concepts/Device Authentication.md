@@ -120,6 +120,13 @@ which of them a setting can change is narrower than the schema suggests.
   of every write surface. The other gate-map items (1-9 as real controls) were not
   re-verified here: UNVERIFIED.
 
+## Answering destructive prompts (decided, not built)
+
+Decided 2026-10-09 (P3, USER): when Decision 61's opt-in setting exists (R13.9, queued),
+it applies to hosted sessions as well as local ones. It is off by default and needs a
+fresh re-authentication per answer, a loud log and a kill switch. A team cannot turn it
+on (P4: a team may only tighten security settings). Neither is built today.
+
 ## Commands
 
 ```
