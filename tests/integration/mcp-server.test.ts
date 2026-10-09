@@ -42,15 +42,7 @@ import { rmTemp } from "../helpers/tmp.js";
 // Unconditionally-registered tools (need no injected service): the P0 trio +
 // `devices` + `snooze` (park-until-reset, proposal golem-snooze.md).
 const P0_TOOLS = ["expand", "stats", "devices", "snooze"] as const;
-const ALL_PROMPTS = [
-  "index",
-  "search",
-  "stats",
-  "expand",
-  "bypass",
-  "devices",
-  "coder",
-] as const;
+const ALL_PROMPTS = ["index", "search", "stats", "expand", "bypass", "devices", "coder"] as const;
 
 type Deps = ReturnType<typeof createStandaloneDeps>;
 
