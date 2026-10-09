@@ -192,19 +192,38 @@ describe("the team cache is written atomically", () => {
     });
     await writeTeamLayerCache(userDir, mk(0));
     let done = false;
+    let contended = 0;
     const writer = (async () => {
-      for (let i = 1; i <= 60; i += 1) await writeTeamLayerCache(userDir, mk(i));
-      done = true;
+      try {
+        for (let i = 1; i <= 60; i += 1) {
+          try {
+            await writeTeamLayerCache(userDir, mk(i));
+          } catch (err) {
+            // Windows refuses a rename over a file a reader has open, and the writer
+            // gives up after its retry budget. That is contention, not a torn file,
+            // so it is counted and the loop moves on; any other error is a real failure.
+            const code = (err as NodeJS.ErrnoException).code;
+            if (
+              process.platform !== "win32" ||
+              (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")
+            )
+              throw err;
+            contended += 1;
+          }
+        }
+      } finally {
+        // Always end the reader loop: a writer that threw must fail the test, not hang it.
+        done = true;
+      }
     })();
     let torn = 0;
     while (!done) {
       if ((await readTeamLayerCache(userDir, ORG)) === null) torn += 1;
-      // Pace the reader: on Windows a rename over a file that is open for reading
-      // fails with EPERM, so a reader that never yields can starve the writer past
-      // the rename retry budget. A real reader opens the cache once per call.
+      // Pace the reader so it does not hold the file open continuously.
       await new Promise((resolve) => setTimeout(resolve, 2));
     }
     await writer;
+    expect(contended).toBeLessThan(60);
     expect(torn).toBe(0);
     expect((await readdir(path.join(userDir, "teams"))).filter((n) => n.endsWith(".tmp"))).toEqual(
       [],
