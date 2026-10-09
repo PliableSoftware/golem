@@ -48,7 +48,7 @@ import { buildContextLedger, type ContextLedgerCore } from "../proxy/context-led
 import type { ProxyRequest, RequestPipeline } from "../proxy/types.js";
 import { isRecord } from "../shared/json.js";
 import { proxyLog } from "../shared/proxy-log.js";
-import { parseJsonBody, redactAnyBody, withoutBom } from "./body-redaction.js";
+import { guardDuplicateKeys, parseJsonBody, redactAnyBody } from "./body-redaction.js";
 import { applyBrevity } from "./brevity.js";
 import { applyJoinMessages, canInject } from "./join-injection.js";
 import { eligibleLocalAnswerText, synthesizeLocalAnswerResponse } from "./local-answer-response.js";
@@ -383,17 +383,19 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
     // throw here except redaction itself.
     redactOnly(input: ProxyRequest): ProxyRequest {
       if (input.body === null) return input;
-      const request = withoutBom(input);
-      if (!isMessagesRequest(request)) return redactAnyBody(request);
+      if (!isMessagesRequest(input)) return redactAnyBody(input);
       let parsed: unknown;
       try {
-        parsed = parseJsonBody(request.body as Buffer);
+        parsed = parseJsonBody(input.body);
       } catch {
         // DUSTSEC.21: not JSON is no longer "forward raw": text bodies are redacted.
-        return redactAnyBody(request);
+        return redactAnyBody(input);
       }
       // An array or bare scalar is not a Messages body, but it is still scanned.
-      if (!isRecord(parsed)) return redactAnyBody(request);
+      if (!isRecord(parsed)) return redactAnyBody(input);
+      // Duplicate keys: the parsed value hides a shadowed secret the bytes still carry.
+      const request = guardDuplicateKeys(input);
+      if (request !== input) parsed = parseJsonBody(request.body as Buffer);
       const redacted = redactRequestBody(parsed);
       if (redacted.count === 0 || !isRecord(redacted.value)) return request;
       return { ...request, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
@@ -406,23 +408,27 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       const startedAt = performance.now();
       const stageMs: Record<string, number> = {};
       if (input.body === null) return input;
-      const request = withoutBom(input);
-      if (!isMessagesRequest(request)) {
+      if (!isMessagesRequest(input)) {
         // DUSTSEC.19 — redaction only, honouring the same policy flag as stage 1.
-        return (await options.policy()).stages.redaction ? redactAnyBody(request) : request;
+        return (await options.policy()).stages.redaction ? redactAnyBody(input) : input;
       }
 
       let parsed: unknown;
       try {
-        parsed = parseJsonBody(request.body as Buffer);
+        parsed = parseJsonBody(input.body);
       } catch {
         // DUSTSEC.21: not JSON — redact it as text (or forward it if opaque).
-        return redactAnyBody(request);
+        return redactAnyBody(input);
       }
       if (!isRecord(parsed)) {
         // DUSTSEC.21: an array or bare scalar to the messages route: redaction only.
-        return redactAnyBody(request);
+        return redactAnyBody(input);
       }
+      // DUSTSEC.21: a body with duplicate keys may hide a secret in a shadowed
+      // value the parse dropped; redact the raw text first, then carry on from it.
+      const request = guardDuplicateKeys(input);
+      if (request !== input) parsed = parseJsonBody(request.body as Buffer);
+      if (!isRecord(parsed)) return redactAnyBody(request);
 
       // R8.S3 — observe for session tree (fire-and-forget, never affects the request).
       if (options.sessionRecorder !== undefined) {

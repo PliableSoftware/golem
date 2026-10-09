@@ -575,3 +575,225 @@ describe("DUSTSEC.21 review: setting validation", () => {
     expect(schema?.safeParse(1).success).toBe(true);
   });
 });
+
+describe("DUSTSEC.21 review 2: a NUL byte never makes a text body opaque", () => {
+  const nul = Buffer.from([0]);
+  it("an unlabelled body with a trailing NUL is redacted", async () => {
+    const r = await send(await build(), "/v1/other", {
+      body: Buffer.concat([Buffer.from(`key=${SECRET}`), nul]),
+    });
+    expect(r.raw.includes(Buffer.from(SECRET))).toBe(false);
+    expect(r.raw.includes(nul)).toBe(true);
+    expect(r.body).toContain(PLACEHOLDER);
+  });
+
+  it("application/xml and text/plain bodies with a NUL are redacted", async () => {
+    for (const type of ["application/xml", "text/plain", "application/x-unknown"]) {
+      const r = await send(await build(), "/v1/other", {
+        headers: { "content-type": type },
+        body: Buffer.concat([Buffer.from(`<a>${SECRET}</a>`), nul, Buffer.from("tail")]),
+      });
+      expect(r.raw.includes(Buffer.from(SECRET))).toBe(false);
+      expect(r.body).toContain(PLACEHOLDER);
+    }
+  });
+});
+
+describe("DUSTSEC.21 review 2: UTF-16/32 anywhere in the body is refused", () => {
+  const u16 = (s: string) => Buffer.from(s, "utf16le");
+  const be = (s: string) => Buffer.from(s, "utf16le").swap16();
+  const u32 = (s: string) =>
+    Buffer.concat(
+      [...s].map((c) => {
+        const b = Buffer.alloc(4);
+        b.writeUInt32LE(c.codePointAt(0) ?? 0);
+        return b;
+      }),
+    );
+  const ascii = Buffer.from("x".repeat(4096));
+  const cases: Record<string, Buffer> = {
+    "UTF-16LE after 4096 ASCII bytes": Buffer.concat([ascii, u16(`key=${SECRET}`)]),
+    "UTF-16LE secret only, sparse NULs": Buffer.concat([ascii, u16(SECRET)]),
+    "UTF-16BE after 4096 ASCII bytes": Buffer.concat([ascii, be(`key=${SECRET}`)]),
+    "UTF-16LE at an odd offset": Buffer.concat([ascii, Buffer.from("y"), u16(`key=${SECRET}`)]),
+    "mostly-CJK UTF-16LE": u16(`${"你好世界".repeat(2000)} key=${SECRET}`),
+    "UTF-32LE": u32(`key=${SECRET} and some padding text`),
+  };
+  for (const [name, body] of Object.entries(cases)) {
+    for (const headers of [{}, { "content-type": "text/plain" }]) {
+      it(`${name}, headers ${JSON.stringify(headers)}`, async () => {
+        const r = await send(await build(), "/v1/other", { headers, body });
+        expectRefusedNothingForwarded(r, 502);
+      });
+    }
+  }
+
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(2000),
+    Buffer.from(SECRET),
+  ]);
+  const pdf = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(3000), Buffer.from("x")]);
+  const gz = gzipSync(Buffer.from("hello".repeat(100)));
+  const zeros = Buffer.alloc(3000);
+  const legit: Array<[string, Buffer, Record<string, string>]> = [
+    ["PNG, labelled", png, { "content-type": "image/png" }],
+    ["PNG, unlabelled magic", png, {}],
+    ["PDF, labelled", pdf, { "content-type": "application/pdf" }],
+    ["PDF, unlabelled magic", pdf, {}],
+    ["gzip, unlabelled magic", gz, {}],
+    ["gzip, text/plain label with magic", gz, { "content-type": "text/plain" }],
+    ["zeros, octet-stream", zeros, { "content-type": "application/octet-stream" }],
+  ];
+  for (const [name, body, headers] of legit) {
+    it(`legitimate binary is not refused or altered: ${name}`, async () => {
+      const r = await send(await build(), "/v1/files", { headers, body });
+      expect(r.status).toBe(200);
+      expect(r.raw.equals(body)).toBe(true);
+    });
+  }
+
+  it("an octet-stream starting with a UTF-8 BOM is forwarded byte-identical", async () => {
+    const body = Buffer.from([0xef, 0xbb, 0xbf, 0x01, 0x02, 0x00, 0x03]);
+    const r = await send(await build(), "/v1/files", {
+      headers: { "content-type": "application/octet-stream" },
+      body,
+    });
+    expect(r.raw.equals(body)).toBe(true);
+  });
+
+  it("an unchanged BOM-prefixed JSON body keeps its original bytes", async () => {
+    const body = Buffer.from(`${BOM}{"a":"hello"}`);
+    const r = await send(await build(), "/v1/other", { headers: jsonHeaders, body });
+    expect(r.raw.equals(body)).toBe(true);
+  });
+});
+
+describe("DUSTSEC.21 review 2: duplicate JSON keys", () => {
+  const first = (shape: string) => {
+    const tail = shape === "messages" ? ',"messages":[]' : "";
+    return {
+      top: `{"a":"${SECRET}","a":"x"${tail}}`,
+      nested: `{"o":{"k":"${SECRET}","k":"x"}${tail}}`,
+      array: `{"l":[{"k":"hi"},{"k":"${SECRET}","k":"x"}]${tail}}`,
+      escaped: `{"a":"${SECRET}","\\u0061":"x"${tail}}`,
+    };
+  };
+  for (const path of routes) {
+    for (const [name, body] of Object.entries(first(path === "/v1/messages" ? "messages" : ""))) {
+      it(`${name} duplicate to ${path} does not forward the shadowed secret`, async () => {
+        const r = await send(await build(), path, { headers: jsonHeaders, body });
+        expect(r.status).toBe(200);
+        expect(r.raw.includes(Buffer.from(SECRET))).toBe(false);
+        expect(() => JSON.parse(r.body)).not.toThrow();
+      });
+    }
+  }
+
+  it("the redactOnly fail-safe covers duplicate keys", async () => {
+    const pipeline = await build({ policy: () => Promise.reject(new Error("policy boom")) });
+    for (const path of routes) {
+      const body = first(path === "/v1/messages" ? "messages" : "").top;
+      const r = await send(pipeline, path, { headers: jsonHeaders, body });
+      expect(r.raw.includes(Buffer.from(SECRET))).toBe(false);
+    }
+  });
+
+  it("a body without duplicate keys is not touched by the guard", async () => {
+    const body = `{"a":"x","b":{"a":"y"},"c":[{"a":"z"},{"a":"w"}]}`;
+    const r = await send(await build(), "/v1/other", { headers: jsonHeaders, body });
+    expect(r.body).toBe(body);
+  });
+});
+
+describe("DUSTSEC.21 review 2: the in-flight reservation is released", () => {
+  async function settle(get: () => number): Promise<number> {
+    for (let i = 0; i < 50 && get() !== 0; i += 1) await new Promise((r) => setTimeout(r, 20));
+    return get();
+  }
+
+  it("after a normal request, a client abort mid-body, and an upstream failure", async () => {
+    const upstream = await startUpstream((_req, res) => {
+      res.end("{}");
+    });
+    const proxy = await startProxy({ upstreamBaseUrl: upstream.origin, pipeline: await build() });
+    try {
+      const body = JSON.stringify({ pad: "a".repeat(50_000) });
+      await rawRequest(proxy.origin, "/v1/other", { method: "POST", headers: jsonHeaders, body });
+      expect(await settle(() => proxy.proxy.bodyBytesInFlight)).toBe(0);
+
+      // Abort mid-body: declare 1 MB, send a little, hang up.
+      const { connect } = await import("node:net");
+      const port = new URL(proxy.origin).port;
+      await new Promise<void>((resolve) => {
+        const sock = connect(Number(port), "127.0.0.1", () => {
+          sock.write(
+            "POST /v1/other HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\n" +
+              'content-length: 1000000\r\n\r\n{"a":',
+          );
+          setTimeout(() => {
+            sock.destroy();
+            resolve();
+          }, 100);
+        });
+      });
+      expect(await settle(() => proxy.proxy.bodyBytesInFlight)).toBe(0);
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+
+    // Upstream failure: nothing listening.
+    const dead = await startUpstream((_req, res) => {
+      res.end("{}");
+    });
+    const origin = dead.origin;
+    await dead.close();
+    const proxy2 = await startProxy({ upstreamBaseUrl: origin, pipeline: await build() });
+    try {
+      const r = await rawRequest(proxy2.origin, "/v1/other", {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ pad: "a".repeat(50_000) }),
+      });
+      expect(r.status).toBeGreaterThanOrEqual(500);
+      expect(await settle(() => proxy2.proxy.bodyBytesInFlight)).toBe(0);
+    } finally {
+      await proxy2.close();
+    }
+  });
+
+  it("a long-running stream no longer holds the reservation once headers arrive", async () => {
+    let finish: () => void = () => {};
+    const done = new Promise<void>((r) => {
+      finish = r;
+    });
+    const upstream = await startUpstream((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      void done.then(() => res.end("data: 2\n\n"));
+    });
+    const proxy = await startProxy({ upstreamBaseUrl: upstream.origin, pipeline: await build() });
+    try {
+      const { Client } = await import("undici");
+      const client = new Client(proxy.origin);
+      const res = await client.request({
+        path: "/v1/other",
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ pad: "a".repeat(50_000) }),
+      });
+      const it = res.body[Symbol.asyncIterator]();
+      await it.next(); // first event arrived: the stream is open
+      expect(proxy.proxy.bodyBytesInFlight).toBe(0);
+      finish();
+      for await (const _ of res.body) {
+        // drain
+      }
+      await client.close();
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  });
+});
