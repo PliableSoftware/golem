@@ -6,6 +6,7 @@
  */
 
 import type { IncomingHttpHeaders, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { NativeLosslessCompression } from "../../src/compression/index.js";
@@ -390,5 +391,68 @@ describe("DUSTSEC.21 pipeline-level (no proxy in front)", () => {
     const wide = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(messagesBody(), "utf16le")]);
     await expect(p.process(req(wide))).rejects.toThrow();
     expect(() => p.redactOnly?.(req(wide))).toThrow();
+  });
+});
+
+describe("DUSTSEC.21 (5) request body size limit", () => {
+  const big = () => JSON.stringify({ pad: "a".repeat(200_000) });
+
+  it("a body whose content-length exceeds the limit gets 413 and nothing is forwarded", async () => {
+    const r = await send(
+      await build(),
+      "/v1/messages",
+      { headers: jsonHeaders, body: big() },
+      { maxRequestBodyBytes: 100_000 },
+    );
+    expectRefusedNothingForwarded(r, 413);
+  });
+
+  it("a chunked body that grows past the limit gets 413 and nothing is forwarded", async () => {
+    async function* chunks() {
+      for (let i = 0; i < 20; i += 1) yield Buffer.from("a".repeat(10_000));
+    }
+    const got = { hits: 0 };
+    const upstream = await startUpstream((_req, res) => {
+      got.hits += 1;
+      res.end("{}");
+    });
+    const proxy = await startProxy({
+      upstreamBaseUrl: upstream.origin,
+      pipeline: await build(),
+      maxRequestBodyBytes: 50_000,
+    });
+    try {
+      const res = await rawRequest(proxy.origin, "/v1/other", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: Readable.from(chunks()) as unknown as Buffer,
+      });
+      expect(res.status).toBe(413);
+      expect(got.hits).toBe(0);
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  });
+
+  it("a body at the limit is accepted", async () => {
+    const body = messagesBody();
+    const r = await send(
+      await build(),
+      "/v1/messages",
+      { headers: jsonHeaders, body },
+      { maxRequestBodyBytes: Buffer.byteLength(body) },
+    );
+    expectCleanForward(r);
+  });
+
+  it("the default limit is 64 MiB", async () => {
+    const { resolveProxyConfig } = await import("../../src/proxy/types.js");
+    expect(resolveProxyConfig().maxRequestBodyBytes).toBe(64 * 1024 * 1024);
+  });
+
+  it("the setting is schema-validated and positive", async () => {
+    const { DEFAULT_SETTINGS } = await import("../../src/config/schema.js");
+    expect(DEFAULT_SETTINGS.proxy.max_request_body_bytes).toBe(64 * 1024 * 1024);
   });
 });
