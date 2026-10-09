@@ -1,7 +1,7 @@
 ---
 task: session-dropframe-seq-and-hostlog
 title: "Session contract and host log: the dropped-subscriber frame carries no seq (amend the frozen contract and the chat client), and the host log rotates by rename"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "(1) The synthetic ended frame sent when a subscriber is dropped for backp
 depends_on: []
 touches: [src/session/transport.ts, src/session/host-log.ts, src/interfaces/session-events.ts, src/session/chat-page.ts, tests]
 created: 2026-10-08
+updated: 2026-10-09T12:54:09.022Z
 ---
 
 ## DECIDED (USER, 2026-10-09)
@@ -29,3 +30,7 @@ Two decisions that the Phase 3 reviews showed cannot be made as a bug fix. Recor
 ## Out of scope
 
 - Changing either behaviour before the decision.
+
+## Outcome
+
+shipped in #282-#287; independently reviewed

@@ -1,7 +1,7 @@
 ---
 task: remove-slider-prompt
 title: "Remove the retired slider prompt from the frozen MCP prompt set and amend the contract (USER decision M2)"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "The slider prompt is no longer registered by the MCP server or listed any
 depends_on: []
 touches: [src/mcp, src/interfaces, src/cli/skills, docs/wiki, docs/golem-spec.md, tests]
 created: 2026-10-09
+updated: 2026-10-09T12:54:07.422Z
 ---
 
 ## What this is
@@ -19,3 +20,7 @@ The recommendation was to keep the prompt name as a rewritten pointer so the fro
 ## Out of scope
 
 - Any other prompt in the set.
+
+## Outcome
+
+shipped (PR merged with CI gate green; not independently reviewed, not a hard-rule change)

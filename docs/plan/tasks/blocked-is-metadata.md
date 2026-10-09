@@ -1,7 +1,7 @@
 ---
 task: blocked-is-metadata
 title: "A task's blocked is metadata, not a state: fix the README and TASK_STATES (USER decision H2)"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "docs/plan/tasks/README.md and the Plan Tasks wiki page say blocked is a f
 depends_on: []
 touches: [src/tasks, docs/plan/tasks/README.md, docs/wiki/concepts/Plan Tasks.md, tests]
 created: 2026-10-09
+updated: 2026-10-09T12:54:06.369Z
 ---
 
 ## What this is
@@ -19,3 +20,7 @@ A docs-versus-code mismatch decided in favour of how every task doc is actually 
 ## Out of scope
 
 - The review gate and the escalate state.
+
+## Outcome
+
+shipped (PR merged with CI gate green; not independently reviewed, not a hard-rule change)

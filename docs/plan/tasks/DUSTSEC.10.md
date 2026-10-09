@@ -1,14 +1,16 @@
 ---
 task: DUSTSEC.10
 title: "Restore asking the human at PermissionRequest: remove the unconditional R12.12 hard deny (USER decision 2026-10-09)"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
 design: "docs/plan/audit/dust-1/DECISIONS.md R8 (USER, 2026-10-08); SUMMARY.md contradiction R8; ADR-0002; R12.12, R12.13; src/hooks/permission-request.ts header"
 gate: "With the hard deny removed, a destructive or outward call reaches Claude Code's own permission dialog (the hook returns no decision for those classes); `allow` is still NEVER emitted for them (ADR-0002 invariant 5); the other classes behave as before; a regression test fails on the current code (it denies) and passes after; ADR-0002 is amended with a dated note recording the restored behaviour and the open R12.13 question (does a connected channel relay now get notified when the dialog opens: unconfirmed); golem verify exit 0; an independent read-only review before merge, because this is the autonomy gate."
+depends_on: []
 touches: [src/hooks/permission-request.ts, src/autonomy/gate.ts, src/autonomy/index.ts, docs/plan/verification-notes.md, tests]
 created: 2026-10-08
+updated: 2026-10-09T12:54:08.484Z
 ---
 
 ## DECIDED (USER, 2026-10-09)
@@ -64,3 +66,7 @@ hook; R12.13 (does the deny pre-empt the relay) is still unconfirmed, so record 
 ## Verification bar
 
 `golem verify` green by exit code. Commit early on your own branch.
+
+## Outcome
+
+shipped in #282-#287; independently reviewed

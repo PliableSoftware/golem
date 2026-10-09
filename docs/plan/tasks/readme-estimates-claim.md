@@ -1,7 +1,7 @@
 ---
 task: readme-estimates-claim
 title: "Reword the README claim 'real billed-token telemetry, not estimates': savings are estimates (USER decision)"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: write
@@ -10,6 +10,7 @@ gate: "README.md says what is true, with each number's source: savings and token
 depends_on: []
 touches: [README.md, docs/golem-spec.md, docs/wiki/concepts, tests]
 created: 2026-10-09
+updated: 2026-10-09T12:54:06.897Z
 ---
 
 ## What this is
@@ -19,3 +20,7 @@ A false marketing claim in the README that the ledger caught. Read `src/cli/stat
 ## Out of scope
 
 - Changing the telemetry so savings become billed figures.
+
+## Outcome
+
+shipped (PR merged with CI gate green; not independently reviewed, not a hard-rule change)

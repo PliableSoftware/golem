@@ -1,7 +1,7 @@
 ---
 task: team-layer-everywhere
 title: "Apply the team layer on every surface that reads settings, through one loader (USER decision G3)"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Every code path that reads effective settings gets the team layer through
 depends_on: []
 touches: [src/config, src/portal/team-layer.ts, src/hooks, src/mcp, src/tui, src/cli, vscode-extension, tests]
 created: 2026-10-09
+updated: 2026-10-09T12:54:09.561Z
 ---
 
 ## What this is
@@ -175,3 +176,7 @@ Not matched by the grep because they hand the loader's result on or wrap it: `sr
 - `team.applied` is reconciled against what the loader resolved: refused, overridden (by the winning member layer) and unknown rows move to `skipped`.
 - `knowledge.repo_map_enabled` and `knowledge.syntax_aware_chunking` are false-only.
 - Policy refusals are omitted from the portal's `unknown_keys` (the portal contract in `team-settings-layer.md` defines only that field); `golem team sync` marks member-relative rows `[pending]`.
+
+## Outcome
+
+shipped in #282-#287; independently reviewed
