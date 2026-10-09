@@ -30,7 +30,7 @@
  */
 
 import path from "node:path";
-import { loadConfig } from "../config/loader.js";
+import { loadEffectiveConfig } from "../config/effective.js";
 
 /** Which of Claude Code's two project-scope settings files Golem writes. */
 export type ClaudeSettingsScope = "local" | "project";
@@ -86,7 +86,7 @@ export function claudeSettingsReadOrder(projectDir: string): readonly string[] {
  */
 export async function resolveClaudeSettingsScope(projectDir: string): Promise<ClaudeSettingsScope> {
   try {
-    const { settings } = await loadConfig({ projectDir });
+    const { settings } = await loadEffectiveConfig({ projectDir });
     return settings.claude.settings_scope;
   } catch {
     return DEFAULT_CLAUDE_SETTINGS_SCOPE;

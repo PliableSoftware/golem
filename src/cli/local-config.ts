@@ -20,7 +20,7 @@
  * is bounded and never throws, so `status` works offline.
  */
 
-import { loadConfig, type SettingsScope, writeSetting } from "../config/index.js";
+import { loadEffectiveConfig, type SettingsScope, writeSetting } from "../config/index.js";
 import {
   chatModelFor,
   createProbeRunner,
@@ -128,7 +128,7 @@ async function detectTierAndModel(): Promise<{ tier: HardwareTier; coderModel: s
 
 /** Read the current local-model configuration + live reachability. Never throws. */
 export async function collectLocalModel(opts: LocalModelOptions): Promise<LocalModelReport> {
-  const { settings, provenance } = await loadConfig({
+  const { settings, provenance } = await loadEffectiveConfig({
     projectDir: opts.projectDir,
     ...(opts.userDir !== undefined ? { userDir: opts.userDir } : {}),
   });
@@ -198,7 +198,7 @@ export async function setLocalCoderEnabled(
   // This writes personas.coder.model; a live worker_targets.coder still outranks it.
   // Enable means clear the model (falls through to model); disable means
   // set a model that will never resolve.
-  const { settings } = await loadConfig({ projectDir: opts.projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir: opts.projectDir });
   const personas = { ...settings.inference.personas };
   const coderPersona = { ...(personas.coder ?? {}) };
   if (enabled) {

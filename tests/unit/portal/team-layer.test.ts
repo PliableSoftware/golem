@@ -20,11 +20,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { loadConfig, REMOTE_DENIED_SETTINGS } from "../../../src/config/index.js";
+import {
+  loadConfig,
+  loadEffectiveConfig,
+  REMOTE_DENIED_SETTINGS,
+} from "../../../src/config/index.js";
 import {
   fetchTeamSettings,
   listTeamLayerCaches,
-  loadConfigWithTeamLayer,
   type PortalClient,
   readTeamLayerCache,
   resolveTeamLayer,
@@ -95,7 +98,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 /** The payload used wherever the test needs a *real fetched* team layer. */
 const WIRE_PAYLOAD = {
   settings: [
-    { key: "security.join_injection", value: true, enforced: true },
+    { key: "snooze.enforce", value: true, enforced: true },
     { key: "telemetry.enabled", value: false, enforced: false },
   ],
   schema_version: "v0.9.2",
@@ -106,16 +109,16 @@ const WIRE_PAYLOAD = {
 describe("translateTeamRows — enforced: true means !important", () => {
   it('puts an enforced key in the top-level "!important" list and a plain key in neither', () => {
     const translated = translateTeamRows([
-      row("security.join_injection", true, true),
+      row("snooze.enforce", true, true),
       row("telemetry.enabled", false),
     ]);
 
     expect(translated.settings).toEqual({
-      security: { join_injection: true },
+      snooze: { enforce: true },
       telemetry: { enabled: false },
-      "!important": ["security.join_injection"],
+      "!important": ["snooze.enforce"],
     });
-    expect(translated.applied).toEqual(["security.join_injection (enforced)", "telemetry.enabled"]);
+    expect(translated.applied).toEqual(["snooze.enforce (enforced)", "telemetry.enabled"]);
     expect(translated.skipped).toEqual([]);
   });
 
@@ -237,7 +240,7 @@ describe("cache age is reported PER TEAM (Decision 63(c))", () => {
     await writeTeamLayerCache(userDir, {
       org_id: ORG,
       fetched_at: new Date(now - 90 * 60_000).toISOString(), // 1h30 ago
-      settings: [row("telemetry.enabled", false), row("security.join_injection", true, true)],
+      settings: [row("telemetry.enabled", false), row("snooze.enforce", true, true)],
     });
     await writeTeamLayerCache(userDir, {
       org_id: OTHER_ORG,
@@ -517,6 +520,39 @@ describe("syncTeamLayer — offline is first-class, and different from unentitle
     expect(result.skipped.map((s) => s.key)).toEqual(["quantum.entangle"]);
   });
 
+  it("does not report a policy refusal to the portal as an unknown key, and marks member-relative rows pending", async () => {
+    const userDir = await newTempDir();
+    const { client, request } = fakeClient((_p, init) => {
+      if (init?.method === "POST") return jsonResponse({ recorded: true });
+      return jsonResponse({
+        settings: [
+          { key: "quantum.entangle", value: 1 }, // genuinely unknown to this client
+          { key: "proxy.gateways", value: {}, enforced: true }, // known, REFUSED by policy
+          { key: "security.device_cert_days", value: 30, enforced: true }, // judged at load
+          { key: "ui.pet", value: false, enforced: false },
+        ],
+      });
+    });
+    const result = await syncTeamLayer({ binding: binding(), userDir, client, report: true });
+
+    const post = request.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "POST",
+    );
+    const body = JSON.parse(String((post?.[1] as RequestInit).body)) as { unknown_keys: string[] };
+    // The portal contract only defines unknown_keys, so refusals are omitted
+    // rather than mislabelled as "this client is too old".
+    expect(body.unknown_keys).toEqual(["quantum.entangle"]);
+    expect(Object.keys(body).sort()).toEqual(["golem_version", "schema_version", "unknown_keys"]);
+
+    // The local report still lists the refusal, as REFUSED, never as applied.
+    expect(result.skipped.find((s) => s.key === "proxy.gateways")?.reason).toMatch(/^REFUSED/);
+    expect(result.applied.some((a) => a.startsWith("proxy.gateways"))).toBe(false);
+    // A member-relative row is claimed only as pending, not as applied.
+    const rel = result.applied.find((a) => a.startsWith("security.device_cert_days"));
+    expect(rel).toContain("[pending");
+    expect(result.applied).toContain("ui.pet");
+  });
+
   it("still applies the fetched layer when the cache cannot be written", async () => {
     // A `userDir` whose `teams` path is a FILE makes mkdir fail. The layer just
     // fetched is still valid; only the offline fallback is lost.
@@ -619,8 +655,8 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     expect(provenance["telemetry.enabled"]?.source).toContain(ORG);
 
     // `enforced: true` arrived as an "!important" declaration.
-    expect(provenance["security.join_injection"]?.layer).toBe("team");
-    expect(provenance["security.join_injection"]?.important).toBe(true);
+    expect(provenance["snooze.enforce"]?.layer).toBe("team");
+    expect(provenance["snooze.enforce"]?.important).toBe(true);
   });
 
   it("an enforced team key beats the PROJECT file, while a plain one loses to it", async () => {
@@ -632,7 +668,7 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     await mkdir(path.join(projectDir, ".golem"), { recursive: true });
     await writeFile(
       path.join(projectDir, ".golem", "settings.json"),
-      JSON.stringify({ telemetry: { enabled: true }, security: { join_injection: false } }),
+      JSON.stringify({ telemetry: { enabled: true }, snooze: { enforce: false } }),
       "utf8",
     );
 
@@ -649,11 +685,11 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     expect(settings.telemetry.enabled).toBe(true);
     expect(provenance["telemetry.enabled"]?.layer).toBe("project");
     // Enforced team key: policy, applied after every file layer.
-    expect(settings.security.join_injection).toBe(true);
-    expect(provenance["security.join_injection"]?.layer).toBe("team");
+    expect(settings.snooze.enforce).toBe(true);
+    expect(provenance["snooze.enforce"]?.layer).toBe("team");
   });
 
-  it("loadConfigWithTeamLayer populates the slot from the cache, end to end", async () => {
+  it("loadEffectiveConfig populates the slot from the cache, end to end", async () => {
     const userDir = await newTempDir();
     const projectDir = await newTempDir();
     await mkdir(path.join(projectDir, ".golem"), { recursive: true });
@@ -666,12 +702,12 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     const { client } = fakeClient(() => jsonResponse(WIRE_PAYLOAD));
     await syncTeamLayer({ binding: binding(), userDir, client });
 
-    const config = await loadConfigWithTeamLayer({ projectDir, userDir, env: {} });
+    const config = await loadEffectiveConfig({ projectDir, userDir, env: {} });
     expect(config.team.teamLayer).toBeDefined();
     expect(config.team.fromCache).toBe(true);
     expect(config.settings.telemetry.enabled).toBe(false);
     expect(config.provenance["telemetry.enabled"]?.layer).toBe("team");
-    expect(config.provenance["security.join_injection"]?.important).toBe(true);
+    expect(config.provenance["snooze.enforce"]?.important).toBe(true);
   });
 });
 
@@ -819,7 +855,7 @@ describe("Decision 64 — no link, no team code path", () => {
       settings: [{ key: "telemetry.enabled", value: false, enforced: true }],
     });
 
-    const config = await loadConfigWithTeamLayer({ projectDir, userDir, env: {} });
+    const config = await loadEffectiveConfig({ projectDir, userDir, env: {} });
 
     expect(config.team.teamLayer).toBeUndefined();
     expect(config.provenance["telemetry.enabled"]?.layer).toBe("default");
@@ -838,7 +874,7 @@ describe("Decision 64 — no link, no team code path", () => {
       settings: [{ key: "telemetry.enabled", value: false, enforced: false }],
     });
 
-    const withTeam = await loadConfigWithTeamLayer({ projectDir, userDir, env: {} });
+    const withTeam = await loadEffectiveConfig({ projectDir, userDir, env: {} });
     const plain = await loadConfig({ projectDir, userDir, env: {} });
 
     expect(withTeam.settings).toEqual(plain.settings);

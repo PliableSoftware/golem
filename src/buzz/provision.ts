@@ -24,7 +24,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import { createCredentialStore } from "../credentials/index.js";
 import { effectivePersonas, type PersonaConfig } from "../inference/personas.js";
 import {
@@ -170,7 +170,7 @@ function accountFor(projectDir: string, personaId: string): string {
  * manifest's bytes cannot move.
  */
 export async function provisionBuzz(opts: ProvisionOptions): Promise<ProvisionResult> {
-  const { settings } = await loadConfig({
+  const { settings } = await loadEffectiveConfig({
     projectDir: opts.projectDir,
     ...(opts.userDir !== undefined ? { userDir: opts.userDir } : {}),
   });

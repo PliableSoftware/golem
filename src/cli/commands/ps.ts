@@ -22,7 +22,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { forgetHostSession, listHostSessions } from "../../session/host-registry.js";
 import { InitError } from "../init.js";
 import { isProcessAlive, readProxyPid, removeProxyPid } from "../proxy-daemon.js";
@@ -797,7 +797,7 @@ export default function register(program: Command): void {
       }) => {
         try {
           const projectDir = opts.dir;
-          const { settings } = await loadConfig({ projectDir });
+          const { settings } = await loadEffectiveConfig({ projectDir });
           const idleTimeoutMs =
             parseInt(opts.idleTimeoutMs, 10) > 0
               ? parseInt(opts.idleTimeoutMs, 10)

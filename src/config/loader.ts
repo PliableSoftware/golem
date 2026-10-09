@@ -76,6 +76,7 @@ import {
   SECTION_NAMES,
   SETTINGS_LEAVES,
 } from "./schema.js";
+import { relativeRefusal, staticRefusal, teamValueForWarning } from "./team-policy.js";
 
 /** Which layer supplied a value. See {@link ORIGIN_ORDER} for the ranking. */
 export type LayerName = "default" | "user" | "team" | "project" | "local" | "env" | "override";
@@ -141,16 +142,7 @@ export const ORIGIN_ORDER: readonly LayerName[] = [
  * CLAUDE.md governs — importance is a dial, and no dial value disables
  * redaction.
  */
-export const REMOTE_DENIED_SETTINGS: ReadonlySet<string> = new Set([
-  "proxy.bypass_all",
-  "portal.url",
-  "portal.issuer",
-  "portal.client_id",
-  "team.org_id",
-  "team.portal_url",
-  "team.sync",
-  "team.skills",
-]);
+export { REMOTE_DENIED_SETTINGS, REMOTE_FALSE_ONLY_SETTINGS } from "./team-policy.js";
 
 /** The `"!important"` declaration list, top-level and sibling to the sections. */
 const IMPORTANT_KEY = "!important";
@@ -222,6 +214,10 @@ export interface GolemConfig {
   readonly files: SettingsFilePaths;
   /** Non-fatal issues: unknown keys/sections, unrecognized GOLEM_* vars. */
   readonly warnings: readonly string[];
+  /** Dotted keys a REMOTE origin sent that the team policy refused (they did not apply). */
+  readonly refused: readonly string[];
+  /** True when a supplied team layer was SKIPPED whole (an invalid value): team policy is not in force. */
+  readonly teamSkipped: boolean;
 }
 
 type MutableTree = Record<string, Record<string, unknown>>;
@@ -242,6 +238,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
   }
 
   const warnings: string[] = [];
+  const refused: string[] = [];
+  let teamSkipped = false;
 
   // Every object-shaped origin is read and parsed ONCE. Both bands resolve over
   // the same parsed declarations, so the second pass costs no file I/O.
@@ -261,6 +259,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     const { settings: raw, source } = options.teamLayer;
     const teamOrigin = buildTeamOrigin(raw, source, tree, provenance, warnings);
     if (teamOrigin !== undefined) origins.set("team", teamOrigin);
+    else teamSkipped = true;
   }
   if (options.overrides !== undefined) {
     origins.set(
@@ -296,7 +295,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     }
     const origin = origins.get(layer);
     if (origin !== undefined) {
-      applyObjectLayer(tree, provenance, warnings, origin, "normal");
+      applyObjectLayer(tree, provenance, warnings, origin, "normal", refused);
     }
   }
 
@@ -306,7 +305,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
   for (const layer of [...ORIGIN_ORDER].reverse()) {
     const origin = origins.get(layer);
     if (origin !== undefined && origin.important.size > 0) {
-      applyObjectLayer(tree, provenance, warnings, origin, "important");
+      applyObjectLayer(tree, provenance, warnings, origin, "important", refused);
     }
   }
 
@@ -316,6 +315,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     provenance: provenance as Provenance,
     files,
     warnings,
+    refused,
+    teamSkipped,
   });
 }
 
@@ -352,8 +353,8 @@ function buildTeamOrigin(
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
     warnings.push(
-      "team layer SKIPPED: nothing from it applies, and the proxy still starts " +
-        `(ADR-0008). ${err.message}`,
+      "team layer SKIPPED: team policy is NOT in force on this machine (nothing from it " +
+        `applies), and the proxy still starts (ADR-0008). ${err.message}`,
     );
     return undefined;
   }
@@ -570,13 +571,14 @@ function applyObjectLayer(
   warnings: string[],
   origin: ObjectLayer,
   band: Band,
+  refused?: string[],
 ): void {
   const { layer, raw, sourceFile, label, important, remote } = origin;
   for (const [sectionName, sectionValue] of Object.entries(raw)) {
     if (sectionName === IMPORTANT_KEY) {
       continue; // the declaration list, already split out by buildObjectLayer
     }
-    if (!(sectionName in SETTINGS_LEAVES)) {
+    if (!Object.hasOwn(SETTINGS_LEAVES, sectionName)) {
       if (band === "normal") {
         warnings.push(`${label}: unknown settings section "${sectionName}" ignored`);
       }
@@ -594,8 +596,14 @@ function applyObjectLayer(
       // A declaration resolves in exactly one band; the other pass skips it
       // before doing any work, so nothing below can run or warn twice.
       if (important.has(dotted) !== (band === "important")) continue;
-      if (remote && REMOTE_DENIED_SETTINGS.has(dotted)) {
-        warnings.push(remoteRefusalWarning(label, dotted));
+      // Only the STATIC half of the team policy runs before validation. The
+      // member-relative half runs AFTER Zod below, so a value that would throw is
+      // judged identically by the dry run (which has no member values yet) and by
+      // the real pass: a relative refusal must never hide an invalid value.
+      const refusal = remote ? staticRefusal(dotted, value) : undefined;
+      if (refusal !== undefined) {
+        warnings.push(remoteRefusalWarning(label, dotted, refusal, value));
+        refused?.push(dotted);
         continue;
       }
       let leaf = leafSchema(sectionName, key);
@@ -651,8 +659,11 @@ function applyObjectLayer(
         if (leaf === undefined) continue; // guarded by assertLeafRename's test
         // Checked again on the RESOLVED key: a rename must not be a way for a
         // remote to reach a denied leaf under its old, undenied spelling.
-        if (remote && REMOTE_DENIED_SETTINGS.has(`${targetSection}.${targetKey}`)) {
-          warnings.push(remoteRefusalWarning(label, `${targetSection}.${targetKey}`));
+        const resolved = `${targetSection}.${targetKey}`;
+        const resolvedRefusal = remote ? staticRefusal(resolved, value) : undefined;
+        if (resolvedRefusal !== undefined) {
+          warnings.push(remoteRefusalWarning(label, resolved, resolvedRefusal, value));
+          refused?.push(resolved);
           continue;
         }
       }
@@ -662,11 +673,32 @@ function applyObjectLayer(
       }
       const parsed = leaf.safeParse(value);
       if (!parsed.success) {
+        // A REMOTE origin's value is never echoed: Zod's messages quote what it
+        // received ("received 'sk-...'"), and this text travels to status, the TUI,
+        // the MCP stderr and the proxy log. Key only.
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        throw new ConfigError(`${label}: invalid value for "${dotted}": ${issues}`, {
-          key: dotted,
-          ...(sourceFile !== undefined && { source: sourceFile }),
-        });
+        throw new ConfigError(
+          remote
+            ? `${label}: invalid value for "${dotted}" (the value is not shown)`
+            : `${label}: invalid value for "${dotted}": ${issues}`,
+          {
+            key: dotted,
+            ...(sourceFile !== undefined && { source: sourceFile }),
+          },
+        );
+      }
+      if (remote) {
+        const resolvedKey = `${targetSection}.${targetKey}`;
+        const relative = relativeRefusal(
+          resolvedKey,
+          parsed.data,
+          tree[targetSection]?.[targetKey],
+        );
+        if (relative !== undefined) {
+          warnings.push(remoteRefusalWarning(label, resolvedKey, relative, value));
+          refused?.push(resolvedKey);
+          continue;
+        }
       }
       const section = tree[targetSection];
       if (section !== undefined) {
@@ -696,10 +728,19 @@ function applyObjectLayer(
  * The one wording for a refused remote key. Loud on purpose: a floor that
  * sanitises quietly leaves an admin believing they set something they did not.
  */
-function remoteRefusalWarning(label: string, dotted: string): string {
+function remoteRefusalWarning(
+  label: string,
+  dotted: string,
+  reason: string,
+  value: unknown,
+): string {
+  // The value is printed ONLY for keys where it is a harmless boolean, number or
+  // level. For anything else it can be a URL with a password or an API key, and
+  // this line travels to status, the TUI, the MCP stderr and the proxy log.
+  const shown = teamValueForWarning(dotted, value);
   return (
-    `${label}: REFUSED "${dotted}" — a remote origin may never set it, at any ` +
-    `importance (ADR-0008 floor). The value was DROPPED, not applied.`
+    `${label}: REFUSED "${dotted}"${shown === undefined ? "" : ` (team value ${shown})`} — ${reason}. ` +
+    "The value was DROPPED, not applied (teams may tighten, never loosen)."
   );
 }
 

@@ -16,7 +16,7 @@ import http from "node:http";
 import path from "node:path";
 import { resolveEffectiveCompression } from "../compression/effective-level.js";
 import { unreachableHeadroomConfigKeys } from "../compression/headroom-adapter.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/effective.js";
 import { defaultUserDir } from "../config/paths.js";
 // Narrow specifiers, not the `../hooks/index.js` barrel (~446ms — it pulls every
 // hook handler) for two small file reads.
@@ -24,7 +24,7 @@ import { readSessionState, resolveBlock } from "../hooks/session-state.js";
 import { STALE_AFTER_MS } from "../hooks/snooze-nudge.js";
 import { selectTarget } from "../inference/target-dispatcher.js";
 import { declaredWorkers, unknownWorkerWarnings } from "../inference/workers.js";
-import { listTeamLayerCaches, loadConfigWithTeamLayer } from "../portal/team-layer.js";
+import { listTeamLayerCaches } from "../portal/team-layer.js";
 import {
   listTargets,
   resolveDefaultTargetId,
@@ -137,12 +137,12 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
   const projectDir = path.resolve(options.projectDir);
   // `team-layer-fetch`: the team origin, POPULATED. Cache-only and unable to
   // fail, so status keeps working offline — and an unlinked project resolves
-  // byte-identically to a plain `loadConfig` (asserted in
+  // byte-identically to a plain `loadEffectiveConfig` (asserted in
   // tests/unit/portal/team-layer.test.ts). Without this, `golem status` would
   // report the effective config of a project WITHOUT its team policy, which is
   // the "believing you are under team policy when you are not" hazard pointed
   // the other way.
-  const { settings, provenance, warnings } = await loadConfigWithTeamLayer({
+  const { settings, provenance, warnings } = await loadEffectiveConfig({
     projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),
@@ -501,7 +501,7 @@ async function collectDeviceStatus(projectDir: string): Promise<StatusReport["de
     } = await import("../security/index.js");
     const ca = await readDeviceCa(projectDir);
     if (ca === null) return undefined;
-    const { settings } = await loadConfig({ projectDir });
+    const { settings } = await loadEffectiveConfig({ projectDir });
     const [active, all, passcodeSet, factor, pending] = await Promise.all([
       activeDeviceCount(projectDir),
       listDevices(projectDir),

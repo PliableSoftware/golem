@@ -20,7 +20,7 @@
  * config loader — never on `./init.js` or the hooks barrel.
  */
 
-import { type LayerName, loadConfig, writeSetting } from "../config/index.js";
+import { type LayerName, loadEffectiveConfig, writeSetting } from "../config/index.js";
 import {
   type BrevityLevel,
   coerceCompressionLevel,
@@ -74,7 +74,7 @@ export interface DialReadOptions {
 }
 
 export async function getDialInfo(kind: DialKind, options: DialReadOptions): Promise<DialInfo> {
-  const { settings, provenance } = await loadConfig({
+  const { settings, provenance } = await loadEffectiveConfig({
     projectDir: options.projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),

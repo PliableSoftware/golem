@@ -5,7 +5,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   markReviewed,
   readDelegationLedger,
@@ -56,7 +56,7 @@ function _fail(err: unknown): never {
 
 async function _buildInferenceForDir(dir: string) {
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const client = new OllamaClient({
       baseUrl: settings.inference.ollama_base_url,
       requestTimeoutMs: settings.inference.request_timeout_ms,

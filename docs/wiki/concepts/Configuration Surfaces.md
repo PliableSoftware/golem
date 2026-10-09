@@ -234,14 +234,12 @@ code) documents `project` as the shipped panel default. Flagged rather than sett
 a panel edit lands in the committed `.golem/settings.json`, where a CLI edit lands in
 the gitignored local file.
 
-**Team policy is not shown here.** `golem config list/get/set` (and so the panel, which
-routes through the same writers) read settings with plain `loadConfig`
-(`src/cli/config.ts:60,89`), which never populates the `team` origin. Only the proxy
-foreground and `golem status` use `loadConfigWithTeamLayer` (see [[Team Layer]]), so
-`team` values and `team!` locks do not render on this surface. Whether they should is
-open (Phase 1 contradiction G3); this page does not decide it. UNVERIFIED: that the
-VS Code webview and `config schema --json` take the same plain-`loadConfig` path
-(inferred from `src/cli/commands/config.ts:81,266` delegating to the same module).
+**Team policy IS shown here** (USER decision G3, `team-layer-everywhere`). `golem config
+list/get`, the TUI panel and `config schema` read settings through `loadEffectiveConfig`
+(`src/config/effective.ts`), the one loader that includes the `team` origin (see [[Team Layer]]),
+so `team` values and `team!` locks render with `team` provenance. `config set/unset` still
+writes ONE local scope file (`src/config/write-setting.ts`): it never edits the merged view.
+The VS Code extension reads nothing itself; it shells out to the CLI, so it inherits this.
 
 ### VS Code
 

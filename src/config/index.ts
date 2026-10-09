@@ -32,6 +32,8 @@ import type { GolemSettings } from "./schema.js";
 // Code tool call. Measured: this barrel went from ~130ms to ~530ms to import.
 // Consumers import it directly from "../config/control-surface.js" instead.
 
+export type { EffectiveConfig, LoadEffectiveConfigOptions } from "./effective.js";
+export { loadEffectiveConfig } from "./effective.js";
 export type { EnvLayer, EnvOverride } from "./env.js";
 export { coerceEnvValue, ENV_PREFIX, readEnvLayer } from "./env.js";
 export { ConfigError } from "./errors.js";
@@ -43,6 +45,8 @@ export type {
   ProvenanceEntry,
   SettingsOverrides,
 } from "./loader.js";
+// `loadConfig` is the RAW cascade (no team layer). Production code must use
+// `loadEffectiveConfig`; tests/unit/config/loader-entry-point.test.ts enforces it.
 export { loadConfig, ORIGIN_ORDER, REMOTE_DENIED_SETTINGS } from "./loader.js";
 export type {
   MigrationSweep,

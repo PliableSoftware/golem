@@ -13,7 +13,7 @@
  * story.
  */
 
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import {
   type CapabilityFacts,
   createProbeRunner,
@@ -60,7 +60,7 @@ export async function collectDevices(opts: DeviceOptions): Promise<DeviceReport>
   const endpoint =
     opts.endpoint ??
     (
-      await loadConfig({
+      await loadEffectiveConfig({
         projectDir: opts.projectDir,
         ...(opts.userDir !== undefined ? { userDir: opts.userDir } : {}),
       })

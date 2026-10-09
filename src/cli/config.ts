@@ -10,7 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { ConfigError } from "../config/errors.js";
-import { loadConfig, type SettingsScope, writeSetting } from "../config/index.js";
+import { loadEffectiveConfig, type SettingsScope, writeSetting } from "../config/index.js";
 import { migrationFrom, type SettingMigration } from "../config/migrations.js";
 import { allLeafPaths, leafSchema } from "../config/schema.js";
 import { unwrapSchema } from "../config/ui-model.js";
@@ -33,6 +33,8 @@ export interface ConfigEntry {
 
 export interface ConfigListReport {
   readonly entries: readonly ConfigEntry[];
+  /** Load warnings, including why a linked team's layer is not applied. */
+  readonly warnings?: readonly string[];
 }
 
 export interface ConfigGetReport {
@@ -42,6 +44,8 @@ export interface ConfigGetReport {
   readonly source?: string;
   /** ADR-0008: the winning declaration was `!important` at {@link layer}. */
   readonly important?: true;
+  /** Load warnings, including why a linked team's layer is not applied. */
+  readonly warnings?: readonly string[];
 }
 
 export interface ConfigWriteResult {
@@ -57,7 +61,7 @@ export interface ConfigWriteResult {
 
 /** List every known setting with its effective value and provenance. */
 export async function listConfig(options: ConfigReadOptions): Promise<ConfigListReport> {
-  const { settings, provenance } = await loadConfig({
+  const { settings, provenance, warnings } = await loadEffectiveConfig({
     projectDir: options.projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),
@@ -76,7 +80,7 @@ export async function listConfig(options: ConfigReadOptions): Promise<ConfigList
       ...(entry?.important === true && { important: true as const }),
     });
   }
-  return { entries };
+  return { entries, warnings };
 }
 
 /** Read one effective setting by dotted `section.key`. */
@@ -86,7 +90,7 @@ export async function getConfig(
 ): Promise<ConfigGetReport> {
   const key = resolveSettingKey(requestedKey).key;
   validateKnownKey(key);
-  const { settings, provenance } = await loadConfig({
+  const { settings, provenance, warnings } = await loadEffectiveConfig({
     projectDir: options.projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),
@@ -100,6 +104,7 @@ export async function getConfig(
     layer: entry?.layer ?? "default",
     ...(entry?.source !== undefined && { source: entry.source }),
     ...(entry?.important === true && { important: true as const }),
+    warnings,
   };
 }
 

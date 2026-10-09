@@ -17,7 +17,7 @@ import {
   reapOrphanedHeadroomWorkers,
   stopAllHeadroomWorkers,
 } from "../../compression/headroom-adapter.js";
-import { findProjectDir, loadConfig, migrateOnVersionChange } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig, migrateOnVersionChange } from "../../config/index.js";
 import { VERSION } from "../../index.js";
 import {
   createProbeRunner,
@@ -28,7 +28,6 @@ import {
 } from "../../inference/index.js";
 import type { InferenceService } from "../../interfaces/inference.js";
 import { initPlugins } from "../../plugins/index.js";
-import { loadConfigWithTeamLayer } from "../../portal/team-layer.js";
 import { resolveUpstreamDisplay } from "../../providers/index.js";
 import { ensureLoopbackCert } from "../../proxy/loopback-cert.js";
 import { startLoopbackServe } from "../../proxy/loopback-serve.js";
@@ -74,7 +73,7 @@ async function resolvePort(
   dir: string,
   portOpt?: string,
 ): Promise<{ port: number; upstream: string; compression: string }> {
-  const { settings } = await loadConfig({ projectDir: dir });
+  const { settings } = await loadEffectiveConfig({ projectDir: dir });
   const port = portOpt === undefined ? settings.proxy.port : Number(portOpt);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new InitError(`invalid port "${portOpt}"`);
@@ -203,15 +202,16 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
   // `team-layer-fetch`: the proxy runs under its project's TEAM policy, not just
   // its local files. Cache-only (no socket, no keychain) and unable to fail, so
   // this cannot stop the proxy starting — Decision 64(f) — and an unlinked
-  // project resolves byte-identically to a plain `loadConfig`. The team notice
+  // project resolves byte-identically to a plain `loadEffectiveConfig`. The team notice
   // is logged with the warnings because a proxy silently running WITHOUT the
   // team policy someone believes is in force is the hazard the whole design is
   // built around; the REFUSED lines for any denied key arrive in `warnings`.
-  const { settings, warnings, team } = await loadConfigWithTeamLayer({ projectDir: dir });
+  const { settings, warnings, team } = await loadEffectiveConfig({ projectDir: dir });
   for (const warning of warnings) {
     proxyLog(warning);
   }
-  if (team.notice !== undefined) {
+  // A notice for a team that is NOT applied is already in `warnings`.
+  if (team.teamLayer !== undefined && team.notice !== undefined) {
     proxyLog(`golem team: ${team.notice}`);
   }
   const { port } = await resolvePort(dir, portOpt);
@@ -483,7 +483,8 @@ export default function register(program: Command): void {
           process.stdout.write(
             `${JSON.stringify({
               ...st,
-              bypass_all: (await loadConfig({ projectDir: opts.dir })).settings.proxy.bypass_all,
+              bypass_all: (await loadEffectiveConfig({ projectDir: opts.dir })).settings.proxy
+                .bypass_all,
               upstream,
               wiring: wiring.owner,
               wiring_base_url: wiring.baseUrl,
@@ -513,7 +514,7 @@ export default function register(program: Command): void {
         process.stdout.write(
           `golem proxy: running (pid ${st.pid ?? "?"}) on port ${st.port ?? port} -> ${upstream}\n`,
         );
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         process.stdout.write(renderPipelineLine(settings.proxy.bypass_all));
         const gap = wiringGap(wiring, ourBaseUrl);
         if (gap !== null) {

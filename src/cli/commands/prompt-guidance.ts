@@ -5,7 +5,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   buildHookCommand,
   defaultRevalidate,
@@ -50,7 +50,7 @@ function _fail(err: unknown): never {
 
 async function _buildInferenceForDir(dir: string) {
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const client = new OllamaClient({
       baseUrl: settings.inference.ollama_base_url,
       requestTimeoutMs: settings.inference.request_timeout_ms,
@@ -318,14 +318,14 @@ export default function register(program: Command): void {
     revalidate: defaultRevalidate,
     revalidateEnabled: async (projectDir) => {
       try {
-        return (await loadConfig({ projectDir })).settings.knowledge.webcache_revalidate;
+        return (await loadEffectiveConfig({ projectDir })).settings.knowledge.webcache_revalidate;
       } catch {
         return false;
       }
     },
     skeletonEnabled: async (projectDir) => {
       try {
-        return (await loadConfig({ projectDir })).settings.knowledge.read_skeleton_enabled;
+        return (await loadEffectiveConfig({ projectDir })).settings.knowledge.read_skeleton_enabled;
       } catch {
         return true;
       }
@@ -333,7 +333,7 @@ export default function register(program: Command): void {
     fetchRaw: fetchRawPage,
     fetchRawEnabled: async (projectDir) => {
       try {
-        return (await loadConfig({ projectDir })).settings.knowledge.webcache_fetch_raw;
+        return (await loadEffectiveConfig({ projectDir })).settings.knowledge.webcache_fetch_raw;
       } catch {
         return true;
       }
@@ -352,7 +352,7 @@ export default function register(program: Command): void {
         } catch {
           /* no/!json payload */
         }
-        const { settings } = await loadConfig({ projectDir: cwd });
+        const { settings } = await loadEffectiveConfig({ projectDir: cwd });
         const port = settings.proxy.port;
         // R9.23: if the URL is in settings, the daemon should be alive.
         // If it's not, start it — unless the recorded desired state says otherwise (below).

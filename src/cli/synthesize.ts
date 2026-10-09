@@ -8,7 +8,7 @@
  * only ever writes a zone-1 `.golem/distill/` draft, never the wiki itself.
  */
 
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import {
   createProbeRunner,
   detectCapability,
@@ -54,7 +54,7 @@ export async function synthesizeWeeklyReport(
   const cutoffIso = new Date(new Date(nowIso).getTime() - days * 24 * 60 * 60 * 1000).toISOString();
   const cutoffDate = cutoffIso.slice(0, 10);
 
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const wikiDir = resolveWikiDir(projectDir, settings.knowledge.wiki_dir);
   const wiki = new FileWikiStore({ wikiDir });
   const pages = await wiki.listPages();

@@ -44,8 +44,8 @@ import type {
   ControlGroup,
   ControlSurfaceOptions,
 } from "./control-surface-types.js";
+import { loadEffectiveConfig } from "./effective.js";
 import { ConfigError } from "./errors.js";
-import { loadConfig } from "./loader.js";
 
 export interface ControlSurface {
   /**
@@ -92,7 +92,7 @@ export async function collectControlSurface(
     header,
     groups: [...settingsGroups, guidance, runtime].filter((g) => g.controls.length > 0),
     // Without a header, the load warnings come from the config read itself.
-    warnings: header?.warnings ?? (await loadConfig(shared)).warnings,
+    warnings: header?.warnings ?? (await loadEffectiveConfig(shared)).warnings,
   };
 }
 

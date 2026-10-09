@@ -6,7 +6,12 @@ import type { Command } from "commander";
 import { InvalidArgumentError } from "commander";
 import type { ControlSurface } from "../../config/control-surface.js";
 import { collectControlSurface } from "../../config/control-surface.js";
-import { findProjectDir, loadConfig, renderSweep, sweepSettingsFiles } from "../../config/index.js";
+import {
+  findProjectDir,
+  loadEffectiveConfig,
+  renderSweep,
+  sweepSettingsFiles,
+} from "../../config/index.js";
 import type { SettingsScope } from "../../config/write-setting.js";
 import { VERSION } from "../../index.js";
 import {
@@ -56,7 +61,7 @@ function isModelAffectingKey(key: string): boolean {
 async function restartProxyIfApplicable(dir: string, key: string, restart: boolean): Promise<void> {
   if (!restart || !isModelAffectingKey(key)) return;
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const status = await proxyStatus(dir, settings.proxy.port);
     if (!status.running || status.shim === true) return;
     const result = await restartProxyDetached(dir);
@@ -116,6 +121,8 @@ export default function register(program: Command): void {
     .action(async (opts: { dir: string; json: boolean }) => {
       try {
         const report = await listConfig({ projectDir: opts.dir });
+        if (!opts.json)
+          for (const w of report.warnings ?? []) process.stderr.write(`golem: ${w}\n`);
         process.stdout.write(
           opts.json ? `${JSON.stringify(report, null, 2)}\n` : renderConfigList(report),
         );
@@ -133,6 +140,8 @@ export default function register(program: Command): void {
     .action(async (key: string, opts: { dir: string; json: boolean }) => {
       try {
         const report = await getConfig(key, { projectDir: opts.dir });
+        if (!opts.json)
+          for (const w of report.warnings ?? []) process.stderr.write(`golem: ${w}\n`);
         process.stdout.write(
           opts.json ? `${JSON.stringify(report, null, 2)}\n` : renderConfigGet(report),
         );

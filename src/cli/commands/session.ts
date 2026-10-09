@@ -72,8 +72,8 @@ export default function register(program: Command): void {
       try {
         // Same commander `--dir` quirk documented on `forget` below.
         const dir = command.parent?.opts<{ dir: string }>().dir ?? opts.dir;
-        const { loadConfig } = await import("../../config/index.js");
-        const { settings } = await loadConfig({ projectDir: dir });
+        const { loadEffectiveConfig } = await import("../../config/index.js");
+        const { settings } = await loadEffectiveConfig({ projectDir: dir });
         const queue = new FileJoinQueue({ projectDir: dir });
         const [messages, conversations] = await Promise.all([
           queue.list(),

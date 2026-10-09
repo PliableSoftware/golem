@@ -16,7 +16,7 @@
  */
 
 import { HeadroomMemorySidecar } from "../compression/headroom-adapter.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import {
   type CapabilityFacts,
   createProbeRunner,
@@ -88,7 +88,7 @@ export async function ollamaHasModel(baseUrl: string, model: string): Promise<bo
  * embedder by probing Ollama. Never throws for Ollama being offline.
  */
 export async function buildKnowledgeStack(options: BuildKnowledgeOptions): Promise<KnowledgeStack> {
-  const { settings } = await loadConfig({ projectDir: options.projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir: options.projectDir });
   const baseUrl = options.ollamaBaseUrl ?? settings.inference.ollama_base_url;
 
   const client = new OllamaClient({

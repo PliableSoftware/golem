@@ -3,7 +3,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { LAN_HOST, startDashboard } from "../../dashboard/index.js";
 import { InitError } from "../init.js";
 import { statsSourceForCli } from "../mcp-compression.js";
@@ -96,7 +96,7 @@ export default function register(program: Command): void {
     )
     .action(async (opts: { dir: string; port?: string; lan?: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const port =
           opts.port === undefined ? settings.telemetry.dashboard_port : Number(opts.port);
         if (!Number.isInteger(port) || port < 0 || port > 65535)

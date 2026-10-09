@@ -12,7 +12,7 @@
 
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { defaultUserDir, loadConfig } from "../../config/index.js";
+import { defaultUserDir, loadEffectiveConfig } from "../../config/index.js";
 import type { ProxySettings } from "../../config/schema.js";
 import {
   type CredentialFault,
@@ -122,7 +122,7 @@ export async function collectGateways(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<GatewaysReport> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const selected = settings.inference.model ?? null;
   const gateways = settings.proxy.gateways ?? [];
   const defaultId = defaultGatewayId(settings.proxy.upstream_provider);

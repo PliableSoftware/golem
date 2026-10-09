@@ -65,7 +65,7 @@ export async function runTui(options: RunTuiOptions): Promise<RunTuiResult> {
 
   const [
     { applyControl, collectControlSurface, collectHeader },
-    { loadConfig },
+    { loadEffectiveConfig },
     { initialState, reducePanel },
     { renderPanel },
     { clearScreen, createScreen },
@@ -82,7 +82,7 @@ export async function runTui(options: RunTuiOptions): Promise<RunTuiResult> {
   ]);
 
   const [{ settings }, surface] = await Promise.all([
-    loadConfig({
+    loadEffectiveConfig({
       projectDir: options.projectDir,
       ...(options.userDir !== undefined && { userDir: options.userDir }),
       ...(options.env !== undefined && { env: options.env }),

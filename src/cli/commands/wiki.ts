@@ -3,7 +3,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { distillOne, pendingDrafts, renderPendingDrafts } from "../distill.js";
 import { InitError, type InitReport } from "../init.js";
 import {
@@ -67,7 +67,7 @@ export default function register(program: Command): void {
           ? defaultUserWikiDir()
           : resolveWikiDir(
               opts.dir,
-              (await loadConfig({ projectDir: opts.dir })).settings.knowledge.wiki_dir,
+              (await loadEffectiveConfig({ projectDir: opts.dir })).settings.knowledge.wiki_dir,
             );
         const report = await golemWikiInit({
           projectDir: opts.user ? wikiDir : opts.dir,
@@ -88,7 +88,7 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const wikiDir = resolveWikiDir(opts.dir, settings.knowledge.wiki_dir);
         const report = await checkWiki(wikiDir, { projectDir: opts.dir });
         printWikiCheckReport(report);
@@ -183,7 +183,7 @@ export default function register(program: Command): void {
         opts: { dir: string; list: boolean; yes: boolean; json: boolean },
       ) => {
         try {
-          const { settings } = await loadConfig({ projectDir: opts.dir });
+          const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
           const wikiDir = resolveWikiDir(opts.dir, settings.knowledge.wiki_dir);
           const nowIso = new Date().toISOString();
           if (id === undefined || opts.list) {

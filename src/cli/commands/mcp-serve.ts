@@ -4,7 +4,7 @@
 
 import type { Command } from "commander";
 import { resolveEffectiveCompression } from "../../compression/effective-level.js";
-import { findProjectDir, type GolemSettings, loadConfig } from "../../config/index.js";
+import { findProjectDir, type GolemSettings, loadEffectiveConfig } from "../../config/index.js";
 import { DEFAULT_KEY_ENV } from "../../credentials/backends.js";
 import { createClaudeCliDrafter } from "../../inference/claude-cli.js";
 import { coderRouteConflict, resolveCoderRoute } from "../../inference/coder-route.js";
@@ -165,6 +165,24 @@ export function closeKnowledgeWatchers(knowledge: KnowledgeBase | undefined): vo
   if (typeof closable?.closeWatchers === "function") closable.closeWatchers();
 }
 
+/**
+ * The settings the MCP server runs under: the effective config, team layer
+ * included (from its local cache; the server never reaches the network for it).
+ * One named seam so a test can prove the server sees team policy.
+ */
+export async function readMcpServeSettings(
+  projectDir: string,
+  userDir?: string,
+  onWarning?: (warning: string) => void,
+): Promise<GolemSettings> {
+  const { settings, warnings } = await loadEffectiveConfig({
+    projectDir,
+    ...(userDir !== undefined && { userDir }),
+  });
+  for (const warning of warnings) onWarning?.(warning);
+  return settings;
+}
+
 export default function register(program: Command): void {
   const mcp = program.command("mcp").description("Golem MCP server");
   mcp
@@ -173,7 +191,9 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory (for the CCR store)", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const settings = await readMcpServeSettings(opts.dir, undefined, (w) =>
+          process.stderr.write(`golem: ${w}\n`),
+        );
         let knowledge: KnowledgeBase | undefined;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled

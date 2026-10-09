@@ -20,7 +20,7 @@ import {
   readAutonomyGateEnabled,
   readAutonomyLevel,
 } from "../autonomy/index.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 // `../proxy/limit-prediction.js`, not the `../proxy/index.js` barrel: the barrel
 // reaches server.ts, which imports `undici` (~270ms). This hook runs on EVERY
 // Claude Code tool call and only reads a JSON file. See verification-notes §86.
@@ -66,9 +66,9 @@ import { toolArgument } from "./tool-argument.js";
  * false regardless: erroring into a session-wide hard block is worse than briefly
  * degrading to advisory, so a config-read failure never blocks every tool call.
  */
-async function readSnoozeEnforced(projectDir: string): Promise<boolean> {
+export async function readSnoozeEnforced(projectDir: string): Promise<boolean> {
   try {
-    const { settings } = await loadConfig({ projectDir });
+    const { settings } = await loadEffectiveConfig({ projectDir });
     return settings.snooze.enforce;
   } catch {
     return false;
@@ -88,9 +88,9 @@ export interface SpawnGateSettings {
  * deadlock a session the way a session-wide deny could — and "never silently
  * allow" is the whole point of the gate.
  */
-async function readSpawnGateSettings(projectDir: string): Promise<SpawnGateSettings> {
+export async function readSpawnGateSettings(projectDir: string): Promise<SpawnGateSettings> {
   try {
-    const { settings } = await loadConfig({ projectDir });
+    const { settings } = await loadEffectiveConfig({ projectDir });
     return {
       enabled: settings.snooze.spawn_gate,
       costFraction: settings.snooze.spawn_cost_fraction,

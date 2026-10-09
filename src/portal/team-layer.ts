@@ -55,12 +55,13 @@
  * the OS keychain behind `./tokens.ts`.
  */
 
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { type GolemConfig, type LoadConfigOptions, loadConfig } from "../config/loader.js";
-import { defaultUserDir } from "../config/paths.js";
+import { replaceViaTemp } from "../config/file-io.js";
 import { SECTION_NAMES } from "../config/schema.js";
+import { isMemberRelative, staticRefusal } from "../config/team-policy.js";
+import { isRenameRetryable } from "../shared/win-fs-retry.js";
 import { VERSION } from "../version.js";
 import {
   readTeamBinding,
@@ -168,22 +169,42 @@ export interface TranslatedTeamLayer {
  *    shape every settings origin has. A row that is not is SKIPPED with a
  *    reason rather than coerced, since guessing at `a.b.c` would either invent
  *    a section or silently drop a level.
- * 2. Nothing is filtered for policy. `proxy.bypass_all` arriving here is
+ * 2. Nothing is dropped for policy. `proxy.bypass_all` arriving here is
  *    translated like any other key and handed to the loader, which refuses it
- *    LOUDLY as a remote origin's key. Dropping it quietly here would leave an
- *    admin believing the portal set it — see the module note on the floor.
+ *    LOUDLY as a remote origin's key. A row the team policy refuses is listed in
+ *    `skipped` as REFUSED and left out of `applied`; the relative rules
+ *    (lower-only, narrow-roots) need the member's own value and are finished by
+ *    the loader, which reports them in `GolemConfig.refused`.
  *
  * A later row wins over an earlier one for the same key: the wire is a list and
  * the loader takes an object, so a duplicate has to resolve somehow, and
  * last-wins is what every other origin's re-declaration does.
  */
+/** Marks an `applied` entry whose rule is judged against the member's own value at load time. */
+export const PENDING_SUFFIX = " [pending: judged against your own value at load]";
+
+/** The dotted key at the front of an `applied` label. */
+export function appliedKey(label: string): string {
+  return label.split(" ", 1)[0] ?? label;
+}
+
 export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTeamLayer {
   const settings: Record<string, Record<string, unknown>> = {};
   const important: string[] = [];
   const applied: string[] = [];
   const skipped: { key: string; reason: string }[] = [];
 
+  // Last row for a key wins (see above), so settle duplicates BEFORE judging
+  // them: otherwise an earlier refused row would stay in `skipped` after a later
+  // acceptable one replaced it.
+  const lastByKey = new Map<string, TeamSettingRow>();
   for (const row of rows) {
+    const k = row.key.trim();
+    lastByKey.delete(k);
+    lastByKey.set(k, row);
+  }
+
+  for (const row of lastByKey.values()) {
     const key = row.key.trim();
     const parts = key.split(".");
     if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
@@ -204,13 +225,31 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
       continue;
     }
 
+    if (leaf === "__proto__") {
+      skipped.push({ key, reason: "it is not a setting name" });
+      continue;
+    }
+
     settings[section] ??= {};
     const bucket = settings[section];
     bucket[leaf] = row.value;
 
     // `enforced` is the whole contract: the important band at `team` rank.
     if (row.enforced && !important.includes(key)) important.push(key);
-    const label = row.enforced ? `${key} (enforced)` : key;
+
+    // The team policy (USER decision P4: tighten only). A refused row STILL goes
+    // to the loader, which drops it with its loud REFUSED warning on every
+    // surface, but it is REPORTED as refused here and never counted as applied:
+    // an admin must not read "applied" for something this machine will drop.
+    const refusal = staticRefusal(key, row.value);
+    if (refusal !== undefined) {
+      if (!skipped.some((x) => x.key === key)) skipped.push({ key, reason: `REFUSED: ${refusal}` });
+      continue;
+    }
+    // `applied` means "passed the STATIC policy". The member-relative rules
+    // (lower-only, narrow-roots) are judged at load against the member's own
+    // value, so those rows are marked pending rather than claimed.
+    const label = `${key}${row.enforced ? " (enforced)" : ""}${isMemberRelative(key) ? PENDING_SUFFIX : ""}`;
     if (!applied.includes(label)) applied.push(label);
   }
 
@@ -278,21 +317,38 @@ const teamCacheSchema = z.object({
 export type TeamLayerCache = z.infer<typeof teamCacheSchema>;
 
 /**
- * Read one org's cache. `null` for absent, unreadable, or malformed.
+ * Read one org's cache. `null` ONLY when there is no usable cache: the file is
+ * absent (ENOENT), or it parses to nothing valid.
  *
- * Never throws and never distinguishes those three, because the caller's next
- * move is identical for all of them: fall back to local config, out loud. A
- * corrupt cache is not an error condition to be handled, it is an absent one.
+ * It THROWS for any other read failure. A sharing violation (EBUSY / EACCES /
+ * EPERM while a sync or an antivirus holds the file) is retried briefly, and if
+ * it persists it surfaces as an error rather than as "no cache": reading a held
+ * file as "no team policy" would silently drop every tightening the team set.
+ * `loadEffectiveConfig` turns that throw into a loud warning, not a crash.
  */
 export async function readTeamLayerCache(
   userDir: string,
   orgId: string,
+  retry: {
+    readonly tries?: number;
+    readonly delayMs?: number;
+    readonly platform?: NodeJS.Platform;
+  } = {},
 ): Promise<TeamLayerCache | null> {
+  const file = teamCachePath(userDir, orgId);
+  const tries = Math.max(1, retry.tries ?? 10);
+  const delayMs = retry.delayMs ?? 50;
   let raw: string;
-  try {
-    raw = await readFile(teamCachePath(userDir, orgId), "utf8");
-  } catch {
-    return null;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      raw = await readFile(file, "utf8");
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      // The shared helper decides what is transient (Windows sharing violations).
+      if (attempt >= tries || !isRenameRetryable(err, retry.platform)) throw err;
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
   }
   try {
     const parsed = teamCacheSchema.safeParse(JSON.parse(raw));
@@ -306,7 +362,9 @@ export async function readTeamLayerCache(
 export async function writeTeamLayerCache(userDir: string, cache: TeamLayerCache): Promise<string> {
   const file = teamCachePath(userDir, cache.org_id);
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
+  // Atomic: a hook or the proxy may be reading this file at the moment a sync
+  // rewrites it, and a torn read parses as "no cache", i.e. no team policy.
+  await replaceViaTemp(file, `${JSON.stringify(cache, null, 2)}\n`);
   return file;
 }
 
@@ -442,7 +500,9 @@ export interface ResolveTeamLayerOptions {
 }
 
 /**
- * The read path: cache only, no network, cannot fail.
+ * The read path: cache only, no network. A missing or corrupt cache resolves to "no
+ * team layer" with a notice; an UNREADABLE one (a persistent sharing violation) throws,
+ * and `loadEffectiveConfig` reports that loudly instead of treating it as no policy.
  *
  * Called wherever configuration is loaded, so it is allowed to do exactly one
  * thing — read one file — and is allowed to fail at nothing. A missing cache is
@@ -561,58 +621,6 @@ export async function resolveTeamLayerForProject(
     userDir: options.userDir,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
-}
-
-export interface LoadConfigWithTeamOptions extends LoadConfigOptions {
-  readonly now?: () => number;
-}
-
-export interface ConfigWithTeam extends GolemConfig {
-  /** How the team layer resolved. Always present; usually "nothing applies". */
-  readonly team: TeamLayerResolution;
-}
-
-/**
- * `loadConfig`, with the `team` origin actually populated.
- *
- * Two passes, and the second one is not optional: the `team` section itself
- * lives in the settings being loaded, so the binding cannot be known until a
- * first load has resolved it. The first pass is the ordinary six-origin load;
- * the second re-runs it with `teamLayer` supplied.
- *
- * **For an unlinked project the second pass never happens** — the common case
- * costs exactly one load and one pure function call, which is what keeps
- * Decision 64(a) ("free and complete") true of the code and not just the
- * pricing page. `resolveTeamLayerForProject` reads at most one already-written
- * file, so even a linked project pays no network here; refreshing that file is
- * {@link syncTeamLayer}, which runs from `golem init` and `golem team sync`.
- *
- * The resolver is untouched. `LoadConfigOptions.teamLayer` already marks the
- * origin REMOTE, so `REMOTE_DENIED_SETTINGS` applies to whatever this hands
- * over and a denied key is dropped with the loader's loud `REFUSED` warning.
- * That is the floor being armed in production: not new code, but a real payload
- * finally arriving at the check that was built for it.
- */
-export async function loadConfigWithTeamLayer(
-  options: LoadConfigWithTeamOptions = {},
-): Promise<ConfigWithTeam> {
-  const { now, ...loadOptions } = options;
-  const first = await loadConfig(loadOptions);
-
-  // An explicitly supplied layer is the caller's business, not ours — do not
-  // second-guess a test or a caller that resolved one already.
-  if (loadOptions.teamLayer !== undefined) return { ...first, team: NO_TEAM_LAYER };
-
-  const team = await resolveTeamLayerForProject({
-    team: first.settings.team,
-    userDir: loadOptions.userDir ?? defaultUserDir(),
-    ...(now === undefined ? {} : { now }),
-  });
-
-  if (team.teamLayer === undefined) return { ...first, team };
-
-  const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
-  return { ...second, team };
 }
 
 // ---------------------------------------------------------------------------
@@ -877,8 +885,14 @@ export async function fetchTeamSettings(
 async function postSyncReport(
   client: PortalClient,
   orgId: string,
-  skipped: readonly { readonly key: string }[],
+  skipped: readonly { readonly key: string; readonly reason?: string }[],
 ): Promise<void> {
+  // Policy refusals are NOT unknown keys: reporting them as such tells an admin
+  // this client is too old to understand a key it understood perfectly well and
+  // refused. The portal contract (docs/plan/tasks/team-settings-layer.md) only
+  // defines `unknown_keys`, so they are omitted rather than sent in a field the
+  // portal may reject. The admin sees them in `golem team sync` on the machine.
+  const unknown = skipped.filter((row) => !(row.reason ?? "").startsWith("REFUSED"));
   try {
     await client.request(`/api/v1/orgs/${encodeURIComponent(orgId)}/settings`, {
       method: "POST",
@@ -886,7 +900,7 @@ async function postSyncReport(
       body: JSON.stringify({
         golem_version: VERSION,
         schema_version: VERSION,
-        unknown_keys: skipped.map((row) => row.key),
+        unknown_keys: unknown.map((row) => row.key),
       }),
     });
   } catch {

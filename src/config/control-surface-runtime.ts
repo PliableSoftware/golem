@@ -11,8 +11,8 @@ import {
   type ControlGroup,
   ENV_LOCKED,
 } from "./control-surface-types.js";
+import { loadEffectiveConfig } from "./effective.js";
 import { ConfigError } from "./errors.js";
-import { loadConfig } from "./loader.js";
 import { settingMeta } from "./ui-model.js";
 
 /** Compression level, active account, and the proxy daemon. */
@@ -21,7 +21,7 @@ export async function runtimeControlGroup(shared: {
   userDir?: string;
   env?: Readonly<Record<string, string | undefined>>;
 }): Promise<ControlGroup> {
-  const { settings, provenance } = await loadConfig(shared);
+  const { settings, provenance } = await loadEffectiveConfig(shared);
   const proxy = await proxyStatus(shared.projectDir, settings.proxy.port);
 
   // R11.1 / ADR-0004: the panel's headline runtime control is the compression
@@ -155,7 +155,7 @@ export async function applyRuntime(
       };
     }
     case "account": {
-      const { settings } = await loadConfig(shared);
+      const { settings } = await loadEffectiveConfig(shared);
       const raw = typeof value === "string" ? value : String(value);
       // The synthetic default id and "none" both clear `inference.model`.
       const target =
@@ -172,7 +172,7 @@ export async function applyRuntime(
       };
     }
     case "proxy": {
-      const { settings } = await loadConfig(shared);
+      const { settings } = await loadEffectiveConfig(shared);
       if (value === true) {
         const script = options.cliPath;
         if (script === undefined || script === "") {

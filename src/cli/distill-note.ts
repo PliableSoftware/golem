@@ -5,7 +5,7 @@
  * (cli/distill.ts).
  */
 
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import {
   createProbeRunner,
   detectCapability,
@@ -60,7 +60,7 @@ export async function distillNoteCapture(options: DistillNoteOptions): Promise<D
     if (existing !== null) return { kind: "exists", path: existing.path };
   }
 
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
 
   let inference = options.inference;
   if (inference === undefined) {

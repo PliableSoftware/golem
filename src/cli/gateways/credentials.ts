@@ -9,7 +9,7 @@
  * the registry half — only `appendAudit`'s non-secret metadata crosses back.
  */
 
-import { defaultUserDir, loadConfig } from "../../config/index.js";
+import { defaultUserDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   type CredentialStore,
   canPrompt,
@@ -38,7 +38,7 @@ async function resolveGatewayTarget(
   readonly account: GatewayTarget;
   readonly isDefault: boolean;
 }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const p = settings.proxy;
   if (id === defaultGatewayId(p.upstream_provider) || id === DEFAULT_STORE_ID) {
     return {
@@ -237,7 +237,7 @@ export async function credentialEnvForProxy(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<Record<string, string>> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const selected = settings.inference.model ?? null;
   const defaultId = defaultGatewayId(settings.proxy.upstream_provider);
   // The default top-level config is in force when nothing is selected or the
@@ -255,7 +255,7 @@ export async function credentialEnvForProxy(
   //
   //     6668ms  credentialEnvForProxy      <- 98% of all pre-listen() time
   //       7ms   migrateOnVersionChange
-  //      11ms   loadConfig
+  //      11ms   loadEffectiveConfig
   //     118ms   detectCapability
   //
   // broken down as a one-time ~2.6s DPAPI host self-test plus ~0.94s per *stored*

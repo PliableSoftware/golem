@@ -128,12 +128,9 @@ export {
   statesMatch,
 } from "./pkce.js";
 export {
-  type ConfigWithTeam,
   type FetchTeamSettingsResult,
   fetchTeamSettings,
-  type LoadConfigWithTeamOptions,
   listTeamLayerCaches,
-  loadConfigWithTeamLayer,
   type ResolveForProjectOptions,
   type ResolveTeamLayerOptions,
   readTeamLayerCache,

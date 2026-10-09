@@ -8,7 +8,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   BUILTIN_MODEL_CATALOG,
   fetchModelCatalog,
@@ -101,7 +101,7 @@ export default function register(program: Command): void {
     .action(async (opts: { dir: string; filter?: string; json: boolean }) => {
       try {
         const catalog = await loadModelCatalog(opts.dir);
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         if (opts.json) {
           process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
           return;
@@ -125,7 +125,7 @@ export default function register(program: Command): void {
     .option("--url <url>", "override models.catalog_url for this run")
     .action(async (opts: { dir: string; url?: string }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const url = opts.url ?? settings.models.catalog_url;
         const nowIso = new Date().toISOString();
         const fetched = await fetchModelCatalog(url, { nowIso });

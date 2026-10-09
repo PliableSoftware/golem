@@ -96,18 +96,47 @@ Provenance names the **team**, not just the layer: a team value's `source` reads
 the cache. `C:\Users\me\.golem\teams\org_2abc.json` answers a different
 question from *whose policy is this*.
 
-## The floor: keys a remote origin may never set
+## The floor: a team may only tighten (default-deny)
 
-`REMOTE_DENIED_SETTINGS` in `src/config/loader.ts` is compiled in, never fetched
-— a list the remote can edit is not a floor. It carries `proxy.bypass_all`, the
-three `portal.*` identity keys, and the four `team.*` keys. A denied key arriving
-from the team origin is **DROPPED, not sanitised**, with a warning that names it:
+USER decision P4: an organisation can make a member's machine safer, never less safe. A
+deny-list cannot be completed key by key, so `src/config/team-policy.ts` classifies EVERY
+leaf of the settings schema (`TEAM_POLICY`; a missing key is a compile error and a test
+fails if the schema gains one) and anything not in the table is denied:
 
-**Decided 2026-10-09 (P4, USER, revised the same day):** a team may set a `security.*` key
-only toward a STRICTER value and can never loosen one; a key with no declared stricter
-direction stays denied remotely. The user first said "any security setting" and revised
-it on discussion. Consistent with the `proxy.bypass_all` ban. The code is the task
-`team-security-stricter-only` (not built); see ADR-0008's amendment.
+| class | meaning | examples |
+|---|---|---|
+| `settable` | harmless preference | `ui.*`, `models.catalog_max_age_days`, `models.context_warn_fraction`, `portal.link_timeout_ms` |
+| `false-only` | a team may force a boolean OFF, never on | `security.write_lan`, `security.join_injection`, `telemetry.dashboard_lan`, `knowledge.enabled`, `knowledge.local_answer_enabled`, `knowledge.rerank_enabled`, `knowledge.lsp_enabled`, `knowledge.read_skeleton_enabled`, `knowledge.repo_map_enabled`, `knowledge.syntax_aware_chunking`, `compression.headroom_sidecar`, `compression.force_semantic_on_caching` |
+| `true-only` | a protective boolean, ON only | `snooze.enforce`, `snooze.spawn_gate` |
+| `lower-only` | only LOWER than the member's own effective value (numbers, and `compression.level` over off < 1 < 2 < 3, because 2 and 3 are lossy); `knowledge.auto_index_max_files` may not go to 0 (no cap) | `security.unlock_window_minutes`, `idle_relock_minutes`, `step_up_max_age_minutes`, `device_cert_days`, `proxy.max_request_body_bytes`, `compression.level` |
+| `narrow-roots` | `security.origination_roots`: non-empty absolute paths, each EQUAL (after `path.resolve` and `resolveWorktreeRoot`) to one of the member's roots, because the consumer does exact membership | |
+| `denied` | commands, URLs, endpoints, credentials, paths, gateways, personas and prompts, plugins (`plugins.enabled` too: false would switch off org redaction plugins), LSP, vector DB, Headroom config, ports, every timeout (availability is the member's call), `brevity.level` (changes request bytes and the cached prefix), `proxy.bypass_all`, `portal.*` identity, `team.*` | `knowledge.lsp_servers`, `proxy.gateways`, `inference.model`, `inference.personas`, `knowledge.watch_paths` |
+
+**Totality guard.** The guarantee that no key is forgotten is the TYPE (`TEAM_POLICY` is a
+`Record` over every schema leaf path, so `tsc` fails on a missing or stale entry) plus the runtime
+comparison in `tests/unit/config/team-policy.test.ts`. The `loader-entry-point` guard test is a
+different thing: it polices who reads settings, not which keys a team may set.
+
+**Honest reporting.** `team.applied` lists only rows that are actually in force. If an invalid
+value skips the whole layer, `applied` is empty and every surface carries "team policy is NOT in
+force". A row the member's own setting beats (a `user!` over a `team!`, or a project value over a
+normal row) is listed as OVERRIDDEN, a loader-refused row as REFUSED. `golem team sync` can only
+check the static rules, so member-relative rows are marked `[pending]`. Policy refusals are not
+sent to the portal as `unknown_keys` (the portal contract defines only that field, so they are
+omitted rather than mislabelled). An invalid value from a team is reported as the key only: Zod's
+"received ..." text is never echoed.
+
+The member-relative rules run AFTER the schema validates the value, so a refusal can never hide
+an invalid value: an invalid value always skips the layer, identically in the loader's dry run and
+its real pass. A REFUSED warning prints the team's value only for boolean, number and level rules;
+for every other key (URLs, keys, prompts, paths) it names the key and never the value.
+
+`REMOTE_DENIED_SETTINGS` and `REMOTE_FALSE_ONLY_SETTINGS` are derived from the table. A refused
+key is dropped PER KEY (the rest of the layer applies) with a warning that names the key, the
+team's value and the rule; only an INVALID value skips the whole layer (ADR-0008). Refused keys
+are listed as REFUSED, never as applied, in `golem team sync` (static rules) and in
+`team.applied`/`team.skipped` (the relative rules, which need the member's own value). A denied
+key arriving from the team origin is **DROPPED, not sanitised**, with a warning that names it:
 
 ```
 team org_…: REFUSED "proxy.bypass_all" — a remote origin may never set it, at any
@@ -134,18 +163,17 @@ deliberately separate functions:
 - **a config load that asks for the team layer** reads that file and nothing else.
   No socket, no keychain, no failure mode.
 
-**Not every config load asks.** The team origin is applied only by
-`loadConfigWithTeamLayer` (`src/portal/team-layer.ts:596`), and only two production
-callers use it: the proxy foreground (`src/cli/commands/proxy.ts:192`) and
-`golem status` (`src/cli/status-collect.ts:145`). Plain `loadConfig` never populates
-the `team` origin, and that is what `golem config list/get/set`, the panel and
-`config schema` call (`src/cli/config.ts:60,89`). This page used to say "every config
-load"; that was never the shipped behaviour. Whether enforced team policy must also
-apply on those surfaces (and on hook processes) is **open** (Phase 1 contradiction G3,
-a security-class question left for the user) and this page does not decide it. The
+**Every settings read asks (G3, `team-layer-everywhere`).** The team origin is applied by
+`loadEffectiveConfig` (`src/config/effective.ts`), the one production entry point: status,
+`golem config`, the TUI, hooks, the MCP server, the proxy and its hot-reload all call it.
+It reads the local cache only, never the network, so it is safe on the hook path. For a linked
+project it costs one extra small file read and a second cascade pass (about 4 ms measured
+in-process, plus a one-off ~18 ms lazy import in a fresh hook process); an unlinked project
+pays nothing. The persona watcher also polls `~/.golem/teams/` so a running daemon sees a
+`golem team sync`. Invalid team values still warn and skip the whole layer. The
 `unlinked` short-circuit still holds everywhere: an unlinked project does one load and
-no second pass. UNVERIFIED: the full list of non-proxy processes (hooks, MCP server)
-that call plain `loadConfig`; only the two callers above were confirmed by grep.
+no second pass. A grep-based test (`tests/unit/config/loader-entry-point.test.ts`) fails when
+production code reaches for the raw `loadConfig` or hand-reads the settings files.
 
 Collapsing them would put a network round trip behind every `golem` command and
 every proxy request. It would also make an offline machine *slower* than an
