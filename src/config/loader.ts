@@ -216,6 +216,8 @@ export interface GolemConfig {
   readonly warnings: readonly string[];
   /** Dotted keys a REMOTE origin sent that the team policy refused (they did not apply). */
   readonly refused: readonly string[];
+  /** True when a supplied team layer was SKIPPED whole (an invalid value): team policy is not in force. */
+  readonly teamSkipped: boolean;
 }
 
 type MutableTree = Record<string, Record<string, unknown>>;
@@ -237,6 +239,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
 
   const warnings: string[] = [];
   const refused: string[] = [];
+  let teamSkipped = false;
 
   // Every object-shaped origin is read and parsed ONCE. Both bands resolve over
   // the same parsed declarations, so the second pass costs no file I/O.
@@ -256,6 +259,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     const { settings: raw, source } = options.teamLayer;
     const teamOrigin = buildTeamOrigin(raw, source, tree, provenance, warnings);
     if (teamOrigin !== undefined) origins.set("team", teamOrigin);
+    else teamSkipped = true;
   }
   if (options.overrides !== undefined) {
     origins.set(
@@ -312,6 +316,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     files,
     warnings,
     refused,
+    teamSkipped,
   });
 }
 
@@ -348,8 +353,8 @@ function buildTeamOrigin(
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
     warnings.push(
-      "team layer SKIPPED: nothing from it applies, and the proxy still starts " +
-        `(ADR-0008). ${err.message}`,
+      "team layer SKIPPED: team policy is NOT in force on this machine (nothing from it " +
+        `applies), and the proxy still starts (ADR-0008). ${err.message}`,
     );
     return undefined;
   }
@@ -668,11 +673,19 @@ function applyObjectLayer(
       }
       const parsed = leaf.safeParse(value);
       if (!parsed.success) {
+        // A REMOTE origin's value is never echoed: Zod's messages quote what it
+        // received ("received 'sk-...'"), and this text travels to status, the TUI,
+        // the MCP stderr and the proxy log. Key only.
         const issues = parsed.error.issues.map((i) => i.message).join("; ");
-        throw new ConfigError(`${label}: invalid value for "${dotted}": ${issues}`, {
-          key: dotted,
-          ...(sourceFile !== undefined && { source: sourceFile }),
-        });
+        throw new ConfigError(
+          remote
+            ? `${label}: invalid value for "${dotted}" (the value is not shown)`
+            : `${label}: invalid value for "${dotted}": ${issues}`,
+          {
+            key: dotted,
+            ...(sourceFile !== undefined && { source: sourceFile }),
+          },
+        );
       }
       if (remote) {
         const resolvedKey = `${targetSection}.${targetKey}`;

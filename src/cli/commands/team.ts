@@ -582,6 +582,11 @@ export default function register(program: Command): void {
             // team, says what is actually applied, and never says "failed".
             process.stdout.write(`${result.notice}\n`);
             for (const key of result.applied) process.stdout.write(`  ${key}\n`);
+            if (result.applied.some((k) => k.includes("[pending"))) {
+              process.stdout.write(
+                "  (applied = passed the static team policy; [pending] rules are judged against your own value at load)\n",
+              );
+            }
             for (const row of result.skipped) {
               process.stdout.write(`  skipped ${row.key} — ${row.reason}\n`);
             }

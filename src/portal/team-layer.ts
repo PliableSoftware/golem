@@ -60,7 +60,7 @@ import path from "node:path";
 import { z } from "zod";
 import { replaceViaTemp } from "../config/file-io.js";
 import { SECTION_NAMES } from "../config/schema.js";
-import { staticRefusal } from "../config/team-policy.js";
+import { isMemberRelative, staticRefusal } from "../config/team-policy.js";
 import { isRenameRetryable } from "../shared/win-fs-retry.js";
 import { VERSION } from "../version.js";
 import {
@@ -180,6 +180,14 @@ export interface TranslatedTeamLayer {
  * the loader takes an object, so a duplicate has to resolve somehow, and
  * last-wins is what every other origin's re-declaration does.
  */
+/** Marks an `applied` entry whose rule is judged against the member's own value at load time. */
+export const PENDING_SUFFIX = " [pending: judged against your own value at load]";
+
+/** The dotted key at the front of an `applied` label. */
+export function appliedKey(label: string): string {
+  return label.split(" ", 1)[0] ?? label;
+}
+
 export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTeamLayer {
   const settings: Record<string, Record<string, unknown>> = {};
   const important: string[] = [];
@@ -238,7 +246,10 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
       if (!skipped.some((x) => x.key === key)) skipped.push({ key, reason: `REFUSED: ${refusal}` });
       continue;
     }
-    const label = row.enforced ? `${key} (enforced)` : key;
+    // `applied` means "passed the STATIC policy". The member-relative rules
+    // (lower-only, narrow-roots) are judged at load against the member's own
+    // value, so those rows are marked pending rather than claimed.
+    const label = `${key}${row.enforced ? " (enforced)" : ""}${isMemberRelative(key) ? PENDING_SUFFIX : ""}`;
     if (!applied.includes(label)) applied.push(label);
   }
 
@@ -874,8 +885,14 @@ export async function fetchTeamSettings(
 async function postSyncReport(
   client: PortalClient,
   orgId: string,
-  skipped: readonly { readonly key: string }[],
+  skipped: readonly { readonly key: string; readonly reason?: string }[],
 ): Promise<void> {
+  // Policy refusals are NOT unknown keys: reporting them as such tells an admin
+  // this client is too old to understand a key it understood perfectly well and
+  // refused. The portal contract (docs/plan/tasks/team-settings-layer.md) only
+  // defines `unknown_keys`, so they are omitted rather than sent in a field the
+  // portal may reject. The admin sees them in `golem team sync` on the machine.
+  const unknown = skipped.filter((row) => !(row.reason ?? "").startsWith("REFUSED"));
   try {
     await client.request(`/api/v1/orgs/${encodeURIComponent(orgId)}/settings`, {
       method: "POST",
@@ -883,7 +900,7 @@ async function postSyncReport(
       body: JSON.stringify({
         golem_version: VERSION,
         schema_version: VERSION,
-        unknown_keys: skipped.map((row) => row.key),
+        unknown_keys: unknown.map((row) => row.key),
       }),
     });
   } catch {

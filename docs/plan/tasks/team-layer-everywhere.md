@@ -166,3 +166,12 @@ Not matched by the grep because they hand the loader's result on or wrap it: `sr
 - REFUSED warnings print the value only for boolean, number and level rules; never for denied keys or roots. Test uses a URL with a password and an API-key-shaped string, built at runtime, across load warnings, refused/skipped lists, status, the control surface, MCP stderr and translate output.
 - Examples swapped in existing tests: the hot-reload surface row now has the member at level "3" and the team at "1" (a team may only lower); the cascade test "puts a normal team value above user" has the user at "3" (was "off") so the team's "1" is a lowering.
 - The totality guard is the type plus `team-policy.test.ts`, not the loader-entry-point guard.
+
+### Fourth review (2026-10-09): honesty and leaks
+
+- A skipped layer (invalid value) now yields `applied: []`, `GolemConfig.teamSkipped`, and a warning saying "team policy is NOT in force" on every surface.
+- Invalid-value errors from a REMOTE origin carry the key only ("the value is not shown"): Zod's "received ..." text is gone. A member's own invalid value still shows detail.
+- `knowledge.auto_index_max_files`: with a member cap of 0, any positive team number is accepted as a tightening.
+- `team.applied` is reconciled against what the loader resolved: refused, overridden (by the winning member layer) and unknown rows move to `skipped`.
+- `knowledge.repo_map_enabled` and `knowledge.syntax_aware_chunking` are false-only.
+- Policy refusals are omitted from the portal's `unknown_keys` (the portal contract in `team-settings-layer.md` defines only that field); `golem team sync` marks member-relative rows `[pending]`.

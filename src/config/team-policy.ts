@@ -101,8 +101,8 @@ export const TEAM_POLICY: Readonly<Record<LeafPath, TeamRule>> = {
   "knowledge.wiki_dir": D,
   "knowledge.local_answer_enabled": F,
   "knowledge.local_answer_min_confidence": D, // higher is stricter; no raise-only class yet
-  "knowledge.syntax_aware_chunking": S,
-  "knowledge.repo_map_enabled": S,
+  "knowledge.syntax_aware_chunking": F,
+  "knowledge.repo_map_enabled": F,
   "knowledge.read_skeleton_enabled": F, // a lossy view of what Read returns
   "knowledge.lsp_enabled": F, // true launches language-server commands
   "knowledge.lsp_servers": D, // arbitrary command execution
@@ -233,6 +233,12 @@ export function staticRefusal(dotted: string, value: unknown): string | undefine
   }
 }
 
+/** True for rules finished at load time against the member's own value (`lower-only`, `narrow-roots`). */
+export function isMemberRelative(dotted: string): boolean {
+  const rule = teamRule(dotted);
+  return rule === "lower-only" || rule === "narrow-roots";
+}
+
 /** What the consumer compares: `resolveWorktreeRoot(path.resolve(root))` (device-sessions.ts). */
 const resolvedRoot = (root: string): string => resolveWorktreeRoot(path.resolve(root));
 
@@ -251,6 +257,9 @@ export function relativeRefusal(
       const v = rank(dotted, value);
       const c = rank(dotted, current);
       if (v === undefined || c === undefined) return undefined;
+      // The member has NO cap (0): any positive team value is a tightening, and
+      // 0 is merely equal. Without this the generic "v > c" would refuse it.
+      if (ZERO_MEANS_UNCAPPED.has(dotted) && c === 0) return undefined;
       if (v > c)
         return `a team may only lower it (yours is ${String(current)}, the team sent ${String(value)})`;
       if (ZERO_MEANS_UNCAPPED.has(dotted) && v === 0 && c !== 0) {

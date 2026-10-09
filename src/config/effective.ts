@@ -105,26 +105,46 @@ export async function loadEffectiveConfig(
 
   try {
     const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
-    // Keys the loader refused (the relative rules need the member's own value, so
-    // only the loader can say) are not "applied", whatever the cache rows said.
-    const refused = new Set(second.refused);
-    const isRefused = (label: string): boolean => refused.has(label.replace(/ \(enforced\)$/, ""));
-    return {
-      ...second,
-      team: {
-        ...team,
-        applied: team.applied.filter((label) => !isRefused(label)),
-        skipped: [
-          ...team.skipped,
-          ...second.refused
-            .filter((k) => !team.skipped.some((x) => x.key === k))
-            .map((key) => ({ key, reason: "REFUSED: the team policy only allows tightening" })),
-        ],
-      },
-    };
+    return { ...second, team: reconcile(team, second) };
   } catch (err) {
     return degraded(first, team, err, "applying the team layer failed");
   }
+}
+
+/**
+ * What the team layer ACTUALLY did, from what the loader resolved, so `applied`
+ * never claims a row that is not in force:
+ * - the whole layer was skipped (an invalid value): nothing applied;
+ * - a key the loader refused (member-relative rules need the member's value): refused;
+ * - a key a member's own setting beat (a `user!` over a `team!`, or a project value
+ *   over a normal team row): overridden, with the layer that won;
+ * - a key this version does not know: skipped.
+ */
+function reconcile(team: TeamLayerResolution, loaded: GolemConfig): TeamLayerResolution {
+  if (loaded.teamSkipped) return { ...team, applied: [], skipped: [] };
+  const refused = new Set(loaded.refused);
+  const applied: string[] = [];
+  const skipped = [...team.skipped];
+  const note = (key: string, reason: string): void => {
+    if (!skipped.some((x) => x.key === key)) skipped.push({ key, reason });
+  };
+  for (const label of team.applied) {
+    const key = label.split(" ", 1)[0] ?? label;
+    const winner = loaded.provenance[key]?.layer;
+    if (refused.has(key)) {
+      note(key, "REFUSED: the team policy only allows tightening");
+    } else if (winner === undefined) {
+      note(key, "this version of Golem has no such setting");
+    } else if (winner !== "team") {
+      note(key, `OVERRIDDEN by your ${winner} setting, so it is not in force`);
+    } else {
+      applied.push(`${key}${label.includes(" (enforced)") ? " (enforced)" : ""}`);
+    }
+  }
+  for (const key of loaded.refused) {
+    note(key, "REFUSED: the team policy only allows tightening");
+  }
+  return { ...team, applied, skipped };
 }
 
 let announced = false;

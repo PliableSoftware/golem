@@ -520,6 +520,39 @@ describe("syncTeamLayer — offline is first-class, and different from unentitle
     expect(result.skipped.map((s) => s.key)).toEqual(["quantum.entangle"]);
   });
 
+  it("does not report a policy refusal to the portal as an unknown key, and marks member-relative rows pending", async () => {
+    const userDir = await newTempDir();
+    const { client, request } = fakeClient((_p, init) => {
+      if (init?.method === "POST") return jsonResponse({ recorded: true });
+      return jsonResponse({
+        settings: [
+          { key: "quantum.entangle", value: 1 }, // genuinely unknown to this client
+          { key: "proxy.gateways", value: {}, enforced: true }, // known, REFUSED by policy
+          { key: "security.device_cert_days", value: 30, enforced: true }, // judged at load
+          { key: "ui.pet", value: false, enforced: false },
+        ],
+      });
+    });
+    const result = await syncTeamLayer({ binding: binding(), userDir, client, report: true });
+
+    const post = request.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "POST",
+    );
+    const body = JSON.parse(String((post?.[1] as RequestInit).body)) as { unknown_keys: string[] };
+    // The portal contract only defines unknown_keys, so refusals are omitted
+    // rather than mislabelled as "this client is too old".
+    expect(body.unknown_keys).toEqual(["quantum.entangle"]);
+    expect(Object.keys(body).sort()).toEqual(["golem_version", "schema_version", "unknown_keys"]);
+
+    // The local report still lists the refusal, as REFUSED, never as applied.
+    expect(result.skipped.find((s) => s.key === "proxy.gateways")?.reason).toMatch(/^REFUSED/);
+    expect(result.applied.some((a) => a.startsWith("proxy.gateways"))).toBe(false);
+    // A member-relative row is claimed only as pending, not as applied.
+    const rel = result.applied.find((a) => a.startsWith("security.device_cert_days"));
+    expect(rel).toContain("[pending");
+    expect(result.applied).toContain("ui.pet");
+  });
+
   it("still applies the fetched layer when the cache cannot be written", async () => {
     // A `userDir` whose `teams` path is a FILE makes mkdir fail. The layer just
     // fetched is still valid; only the offline fallback is lost.

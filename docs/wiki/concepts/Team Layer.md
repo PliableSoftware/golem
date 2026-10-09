@@ -105,8 +105,8 @@ fails if the schema gains one) and anything not in the table is denied:
 
 | class | meaning | examples |
 |---|---|---|
-| `settable` | harmless preference | `ui.*`, `models.catalog_max_age_days`, `models.context_warn_fraction`, `knowledge.syntax_aware_chunking`, `portal.link_timeout_ms` |
-| `false-only` | a team may force a boolean OFF, never on | `security.write_lan`, `security.join_injection`, `telemetry.dashboard_lan`, `knowledge.enabled`, `knowledge.local_answer_enabled`, `knowledge.rerank_enabled`, `knowledge.lsp_enabled`, `knowledge.read_skeleton_enabled`, `compression.headroom_sidecar`, `compression.force_semantic_on_caching` |
+| `settable` | harmless preference | `ui.*`, `models.catalog_max_age_days`, `models.context_warn_fraction`, `portal.link_timeout_ms` |
+| `false-only` | a team may force a boolean OFF, never on | `security.write_lan`, `security.join_injection`, `telemetry.dashboard_lan`, `knowledge.enabled`, `knowledge.local_answer_enabled`, `knowledge.rerank_enabled`, `knowledge.lsp_enabled`, `knowledge.read_skeleton_enabled`, `knowledge.repo_map_enabled`, `knowledge.syntax_aware_chunking`, `compression.headroom_sidecar`, `compression.force_semantic_on_caching` |
 | `true-only` | a protective boolean, ON only | `snooze.enforce`, `snooze.spawn_gate` |
 | `lower-only` | only LOWER than the member's own effective value (numbers, and `compression.level` over off < 1 < 2 < 3, because 2 and 3 are lossy); `knowledge.auto_index_max_files` may not go to 0 (no cap) | `security.unlock_window_minutes`, `idle_relock_minutes`, `step_up_max_age_minutes`, `device_cert_days`, `proxy.max_request_body_bytes`, `compression.level` |
 | `narrow-roots` | `security.origination_roots`: non-empty absolute paths, each EQUAL (after `path.resolve` and `resolveWorktreeRoot`) to one of the member's roots, because the consumer does exact membership | |
@@ -116,6 +116,15 @@ fails if the schema gains one) and anything not in the table is denied:
 `Record` over every schema leaf path, so `tsc` fails on a missing or stale entry) plus the runtime
 comparison in `tests/unit/config/team-policy.test.ts`. The `loader-entry-point` guard test is a
 different thing: it polices who reads settings, not which keys a team may set.
+
+**Honest reporting.** `team.applied` lists only rows that are actually in force. If an invalid
+value skips the whole layer, `applied` is empty and every surface carries "team policy is NOT in
+force". A row the member's own setting beats (a `user!` over a `team!`, or a project value over a
+normal row) is listed as OVERRIDDEN, a loader-refused row as REFUSED. `golem team sync` can only
+check the static rules, so member-relative rows are marked `[pending]`. Policy refusals are not
+sent to the portal as `unknown_keys` (the portal contract defines only that field, so they are
+omitted rather than mislabelled). An invalid value from a team is reported as the key only: Zod's
+"received ..." text is never echoed.
 
 The member-relative rules run AFTER the schema validates the value, so a refusal can never hide
 an invalid value: an invalid value always skips the layer, identically in the loader's dry run and
