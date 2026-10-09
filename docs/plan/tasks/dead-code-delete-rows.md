@@ -1,7 +1,7 @@
 ---
 task: dead-code-delete-rows
 title: "Delete the dead public surface the Phase 3 audit recommended deleting (USER decision DEAD)"
-state: queued
+state: done
 owner: agent
 size: L
 discipline: code
@@ -10,6 +10,7 @@ gate: "Only the rows whose recommendation is delete are executed; every 'keep' r
 depends_on: []
 touches: [src/config, src/cli, src/mcp, src/plugins, src/interfaces, docs, tests]
 created: 2026-10-09
+updated: 2026-10-09T14:17:32.716Z
 ---
 
 ## What this is
@@ -190,3 +191,7 @@ dynamic or string lookups (`semantic_cache` as an `overrides` key).
 No delete row was found to no longer hold except row 6. Note for the CLI PR: the row-21 `~/.golem`
 scan in `collectMcpServes` (`ps.ts:353-362`) is the same dead shape but is outside the 25-row table,
 so it is not touched here.
+
+## Outcome
+
+shipped; see SHIPPED.md and the 2026-10-09 dead-code-and-flakes debrief
