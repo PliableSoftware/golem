@@ -105,7 +105,7 @@ export interface BuildProxyOptions {
    * sub-mode, if enabled, falls back to the pure-TS hashing (LEXICAL) embedder.
    *
    * The caller MUST pass this only when the on-disk index was actually built
-   * SEMANTIC (see `resolvePersistedEmbedMode`): querying a lexically-built index
+   * SEMANTIC (see `resolvePersistedEmbedder`): querying a lexically-built index
    * with semantic vectors — or vice-versa — is a cross-space query that
    * `assertEmbedderSpaceMatch` now rejects (it used to silently score 0 for
    * every chunk). `runProxyForeground` resolves this from the persisted index

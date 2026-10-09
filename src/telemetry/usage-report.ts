@@ -9,7 +9,7 @@
  * headline.
  */
 
-import type { UsageByBrevity, UsageByLevel, UsageBySemanticForced, UsageTotals } from "./types.js";
+import type { UsageByBrevity, UsageBySemanticForced, UsageTotals } from "./types.js";
 
 /**
  * Output-to-input price ratio, used ONLY to express an input-token cost and an
@@ -42,32 +42,6 @@ export function effectiveInputTokens(usage: UsageTotals): number {
   );
 }
 
-export interface LevelReportRow extends UsageTotals {
-  readonly level: number;
-  readonly requests: number;
-  readonly effectiveInputTokens: number;
-  readonly effectiveInputTokensPerRequest: number;
-}
-
-/** Turn a {@link UsageByLevel} aggregate into a reporting table, sorted by level. */
-export function usageReportRows(byLevel: UsageByLevel): readonly LevelReportRow[] {
-  return Object.entries(byLevel.byLevel)
-    .map(([levelKey, totals]) => {
-      const eff = effectiveInputTokens(totals);
-      return {
-        level: Number(levelKey),
-        requests: totals.requests,
-        inputTokens: totals.inputTokens,
-        cacheCreationInputTokens: totals.cacheCreationInputTokens,
-        cacheReadInputTokens: totals.cacheReadInputTokens,
-        outputTokens: totals.outputTokens,
-        effectiveInputTokens: eff,
-        effectiveInputTokensPerRequest: totals.requests > 0 ? eff / totals.requests : 0,
-      };
-    })
-    .sort((a, b) => a.level - b.level);
-}
-
 export interface SemanticForcedReportRow extends UsageTotals {
   readonly semanticForced: boolean;
   readonly requests: number;
@@ -78,7 +52,7 @@ export interface SemanticForcedReportRow extends UsageTotals {
 /**
  * R2.6 (verification-notes §58/§59): turn a {@link UsageBySemanticForced}
  * aggregate into a two-row gate-on/gate-off comparison table, using the same
- * honest effective-cost metric as {@link usageReportRows}. A net-safe result
+ * honest effective-cost metric as {@link effectiveInputTokens}. A net-safe result
  * is `forced.effectiveInputTokensPerRequest` not materially higher than
  * `notForced`'s — the bar `isCachingUpstream()`'s gate change would need to
  * clear before flipping it (spec Decisions Log entry required either way).

@@ -59,7 +59,6 @@ export type {
   TelemetryStore,
   ToolUsagePerTool,
   ToolUsageStats,
-  UsageByLevel,
   UsageBySemanticForced,
   UsageTotals,
 } from "./types.js";
@@ -67,10 +66,8 @@ export {
   CACHE_READ_MULTIPLIER,
   CACHE_WRITE_MULTIPLIER,
   effectiveInputTokens,
-  type LevelReportRow,
   type SemanticForcedReportRow,
   semanticForcedReportRows,
-  usageReportRows,
 } from "./usage-report.js";
 export { type WindowedStats, windowedStatsWithFallback } from "./windowed-stats.js";
 
@@ -151,7 +148,7 @@ export function recordRetrieval(
  * {@link recordPipelineEvent}. Not a pipeline run (`kind: "usage"` keeps it
  * out of aggregate()'s `requests`/gross-token counts, same as `recordRetrieval`
  * does for `kind: "retrieval"`); rolled up separately by
- * `TelemetryStore.aggregateUsageByLevel`.
+ * `TelemetryStore.aggregateUsageBySemanticForced`.
  */
 export function recordUsageEvent(
   store: TelemetryStore,

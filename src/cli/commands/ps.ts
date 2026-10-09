@@ -271,14 +271,15 @@ async function findOwningClaude(pid: number): Promise<boolean> {
   return false;
 }
 
-/** Collect proxy processes from pid files. */
-async function collectProxies(): Promise<GolemProcess[]> {
+/** Collect proxy processes from pid files. Exported for tests only. */
+export async function collectProxies(): Promise<GolemProcess[]> {
   const out: GolemProcess[] = [];
 
   // Find all Golem projects by looking for .golem directories with proxy.pid
   const projectDirs = new Set<string>();
 
-  // 1. Current project (where CLI is invoked)
+  // Current project (where CLI is invoked). `~/.golem` holds shared state, not one
+  // subdirectory per project, so there is no per-user project registry to scan.
   const currentProjectDir = findProjectDir(process.cwd());
   if (currentProjectDir) {
     const pidPath = path.join(currentProjectDir, ".golem", "proxy.pid");
@@ -288,26 +289,6 @@ async function collectProxies(): Promise<GolemProcess[]> {
       projectDirs.add(currentProjectDir);
     } catch {}
   }
-
-  // 2. Check user's .golem for project subdirectories that have their own .golem/proxy.pid
-  const userProfile = process.env.USERPROFILE ?? process.env.HOME ?? "";
-  const userGolemDir = path.join(userProfile, ".golem");
-  try {
-    const fs = await import("node:fs/promises");
-    const entries = await fs.readdir(userGolemDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const candidate = path.join(userGolemDir, entry.name);
-        const pidPath = path.join(candidate, ".golem", "proxy.pid");
-        try {
-          await fs.access(pidPath);
-          projectDirs.add(candidate);
-        } catch {
-          // Not a project with .golem/proxy.pid
-        }
-      }
-    }
-  } catch {}
 
   for (const projectDir of projectDirs) {
     const info = await readProxyPid(projectDir);
@@ -335,8 +316,8 @@ async function collectProxies(): Promise<GolemProcess[]> {
  *
  * The registry lives at `<project>/.golem/state/hosted-sessions.json` — INSIDE
  * each project, never under `~/.golem/<name>`. The `~/.golem` subdirectory
- * scan below (kept for the current project layout, same as
- * {@link collectProxies}) never actually finds cross-project entries this
+ * scan below (the matching proxy scan in {@link collectProxies} was
+ * removed as dead) never actually finds cross-project entries this
  * way: `~/.golem` holds shared state (`credentials/`, `state/`, `teams/`,
  * `vibe/`, `settings.json`), not one subdirectory per project. Nothing in this
  * codebase registers a project's path there, so this loop was previously the

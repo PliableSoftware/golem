@@ -44,14 +44,6 @@ export class PdfExtractionUnavailableError extends Error {
   }
 }
 
-/**
- * Whether `.pdf` extraction is currently possible on this machine — i.e.
- * whether `unpdf` resolves, without attempting an extraction.
- */
-export async function isPdfExtractionAvailable(): Promise<boolean> {
-  return (await loadUnpdf()) !== null;
-}
-
 const BLOCK_TAGS = "p|div|br|li|h[1-6]|tr|table|blockquote|section|article|header|footer|ul|ol";
 const BLOCK_OPEN_RE = new RegExp(`<(?:${BLOCK_TAGS})(?:\\s[^>]*)?>`, "gi");
 const BLOCK_CLOSE_RE = new RegExp(`</(?:${BLOCK_TAGS})>`, "gi");

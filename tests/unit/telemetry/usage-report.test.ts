@@ -9,7 +9,7 @@ import type { UsageBySemanticForced } from "../../../src/telemetry/types.js";
 import { semanticForcedReportRows } from "../../../src/telemetry/usage-report.js";
 
 describe("semanticForcedReportRows", () => {
-  it("produces a notForced/forced pair with the same effective-cost formula as usageReportRows", () => {
+  it("produces a notForced/forced pair with the effective-cost formula", () => {
     const byForced: UsageBySemanticForced = {
       projectId: "projA",
       forced: {

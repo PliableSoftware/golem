@@ -68,7 +68,6 @@ import type {
   ToolUsagePerTool,
   ToolUsageStats,
   UsageByBrevity,
-  UsageByLevel,
   UsageBySemanticForced,
   UsageTotals,
 } from "./types.js";
@@ -298,7 +297,7 @@ function foldAggregateEvent(
   }
   if (ev.kind === "usage") {
     // Not a pipeline run either — rolled up separately by
-    // aggregateUsageByLevel (R1.1), never into the gross-token headline.
+    // aggregateUsageBySemanticForced (R1.1), never into the gross-token headline.
     return;
   }
   if (ev.kind === "avoidedUpstream") {
@@ -640,33 +639,6 @@ export class JsonlTelemetryStore implements TelemetryStore {
       });
     }
     return toCompressionStats(projectId, acc);
-  }
-
-  async aggregateUsageByLevel(projectId?: string): Promise<UsageByLevel> {
-    const raw = await readAllGenerations(this.#file);
-
-    const byLevel: Record<number, UsageTotals & { requests: number }> = {};
-    for (const line of raw.split("\n")) {
-      const ev = parseEvent(line);
-      if (ev === null || ev.kind !== "usage" || ev.usage === undefined) continue;
-      if (projectId !== undefined && ev.projectId !== projectId) continue;
-
-      const acc = byLevel[ev.level] ?? {
-        requests: 0,
-        inputTokens: 0,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
-      };
-      byLevel[ev.level] = {
-        requests: acc.requests + 1,
-        inputTokens: acc.inputTokens + ev.usage.inputTokens,
-        cacheCreationInputTokens: acc.cacheCreationInputTokens + ev.usage.cacheCreationInputTokens,
-        cacheReadInputTokens: acc.cacheReadInputTokens + ev.usage.cacheReadInputTokens,
-        outputTokens: acc.outputTokens + ev.usage.outputTokens,
-      };
-    }
-    return { projectId: projectId ?? null, byLevel };
   }
 
   async aggregateUsageBySemanticForced(projectId?: string): Promise<UsageBySemanticForced> {

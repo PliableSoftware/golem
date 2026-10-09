@@ -126,22 +126,6 @@ async function readManifest(dir: string): Promise<IndexManifest | null> {
 }
 
 /**
- * Which embedder space an EXISTING project index was built in, read back from
- * its persisted manifest signature (see {@link embedderSignature}). A query MUST
- * be embedded in this same space or it silently scores 0 against every chunk
- * (guarded by `assertEmbedderSpaceMatch`), so query-side callers (the proxy's
- * local-answer KB) use this to pick a matching embedder rather than a blind
- * "is Ollama up?" probe. Returns `null` when there is no index yet, or the
- * manifest is missing/unreadable/unrecognized.
- */
-export async function resolvePersistedEmbedMode(
-  projectDir: string,
-  projectId: string,
-): Promise<EmbedMode | null> {
-  return (await resolvePersistedEmbedder(projectDir, projectId))?.mode ?? null;
-}
-
-/**
  * The full embedder identity an EXISTING project index was built with (R10.4).
  *
  * The embedder is otherwise chosen by the DETECTED HARDWARE TIER, and

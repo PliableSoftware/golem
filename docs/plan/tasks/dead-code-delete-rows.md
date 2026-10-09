@@ -67,6 +67,35 @@ frozen interfaces 2 (7, 8), plugin seams 0, MCP 0 (row 6 shipped). NEEDS-REVIEW:
 
 Order, zero-risk first: 13, 16, 15, 11, 10, 17 (tests-only subjects), then 21, then 9, then 7+8.
 
+### Row notes: CLI and internal test-only exports (rows 15, 16, 17, 21), executed 2026-10-09
+
+Grep proof, run after deletion over `src tests scripts .claude vscode-extension package.json` with
+plain-substring patterns (so string lookups, name maps, `import()` specifiers and `describe` titles are
+all caught): zero hits for `resolvePersistedEmbedMode`, `isPdfExtractionAvailable`, `usageReportRows`,
+`LevelReportRow`, `aggregateUsageByLevel`, `UsageByLevel`. Before deletion the only hits were the ones
+the table lists, plus the `scripts/extract-commands.mjs` name map (row 15) and two comments. No
+top-level `skills/` dir exists. Remaining mentions are dated history under `docs/wiki/` (debriefs,
+syntheses), `docs/plan/verification-notes.md`, `docs/plan/audit/` and `docs/plan/proposals/`, left as
+records. `tsc --noEmit` (covers `src` and `tests`) is the compile-time proof for mock stores.
+
+- **15** deleted `resolvePersistedEmbedMode` and its 3-case describe; `resolvePersistedEmbedder` (the
+  function it wrapped) keeps live callers (`build-knowledge.ts`, `commands/proxy.ts`) and
+  `embedder-pinning.test.ts` coverage. Comment at `proxy-runtime.ts` now names `resolvePersistedEmbedder`;
+  name dropped from the `scripts/extract-commands.mjs` map.
+- **16** deleted `isPdfExtractionAvailable` and its one case; `loadUnpdf` stays.
+- **17** deleted `usageReportRows`, `LevelReportRow`, `UsageByLevel`, `aggregateUsageByLevel` (impl +
+  `TelemetryStore` member) and the barrel exports. Tests removed: 4 cases of the reader in
+  `jsonl-store.test.ts` (per-level roll-up, project scope, empty, old-lines-ignored-by-reader). Kept and
+  retitled: "keeps usage events out of aggregate()" and "old lines ... still parse as ordinary requests"
+  (rewritten without the reader). `recordUsageEvent`, `aggregateUsageBySemanticForced`,
+  `aggregateAvoidedUpstream` untouched (row 24).
+- **21** deleted only the `~/.golem/<name>/.golem/proxy.pid` loop in `collectProxies`; the
+  `collectMcpServes` scan is untouched (outside the row). `collectProxies` is now exported for tests.
+  New `tests/unit/cli/ps-collect-proxies.test.ts` pins the output: it was written and run against the
+  OLD code first, where the current-project and no-pid-file cases passed (so visible output for a real
+  project is provably unchanged) and the decoy case failed (the removed scan was the only source of
+  that entry). All three pass after.
+
 ### Rows LEFT
 
 | # | row | disposition | reason |
