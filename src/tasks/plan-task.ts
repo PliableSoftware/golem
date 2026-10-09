@@ -59,6 +59,29 @@ function parseList(value: string): string[] {
   return [trimmed];
 }
 
+/**
+ * Decode a YAML flow scalar: `"a \"b\""` and `'it''s'` lose their delimiters and escapes.
+ * A bare value passes through untouched. Without this a quoted title reaches the
+ * roadmap with its quotes and backslashes printed literally.
+ */
+function unquoteScalar(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\(["\\])/g, "$1");
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+  return value;
+}
+
+/** Inverse of {@link unquoteScalar}: quote only when a bare write would not read back. */
+function quoteScalar(value: string): string {
+  if (/^["']/.test(value) || value !== value.trim()) {
+    return `"${value.replace(/["\\]/g, "\\$&")}"`;
+  }
+  return value;
+}
+
 const LIST_KEYS = new Set(["depends_on", "touches"]);
 
 /**
@@ -86,7 +109,7 @@ export function parsePlanTask(raw: string): Task {
     if (colonAt === -1) throw new Error(`malformed frontmatter line (no ':'): ${line}`);
     const key = line.slice(0, colonAt).trim();
     const value = line.slice(colonAt + 1).trim();
-    values[key] = LIST_KEYS.has(key) ? parseList(value) : value;
+    values[key] = LIST_KEYS.has(key) ? parseList(value) : unquoteScalar(value);
   }
 
   const id = values.task;
@@ -144,14 +167,14 @@ export function serializePlanTask(task: Task): string {
   const head = [
     DELIMITER,
     `task: ${task.id}`,
-    `title: ${task.title ?? task.id}`,
+    `title: ${quoteScalar(task.title ?? task.id)}`,
     `state: ${task.state}`,
     `owner: ${plan.owner}`,
     `size: ${plan.size}`,
     ...(plan.discipline !== undefined ? [`discipline: ${plan.discipline}`] : []),
-    ...(plan.design !== undefined ? [`design: ${plan.design}`] : []),
-    ...(plan.gate !== undefined ? [`gate: ${plan.gate}`] : []),
-    ...(plan.blocked !== undefined ? [`blocked: ${plan.blocked}`] : []),
+    ...(plan.design !== undefined ? [`design: ${quoteScalar(plan.design)}`] : []),
+    ...(plan.gate !== undefined ? [`gate: ${quoteScalar(plan.gate)}`] : []),
+    ...(plan.blocked !== undefined ? [`blocked: ${quoteScalar(plan.blocked)}`] : []),
     `depends_on: [${plan.dependsOn.join(", ")}]`,
     `touches: [${plan.touches.join(", ")}]`,
     `created: ${task.createdAt}`,
