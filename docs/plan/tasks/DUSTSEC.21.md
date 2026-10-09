@@ -20,3 +20,41 @@ Three remaining ways a secret can reach the upstream, or a request can freeze th
 
 - The id false-positive in the long-token rule (DUSTSEC.20).
 - Redacting response bodies.
+
+## Design decisions (2026-10-09)
+
+Written before behaviour changed; reviewed by an independent reader before merge.
+
+**Encoded bodies.** The proxy decodes `content-encoding` gzip, x-gzip, deflate and br (stacked
+codings in reverse order) right after reading the body, and forwards the decoded body
+**identity-encoded**: `content-encoding` removed, `content-length` recomputed. Chosen over
+re-encoding because it needs no compressor, and because the upstream then receives exactly the bytes
+that were scanned (a re-encode lets a second decoder disagree with ours about trailing bytes or
+concatenated members). Unsupported coding: 415. Undecodable body: 400. Neither is forwarded.
+With `proxy.bypass_all` nothing is decoded (byte-faithful, unchanged).
+
+**BOM.** A leading UTF-8 BOM is stripped for parsing and is NOT restored on forward (the proxy and
+the pipeline both strip it). UTF-16/32 (BOM or declared charset, or NUL bytes in a body labelled
+JSON or text) cannot be scanned and is refused: the pipeline throws, `redactOnly` throws, the proxy
+answers its existing fail-closed 502.
+
+**Non-object JSON on the messages route.** An array or bare scalar goes through the same generic
+walker as other routes: redaction only.
+
+**Non-JSON bodies.**
+- Text (anything not declared opaque and without NUL bytes, including a body labelled JSON that does
+  not parse): the standalone text redactor runs over the whole body. Valid UTF-8 is redacted as
+  UTF-8; invalid UTF-8 is redacted as latin1 so every other byte survives and invalid bytes cannot be
+  used to dodge the scan. `application/x-www-form-urlencoded` also gets percent-encoded names/values
+  decoded, redacted and re-encoded.
+- Opaque (multipart/*, octet-stream, image/audio/video/font, PDF and archive types, protobuf/grpc,
+  or an unlabelled body with NUL bytes): forwarded UNCHANGED. **Opaque binary bodies are not
+  redacted**: a secret can sit inside compressed or encoded data, and rewriting would corrupt the
+  file. This includes text fields inside a multipart upload. Case (f) of
+  `pipeline-redact-json-bodies.test.ts` now pins text redaction, and (f2) pins multipart unchanged.
+
+**Size limit.** `proxy.max_request_body_bytes`, default 64 MiB, positive integer (no unlimited
+value), enforced on the declared `content-length` before reading, while streaming a chunked body,
+and on decompressed output. 413, nothing forwarded. The redaction walk itself stays synchronous:
+measured 803 ms for a 3.9 MB body with 35,000 secrets and 109 ms for 5 MB of text, so the limit
+bounds the worst stall rather than removing it. A streamed or worker-thread walk is not done here.
