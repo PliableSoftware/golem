@@ -108,14 +108,45 @@ describe.skipIf(process.platform === "win32")("keychain helpers via shims", () =
     it("decrypt drops only the newline PowerShell appends", async () => {
       // Stand-in host: "encrypt" = base64 of stdin; "decrypt" = decode + newline,
       // which is what an unredirected PowerShell expression statement emits.
+      // Batch protocol (R9.20): one blob per stdin line in, `=<base64 secret>` per line out.
+      // Real PowerShell terminates every output line with CRLF.
       await shim(
         "pwsh.exe",
-        `case "$*" in *ConvertFrom-SecureString*) base64 -w0;; *) base64 -d; echo;; esac`,
+        `case "$*" in
+  *ConvertFrom-SecureString*) base64 -w0;;
+  *ReadLine*) while read -r l; do printf '=%s\\r\\n' "$l"; done;;
+  *) base64 -d; printf '\\r\\n';;
+esac`,
       );
       useShims();
       const b = keychainBackend("win32", dir);
       await b?.set("ws-dpapi", secret);
       expect(await b?.get("ws-dpapi")).toBe(secret);
     });
+    it("batch decrypt (getMany) returns the padded secret unchanged", async () => {
+      await shim(
+        "pwsh.exe",
+        `case "$*" in
+  *ConvertFrom-SecureString*) base64 -w0;;
+  *ReadLine*) while read -r l; do printf '=%s\\r\\n' "$l"; done;;
+  *) base64 -d; printf '\\r\\n';;
+esac`,
+      );
+      useShims();
+      const b = keychainBackend("win32", dir);
+      await b?.set("ws-batch", secret);
+      const got = await b?.getMany?.(["ws-batch", "ws-missing"]);
+      expect(got?.get("ws-batch")).toEqual({ secret });
+      expect(got?.get("ws-missing")).toEqual({});
+    });
+  });
+});
+
+describe("DPAPI encrypt script", () => {
+  it("never trims the plaintext it reads from stdin", async () => {
+    const src = await readFile(join(process.cwd(), "src/credentials/backends.ts"), "utf8");
+    const m = /const DPAPI_ENCRYPT =([\s\S]*?);\n/.exec(src);
+    expect(m).not.toBeNull();
+    expect(m?.[1]).not.toMatch(/\.Trim\(/);
   });
 });

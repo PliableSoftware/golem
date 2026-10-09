@@ -90,10 +90,36 @@ describe("golem gateway", () => {
     ["LF", "\n"],
     ["CRLF", "\r\n"],
   ])("login keeps a piped secret's own whitespace, dropping only one %s", async (_n, eol) => {
-    const secret = `  ${PIPED} mid ${PIPED}\t `;
+    const secret = `  ${PIPED} mid ${PIPED}  `;
     pipeStdin(`${secret}${eol}`);
     const program = await build();
     await program.parseAsync(["node", "golem", "gateway", "login", "g"]);
     expect(loginGateway.mock.calls[0]?.[3]).toMatchObject({ secret });
+  });
+
+  it("login strips a leading BOM along with the newline", async () => {
+    pipeStdin(`\ufeff${PIPED}\r\n`);
+    const program = await build();
+    await program.parseAsync(["node", "golem", "gateway", "login", "g"]);
+    expect(loginGateway.mock.calls[0]?.[3]).toMatchObject({ secret: PIPED });
+  });
+
+  it.each([
+    ["a trailing blank line", `${PIPED}\n\n`],
+    ["a doubled CR", `${PIPED}\r\r\n`],
+    ["an embedded control character", `${PIPED}\u0007x\n`],
+  ])("login refuses piped input with %s, without echoing it", async (_n, text) => {
+    pipeStdin(text);
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("exit");
+    }) as never);
+    const program = await build();
+    await expect(program.parseAsync(["node", "golem", "gateway", "login", "g"])).rejects.toThrow();
+    expect(exit).toHaveBeenCalled();
+    expect(loginGateway).not.toHaveBeenCalled();
+    const written = err.mock.calls.map((c) => String(c[0])).join("");
+    expect(written).toMatch(/control character/);
+    expect(written).not.toContain(PIPED);
   });
 });

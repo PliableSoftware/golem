@@ -42,6 +42,7 @@ import {
   fileBackend,
   keychainBackend,
 } from "./backends.js";
+import { hasForbiddenChar } from "./validate.js";
 
 /** A credential plus where it came from. `secret` must never be logged. */
 export interface ResolvedCredential {
@@ -131,6 +132,16 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
     fileB,
   ];
 
+  /** Never name the value: only the account and the remedy. */
+  const malformedMessage = (account: string): string =>
+    `stored key is malformed (control character or byte-order mark): re-enter it with ` +
+    `\`golem gateway login ${account}\``;
+
+  /** Throw (becomes a recorded fault, chain continues) rather than send a malformed key. */
+  function requireUsable(account: string, secret: string): void {
+    if (hasForbiddenChar(secret)) throw new Error(malformedMessage(account));
+  }
+
   /**
    * Consult backends in order. A backend that FAILS is recorded and skipped
    * rather than aborting the chain — a broken keychain must not hide an opted-in
@@ -144,7 +155,10 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
     for (const backend of readChain) {
       try {
         const secret = await backend.get(account);
-        if (secret !== null) return { hit: { secret, location: backend.describe() }, faults };
+        if (secret !== null) {
+          requireUsable(account, secret);
+          return { hit: { secret, location: backend.describe() }, faults };
+        }
       } catch (err) {
         faults.push({
           backend: backend.id,
@@ -216,6 +230,14 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       const stillUnresolved: string[] = [];
       for (const account of unique) {
         const entry = batch.get(account);
+        if (entry?.secret !== undefined && hasForbiddenChar(entry.secret)) {
+          carriedFaults.set(account, [
+            ...(carriedFaults.get(account) ?? []),
+            { backend: keychainB.id, message: malformedMessage(account) },
+          ]);
+          stillUnresolved.push(account);
+          continue;
+        }
         if (entry?.secret !== undefined) {
           out.set(account, {
             hit: { secret: entry.secret, location: keychainB.describe() },
@@ -245,6 +267,7 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
         try {
           const secret = await backend.get(account);
           if (secret !== null) {
+            requireUsable(account, secret);
             hit = { secret, location: backend.describe() };
             break;
           }

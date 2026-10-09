@@ -199,6 +199,14 @@ export function stripOneNewline(s: string): string {
   return s.replace(/\r?\n$/, "");
 }
 
+/**
+ * A read result as a secret: one newline stripped, and null when nothing but line
+ * breaks was stored (an empty or newline-only file is "absent", not a secret).
+ */
+function secretOrNull(raw: string): string | null {
+  return /^[\r\n]*$/.test(raw) ? null : stripOneNewline(raw);
+}
+
 /** Helper DIAGNOSTICS and non-secret blobs: whitespace is noise there, so trim it all. */
 function trimOutput(s: string): string {
   return s.trim();
@@ -233,8 +241,7 @@ function macKeychain(): CredentialBackend {
       ]);
       if (r.spawnFailed) throw new Error(`macOS keychain unavailable: ${r.stderr}`);
       if (r.code === 0) {
-        const v = stripOneNewline(r.stdout);
-        return v === "" ? null : v;
+        return secretOrNull(r.stdout);
       }
       // 44 = "The specified item could not be found in the keychain."
       if (r.code === 44 || /could not be found/i.test(r.stderr)) return null;
@@ -503,8 +510,7 @@ function windowsDpapi(userDir: string): CredentialBackend {
       if (blob === null) return null;
       const attempt = await tryDpapiHosts(DPAPI_DECRYPT, blob);
       if (attempt !== null && attempt.result.code === 0) {
-        const v = stripOneNewline(attempt.result.stdout);
-        return v === "" ? null : v;
+        return secretOrNull(attempt.result.stdout);
       }
       // The real attempt failed. NOW pay for the self-test, purely to say which of
       // the two failures this is — a diagnostic, not a precondition (R9.20).
@@ -633,8 +639,7 @@ export function fileBackend(
     available: async () => true,
     get: async (account) => {
       try {
-        const v = stripOneNewline(await readFile(keyPath(account), "utf8"));
-        return v === "" ? null : v;
+        return secretOrNull(await readFile(keyPath(account), "utf8"));
       } catch {
         return null;
       }

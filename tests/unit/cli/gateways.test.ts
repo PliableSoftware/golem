@@ -21,6 +21,7 @@ import {
   collectGateways,
   credentialEnvForProxy,
   defaultGatewayId,
+  loginGateway,
   logoutGateway,
   removeGateway,
   renderGateways,
@@ -574,5 +575,36 @@ describe("renderGateways", () => {
     const out = renderGateways(await collectGateways(dir, {}, { store_backend: store }));
     expect(out).toContain("* anthropic");
     expect(out).toContain("active: anthropic");
+  });
+});
+
+describe("loginGateway key validation (R8.29)", () => {
+  const BODY = ["k", String(Date.now())].join("-");
+
+  it("stores a key with spaces byte-exact", async () => {
+    const secret = `  ${BODY} mid  `;
+    await loginGateway(dir, "work", new Date().toISOString(), {
+      secret,
+      probe: false,
+      store: "file",
+      store_backend: store,
+    });
+    expect((await store.resolve("work"))?.secret).toBe(secret);
+  });
+
+  it.each([
+    ["a line break", `${BODY}\n`],
+    ["a BOM", `\ufeff${BODY}`],
+    ["a control character", `${BODY}\u0001`],
+  ])("refuses a key with %s and stores nothing", async (_n, secret) => {
+    await expect(
+      loginGateway(dir, "work", new Date().toISOString(), {
+        secret,
+        probe: false,
+        store: "file",
+        store_backend: store,
+      }),
+    ).rejects.toThrow(/control character.*Nothing stored/);
+    expect(await store.resolve("work")).toBeNull();
   });
 });
