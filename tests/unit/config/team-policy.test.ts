@@ -201,8 +201,10 @@ describe("false-only and true-only booleans", () => {
   });
 });
 
+const NUMERIC_LOWER = keysOf("lower-only").filter((k) => typeof defaultOf(k) === "number");
+
 describe("lower-only numbers", () => {
-  it.each(keysOf("lower-only"))("%s: a team may lower it, never raise it", async (key) => {
+  it.each(NUMERIC_LOWER)("%s: a team may lower it, never raise it", async (key) => {
     const base = defaultOf(key) as number;
     const lower = Math.max(1, Math.floor(base / 2));
 
@@ -254,14 +256,14 @@ describe("lower-only numbers", () => {
     expect(refusedFor(c.warnings, key)).toBe(true);
   });
 
-  it("refuses a non-number rather than coercing it", async () => {
+  it("treats a non-number as an INVALID value (layer skipped), never coercing it", async () => {
     const c = await load(
       await project({
         rows: [{ key: "security.device_cert_days", value: "1", enforced: true }],
       }),
     );
     expect(c.settings.security.device_cert_days).toBe(90);
-    expect(refusedFor(c.warnings, "security.device_cert_days")).toBe(true);
+    expect(c.warnings.some((w) => w.includes("team layer SKIPPED"))).toBe(true);
   });
 });
 
@@ -284,18 +286,216 @@ describe("security.origination_roots (narrow-roots)", () => {
     expect(c.provenance[key]?.layer).toBe("team");
   });
 
-  it("accepts a subset or sub-path of the member's roots, refuses anything wider or elsewhere", async () => {
+  it("accepts only roots that EQUAL one of the member's (the consumer does exact membership after resolving)", async () => {
     const userSettings = { security: { origination_roots: [abs("work"), abs("play")] } };
     const narrower = await load(
-      await project({ userSettings, rows: [{ key, value: [abs("work/app")], enforced: true }] }),
+      await project({ userSettings, rows: [{ key, value: [abs("work")], enforced: true }] }),
     );
-    expect(roots(narrower)).toEqual([abs("work/app")]);
+    expect(roots(narrower)).toEqual([abs("work")]);
+    // Equal after resolving: a redundant segment is the same root.
+    const same = await load(
+      await project({
+        userSettings,
+        rows: [{ key, value: [`${abs("work")}${path.sep}.`], enforced: true }],
+      }),
+    );
+    expect(roots(same)).toEqual([`${abs("work")}${path.sep}.`]);
 
-    for (const value of [[abs("other")], [abs("work"), abs("other")], [abs("")]]) {
+    // A descendant is NOT one of the member's roots: the consumer would refuse
+    // it, so it narrows nothing and is refused here. Same for anything elsewhere.
+    for (const value of [
+      [abs("work/app")],
+      [abs("other")],
+      [abs("work"), abs("other")],
+      [abs("")],
+    ]) {
       const c = await load(await project({ userSettings, rows: [{ key, value, enforced: true }] }));
       expect(roots(c)).toEqual([abs("work"), abs("play")]);
       expect(refusedFor(c.warnings, key)).toBe(true);
     }
+  });
+
+  it("refuses a relative entry (it would resolve against whatever cwd the process has)", async () => {
+    for (const userSettings of [undefined, { security: { origination_roots: [abs("work")] } }]) {
+      const c = await load(
+        await project({
+          ...(userSettings !== undefined && { userSettings }),
+          rows: [{ key, value: ["work", abs("work")], enforced: true }],
+        }),
+      );
+      expect(roots(c)).toEqual(userSettings === undefined ? [] : [abs("work")]);
+      expect(refusedFor(c.warnings, key)).toBe(true);
+    }
+  });
+});
+
+describe("review round 3: classes", () => {
+  const cls = (k: string) => teamRule(k);
+  it("plugins.enabled is DENIED: false would switch off org redaction plugins", () => {
+    expect(cls("plugins.enabled")).toBe("denied");
+  });
+  it("lossy compression can only be lowered or forced off", () => {
+    expect(cls("compression.force_semantic_on_caching")).toBe("false-only");
+    expect(cls("compression.level")).toBe("lower-only");
+    expect(cls("knowledge.read_skeleton_enabled")).toBe("false-only");
+  });
+  it("knowledge switches that widen what is done are false-only", () => {
+    for (const k of [
+      "knowledge.enabled",
+      "knowledge.local_answer_enabled",
+      "knowledge.rerank_enabled",
+    ]) {
+      expect(cls(k), k).toBe("false-only");
+    }
+  });
+  it("timeouts are denied: availability is the member's call and no floor is justified", () => {
+    for (const k of [
+      "proxy.request_timeout_ms",
+      "proxy.connect_timeout_ms",
+      "proxy.idle_timeout_ms",
+      "inference.request_timeout_ms",
+      "knowledge.lsp_timeout_ms",
+    ]) {
+      expect(cls(k), k).toBe("denied");
+    }
+  });
+  it("brevity.level is denied: it changes request bytes and the cached prefix", () => {
+    expect(cls("brevity.level")).toBe("denied");
+  });
+});
+
+describe("compression.level (ordered off < 1 < 2 < 3)", () => {
+  const key = "compression.level";
+  const levelOf = (c: Awaited<ReturnType<typeof load>>) => c.settings.compression.level;
+  const userAt = (level: string) => ({ compression: { level } });
+
+  it.each([
+    ["3", "2", true],
+    ["3", "off", true],
+    ["2", "1", true],
+    ["2", "2", true],
+    ["1", "2", false],
+    ["off", "1", false],
+    ["2", "3", false],
+  ])("member %s, team %s -> applied: %s", async (mine, team, applies) => {
+    const c = await load(
+      await project({ userSettings: userAt(mine), rows: [{ key, value: team, enforced: true }] }),
+    );
+    expect(levelOf(c)).toBe(applies ? team : mine);
+    expect(refusedFor(c.warnings, key)).toBe(!applies && true);
+  });
+
+  it("an unknown level is an INVALID value (layer skipped), not a policy refusal", async () => {
+    const c = await load(await project({ rows: [{ key, value: "9", enforced: true }] }));
+    expect(c.warnings.some((w) => w.includes("team layer SKIPPED"))).toBe(true);
+  });
+});
+
+describe("knowledge.auto_index_max_files: 0 means no cap", () => {
+  const key = "knowledge.auto_index_max_files";
+  it("refuses 0 unless the member's own value is already 0", async () => {
+    const c = await load(await project({ rows: [{ key, value: 0, enforced: true }] }));
+    expect(c.settings.knowledge.auto_index_max_files).toBe(50);
+    expect(refusedFor(c.warnings, key)).toBe(true);
+
+    const mine0 = await load(
+      await project({
+        userSettings: { knowledge: { auto_index_max_files: 0 } },
+        rows: [{ key, value: 0, enforced: true }],
+      }),
+    );
+    expect(refusedFor(mine0.warnings, key)).toBe(false);
+  });
+});
+
+describe("the real pass can never throw because of a member-relative refusal", () => {
+  it("a value the schema rejects skips the layer even when the member's own value would have refused it first", async () => {
+    // member 64 MiB, team 40000000.5: lower than the member's, so the relative
+    // rule passes, but it is not an integer. Against the DEFAULTS (which is all the
+    // dry run has) it was HIGHER and was refused without validation, so only the
+    // real pass saw the bad value and threw.
+    const p = await project({
+      userSettings: { proxy: { max_request_body_bytes: 67_108_864 } },
+      rows: [
+        { key: "proxy.max_request_body_bytes", value: 40_000_000.5, enforced: true },
+        { key: "ui.pet", value: false, enforced: true },
+      ],
+    });
+    const c = await load(p);
+    expect(c.warnings.some((w) => w.includes("team layer SKIPPED"))).toBe(true);
+    expect(c.settings.proxy.max_request_body_bytes).toBe(67_108_864);
+    expect(c.settings.ui.pet).toBe(true);
+    expect(c.teamFailure).toBeUndefined();
+  });
+});
+
+describe("a refusal never echoes a denied key's value", () => {
+  // Secrets are assembled at runtime so no literal credential sits in the repo.
+  const PASSWORD = ["hunt", "er2"].join("");
+  const PASSWORD_URL = `https://admin:${PASSWORD}@evil.example/v1`;
+  const API_KEY = ["sk", "ant", "api03", "secretsecretsecret"].join("-");
+  const rows: Row[] = [
+    { key: "proxy.upstream_base_url", value: PASSWORD_URL, enforced: true },
+    { key: "inference.ollama_base_url", value: PASSWORD_URL, enforced: false },
+    {
+      key: "proxy.gateways",
+      value: { x: { base_url: PASSWORD_URL, api_key: API_KEY } },
+      enforced: true,
+    },
+    { key: "inference.coder_prompt", value: `use ${API_KEY}`, enforced: true },
+    { key: "security.origination_roots", value: [`/tmp/${API_KEY}`, "relative"], enforced: true },
+    { key: "ui.pet", value: false, enforced: true },
+  ];
+  const leaks = (text: string): boolean =>
+    text.includes("hunter2") || text.includes("sk-ant") || text.includes("secretsecret");
+
+  it("keeps the secret out of warnings, refused, skipped, status, the control surface, MCP output and translate", async () => {
+    const p = await project({ rows });
+    const c = await load(p);
+    expect(c.refused).toContain("proxy.upstream_base_url");
+    expect(c.settings.ui.pet).toBe(false); // the legitimate row still applied
+    expect(leaks(JSON.stringify([c.warnings, c.refused, c.team.applied, c.team.skipped]))).toBe(
+      false,
+    );
+    // The warning still names the KEY, so an admin knows what was refused.
+    expect(refusedFor(c.warnings, "proxy.upstream_base_url")).toBe(true);
+
+    const out = translateTeamRows(rows);
+    expect(leaks(JSON.stringify([out.applied, out.skipped]))).toBe(false);
+
+    const { collectStatus } = await import("../../../src/cli/status-collect.js");
+    const status = await collectStatus({
+      projectDir: p.projectDir,
+      userDir: p.userDir,
+      env: {},
+      version: "0.0.0",
+      probeTimeoutMs: 1,
+    });
+    expect(leaks(JSON.stringify(status))).toBe(false);
+
+    const { collectControlSurface } = await import("../../../src/config/control-surface.js");
+    const surface = await collectControlSurface({
+      projectDir: p.projectDir,
+      userDir: p.userDir,
+      env: {},
+      version: "0.0.0",
+    });
+    expect(leaks(JSON.stringify(surface))).toBe(false);
+
+    const { readMcpServeSettings } = await import("../../../src/cli/commands/mcp-serve.js");
+    const stderr: string[] = [];
+    const settings = await readMcpServeSettings(p.projectDir, p.userDir, (w) => stderr.push(w));
+    expect(leaks(stderr.join("\n"))).toBe(false);
+    expect(leaks(JSON.stringify(settings))).toBe(false);
+  });
+
+  it("still prints the value for a boolean or number rule, where it is harmless", async () => {
+    const c = await load(
+      await project({ rows: [{ key: "security.device_cert_days", value: 9999, enforced: true }] }),
+    );
+    expect(
+      c.warnings.some((w) => w.includes('"security.device_cert_days"') && w.includes("9999")),
+    ).toBe(true);
   });
 });
 

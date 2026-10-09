@@ -83,7 +83,8 @@ describe("the normal band is unchanged", () => {
   });
 
   it("puts a normal team value above user and below project", async () => {
-    await writeJson(userFile(), level("off"));
+    // The user is at "3", so the team's lower "1" is a tightening and may apply.
+    await writeJson(userFile(), level("3"));
     const teamLayer = { settings: level("1"), source: "acme" };
 
     const overUser = await loadConfig({ projectDir, userDir, env: {}, teamLayer });

@@ -156,3 +156,13 @@ Not matched by the grep because they hand the loader's result on or wrap it: `sr
 - `loadEffectiveConfig`: a ConfigError stays the loader's quiet "SKIPPED"; any other throw returns the local result but is LOUD: warning `TEAM POLICY NOT APPLIED`, `teamFailure` on the result, one stderr line per process.
 - `readTeamLayerCache` returns null only for ENOENT or a corrupt file; sharing violations are retried (win32, via `win-fs-retry`) and then thrown, which the loader path reports as above.
 - Examples swapped in existing tests: none beyond the first review's `security.join_injection` -> `snooze.enforce` (both still settable by a team: `snooze.enforce` is true-only and the tests send true).
+
+### Third review (2026-10-09): table corrections
+
+- `plugins.enabled` denied (false disables org redaction plugins); `compression.force_semantic_on_caching`, `knowledge.read_skeleton_enabled` false-only; `compression.level` lower-only over off < 1 < 2 < 3 against the member's effective value; `knowledge.enabled`, `local_answer_enabled`, `rerank_enabled` false-only; `brevity.level` denied; every timeout denied (`proxy.request/connect/idle_timeout_ms`, `inference.request_timeout_ms`, `knowledge.lsp_timeout_ms`; availability is the member's call and no floor is justified). `portal.link_timeout_ms` stays settable: the sign-in wait is a convenience with no security weight (ADR-0008 floor note, locked by `tests/unit/portal/settings.test.ts`).
+- `knowledge.auto_index_max_files`: a team may not send 0 (no cap) unless the member's value is 0.
+- `narrow-roots` matches the consumer (`device-sessions.ts` exact membership after `resolveWorktreeRoot`): every team root must equal a member root after resolving; relative entries refused; descendants refused.
+- Member-relative rules now run after Zod, so the dry run and the real pass cannot disagree (user 67108864 + team 40000000.5 used to throw).
+- REFUSED warnings print the value only for boolean, number and level rules; never for denied keys or roots. Test uses a URL with a password and an API-key-shaped string, built at runtime, across load warnings, refused/skipped lists, status, the control surface, MCP stderr and translate output.
+- Examples swapped in existing tests: the hot-reload surface row now has the member at level "3" and the team at "1" (a team may only lower); the cascade test "puts a normal team value above user" has the user at "3" (was "off") so the team's "1" is a lowering.
+- The totality guard is the type plus `team-policy.test.ts`, not the loader-entry-point guard.

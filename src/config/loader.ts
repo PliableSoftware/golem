@@ -76,7 +76,7 @@ import {
   SECTION_NAMES,
   SETTINGS_LEAVES,
 } from "./schema.js";
-import { teamRefusal } from "./team-policy.js";
+import { relativeRefusal, staticRefusal, teamValueForWarning } from "./team-policy.js";
 
 /** Which layer supplied a value. See {@link ORIGIN_ORDER} for the ranking. */
 export type LayerName = "default" | "user" | "team" | "project" | "local" | "env" | "override";
@@ -591,7 +591,11 @@ function applyObjectLayer(
       // A declaration resolves in exactly one band; the other pass skips it
       // before doing any work, so nothing below can run or warn twice.
       if (important.has(dotted) !== (band === "important")) continue;
-      const refusal = remote ? teamRefusal(dotted, value, tree[sectionName]?.[key]) : undefined;
+      // Only the STATIC half of the team policy runs before validation. The
+      // member-relative half runs AFTER Zod below, so a value that would throw is
+      // judged identically by the dry run (which has no member values yet) and by
+      // the real pass: a relative refusal must never hide an invalid value.
+      const refusal = remote ? staticRefusal(dotted, value) : undefined;
       if (refusal !== undefined) {
         warnings.push(remoteRefusalWarning(label, dotted, refusal, value));
         refused?.push(dotted);
@@ -651,9 +655,7 @@ function applyObjectLayer(
         // Checked again on the RESOLVED key: a rename must not be a way for a
         // remote to reach a denied leaf under its old, undenied spelling.
         const resolved = `${targetSection}.${targetKey}`;
-        const resolvedRefusal = remote
-          ? teamRefusal(resolved, value, tree[targetSection]?.[targetKey])
-          : undefined;
+        const resolvedRefusal = remote ? staticRefusal(resolved, value) : undefined;
         if (resolvedRefusal !== undefined) {
           warnings.push(remoteRefusalWarning(label, resolved, resolvedRefusal, value));
           refused?.push(resolved);
@@ -671,6 +673,19 @@ function applyObjectLayer(
           key: dotted,
           ...(sourceFile !== undefined && { source: sourceFile }),
         });
+      }
+      if (remote) {
+        const resolvedKey = `${targetSection}.${targetKey}`;
+        const relative = relativeRefusal(
+          resolvedKey,
+          parsed.data,
+          tree[targetSection]?.[targetKey],
+        );
+        if (relative !== undefined) {
+          warnings.push(remoteRefusalWarning(label, resolvedKey, relative, value));
+          refused?.push(resolvedKey);
+          continue;
+        }
       }
       const section = tree[targetSection];
       if (section !== undefined) {
@@ -706,15 +721,12 @@ function remoteRefusalWarning(
   reason: string,
   value: unknown,
 ): string {
-  let shown = "";
-  try {
-    shown = JSON.stringify(value) ?? String(value);
-  } catch {
-    shown = String(value);
-  }
-  if (shown.length > 60) shown = `${shown.slice(0, 57)}...`;
+  // The value is printed ONLY for keys where it is a harmless boolean, number or
+  // level. For anything else it can be a URL with a password or an API key, and
+  // this line travels to status, the TUI, the MCP stderr and the proxy log.
+  const shown = teamValueForWarning(dotted, value);
   return (
-    `${label}: REFUSED "${dotted}" (team value ${shown}) — ${reason}. ` +
+    `${label}: REFUSED "${dotted}"${shown === undefined ? "" : ` (team value ${shown})`} — ${reason}. ` +
     "The value was DROPPED, not applied (teams may tighten, never loosen)."
   );
 }

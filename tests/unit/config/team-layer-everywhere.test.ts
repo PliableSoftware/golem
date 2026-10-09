@@ -255,8 +255,8 @@ const SURFACES: readonly Surface[] = [
   {
     name: "hot-reload (proxy dial reload)",
     key: "compression.level",
-    teamValue: "3",
-    userValue: "2",
+    teamValue: "1",
+    userValue: "3", // lossier than the team's: a team may only LOWER the level
     defaultValue: policyFromSettings(DEFAULT_SETTINGS).compression,
     invalid: "banana",
     read: async (f) => {

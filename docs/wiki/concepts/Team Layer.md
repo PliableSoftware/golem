@@ -105,12 +105,22 @@ fails if the schema gains one) and anything not in the table is denied:
 
 | class | meaning | examples |
 |---|---|---|
-| `settable` | harmless preference or tuning | `ui.*`, `compression.level`, `knowledge.enabled`, timeouts |
-| `false-only` | a team may force a risky boolean OFF, never on | `security.write_lan`, `security.join_injection`, `telemetry.dashboard_lan`, `plugins.enabled`, `knowledge.lsp_enabled`, `compression.headroom_sidecar` |
+| `settable` | harmless preference | `ui.*`, `models.catalog_max_age_days`, `models.context_warn_fraction`, `knowledge.syntax_aware_chunking`, `portal.link_timeout_ms` |
+| `false-only` | a team may force a boolean OFF, never on | `security.write_lan`, `security.join_injection`, `telemetry.dashboard_lan`, `knowledge.enabled`, `knowledge.local_answer_enabled`, `knowledge.rerank_enabled`, `knowledge.lsp_enabled`, `knowledge.read_skeleton_enabled`, `compression.headroom_sidecar`, `compression.force_semantic_on_caching` |
 | `true-only` | a protective boolean, ON only | `snooze.enforce`, `snooze.spawn_gate` |
-| `lower-only` | a number, only LOWER than the member's own effective value | `security.unlock_window_minutes`, `idle_relock_minutes`, `step_up_max_age_minutes`, `device_cert_days`, `proxy.max_request_body_bytes` |
-| `narrow-roots` | `security.origination_roots`: non-empty, and inside the member's roots | |
-| `denied` | commands, URLs, endpoints, credentials, paths, gateways, personas and prompts, plugins, LSP, vector DB, Headroom config, ports, and `proxy.bypass_all`, `portal.*`, `team.*` | `knowledge.lsp_servers`, `proxy.gateways`, `inference.model`, `inference.personas`, `knowledge.watch_paths` |
+| `lower-only` | only LOWER than the member's own effective value (numbers, and `compression.level` over off < 1 < 2 < 3, because 2 and 3 are lossy); `knowledge.auto_index_max_files` may not go to 0 (no cap) | `security.unlock_window_minutes`, `idle_relock_minutes`, `step_up_max_age_minutes`, `device_cert_days`, `proxy.max_request_body_bytes`, `compression.level` |
+| `narrow-roots` | `security.origination_roots`: non-empty absolute paths, each EQUAL (after `path.resolve` and `resolveWorktreeRoot`) to one of the member's roots, because the consumer does exact membership | |
+| `denied` | commands, URLs, endpoints, credentials, paths, gateways, personas and prompts, plugins (`plugins.enabled` too: false would switch off org redaction plugins), LSP, vector DB, Headroom config, ports, every timeout (availability is the member's call), `brevity.level` (changes request bytes and the cached prefix), `proxy.bypass_all`, `portal.*` identity, `team.*` | `knowledge.lsp_servers`, `proxy.gateways`, `inference.model`, `inference.personas`, `knowledge.watch_paths` |
+
+**Totality guard.** The guarantee that no key is forgotten is the TYPE (`TEAM_POLICY` is a
+`Record` over every schema leaf path, so `tsc` fails on a missing or stale entry) plus the runtime
+comparison in `tests/unit/config/team-policy.test.ts`. The `loader-entry-point` guard test is a
+different thing: it polices who reads settings, not which keys a team may set.
+
+The member-relative rules run AFTER the schema validates the value, so a refusal can never hide
+an invalid value: an invalid value always skips the layer, identically in the loader's dry run and
+its real pass. A REFUSED warning prints the team's value only for boolean, number and level rules;
+for every other key (URLs, keys, prompts, paths) it names the key and never the value.
 
 `REMOTE_DENIED_SETTINGS` and `REMOTE_FALSE_ONLY_SETTINGS` are derived from the table. A refused
 key is dropped PER KEY (the rest of the layer applies) with a warning that names the key, the
