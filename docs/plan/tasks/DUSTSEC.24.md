@@ -32,8 +32,8 @@ Method: each named rule's pattern run over input repeated or padded to 1, 2 and 
 | jwt | `eyJ` + 10 MB in any of the three segments | RangeError | 55-260 ms |
 | nostr-secret-key | `nsec1` + 10 MB | RangeError | 70 ms |
 | private-key | `-----BEGIN ... PRIVATE KEY-----` repeated, no END | quadratic: timeout at 1 MB (> 40 s) | 375 ms at 10 MB |
-| email | `a.a.a.` (no `@`) | quadratic: timeout at 1 MB | linear, 0.75 s/MB (bounded local part) |
-| connection-password | `a.a.a.` (a legal scheme alphabet, no `://`) | quadratic: 80k units 4.6 s, 4x the input 16x the time. Found while writing the tests; the first probe missed it | 29 ms, ratio 4.0 |
+| email | `a.a.a.` (no `@`) | quadratic: timeout at 1 MB | 10 MB: 50 ms rule-only, 200 ms whole stage |
+| connection-password | `a.a.a.` (a legal scheme alphabet, no `://`) | quadratic: 80k units 4.6 s, 4x the input 16x the time. Found while writing the tests; the first probe missed it | 1 MB: 5 ms |
 | github-token | 50,000 keys (36-char body), newline, space or glued; identical and distinct; also 10 MB | linear: 100-230 ms per 50,000 | unchanged |
 | aws-key, aws-secret-key, google-api-key, stripe-key, gcp-oauth-token, azure-account-key, credit-card | repeated prefix, single run | linear, no throw | unchanged |
 
@@ -41,30 +41,51 @@ Not reproduced: the 7.4 s for 50,000 consecutive `ghp_` keys in the design note.
 
 Cause of the RangeError: V8 spends one backtrack-stack entry per character on a counted greedy loop `[class]{n,}`, and overflows at roughly 5 million. `[class]+` and `[class]*` are executed by a loop that does not (a 10 MB `[^\s@/]+` password and `[A-Za-z0-9._%+-]+` local part were fine).
 
-## What changed
+## What changed (after the independent review; supersedes the first revision)
 
-- anthropic-key, openai-key, slack-token, jwt (each segment), nostr-secret-key: `X{n,}` is now `X{n}X*`. Same language, and the engine tries the same lengths in the same order, so every input matches exactly what it did before. The in-run nostr pattern is derived from the rule's class, and a test pins its source.
-- private-key: new optional `scanEnd` on `RedactionRule`; the rule runs on `text.slice(0, scanEnd(text))`, which ends just past the last `-----END ` header. Every BEGIN before it has an END after it, so each start stops at the next END; BEGIN lines after the last END cannot match and are not scanned. No match changes (6000 random BEGIN/END soups compared, plus the existing corpus).
-- email: local part `{1,128}` (was `+`). RFC 5321 caps it at 64. Cost per start is at most 128, so a dense `a.a.a.` costs 0.75 s/MB.
-- connection-password: scheme `{0,127}` (was `*`). Only the password is redacted, so a shorter scheme match changes nothing.
-- credit-card: new optional `validateAt(text, start, end)` hook (runs after `validate`, in `applyRule`), used for the boundary rule below.
-- Rule ORDER and the id of every rule are unchanged; no rule was removed or loosened except the credit-card boundary below.
+- anthropic-key, openai-key, slack-token, jwt (each segment), nostr-secret-key: `X{n,}` is now `X{n}X*`. Same language, same lengths tried in the same order. Their leading `\b` is unchanged; no other rule lost a `\b`.
+- private-key: optional `scanEnd` on `RedactionRule`. The bound is the end of the last COMPLETE END line, found by trying the rule's own END pattern (`-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----`) at each `-----END ` occurrence. A trailing `-----END CERTIFICATE-----` or an unterminated END no longer counts (the first revision bounded at the last `-----END ` text and stayed quadratic on those). The original rule redacted nothing for a BEGIN with no END after it, and so does this one (bound 0 with no complete END). `applyRule` clamps the bound: anything that is not an integer in `[0, length]` scans the whole text.
+- connection-password: no leading `\b` (it made a scheme glued onto word characters, or longer than the bound, unmatchable, so the password leaked and a second pass caught it). The pattern is anchored on the colon: `:(?<=[a-zA-Z][a-zA-Z0-9+.-]{0,127}:)//...`, so a lookbehind of at most 128 characters runs once per `:` instead of a start per letter. Only the password group is replaced, so where the match starts changes nothing.
+- email: the pattern matches `@domain` only and a new optional `extendStart(text, start, floor)` hook reaches back over the local part: at most 128 characters, not past the end of the previous redaction, beginning at the first word character (where the original's `\b` fell, including the case of resuming right after a match). A local part over 128 characters has its last 128 characters and the whole domain redacted; only the head beyond that stays. Real addresses are at most 64.
+- credit-card: new optional `validateAt(text, start, end)` hook; the hex-token exemption applies to SEPARATOR-FREE runs only.
+- Rule ORDER and rule ids are unchanged.
 
 ## Credit-card boundary rule (decided)
 
-A Luhn-valid digit run is NOT redacted when it is glued, with no separator, onto a hex-only token: take the alphanumeric characters `[A-Za-z0-9]` touching the run on the left and on the right (at most 64 each side). If at least one exists and every one is in `[0-9A-Fa-f]`, the run is part of a hex token and is left alone. A side that fills the 64-character window with hex counts as hex.
+A Luhn-valid run is NOT redacted when it is separator-free (digits only) and glued onto a hex-only token: the `[A-Za-z0-9]` characters touching it on the left and right (at most 64 each side, at least one in all) are all in `[0-9A-Fa-f]`. A run with a space or dash inside is never exempt: it cannot be a hex token.
 
-Why this and not "any adjacent letter": a hash, a hex-encoded blob or a memory dump holds a Luhn-valid 13-19 digit run by chance (about 1 in 10 runs). Requiring the whole touching token to be hex keeps `Visa4111...`, `4111...USD`, `xyzab4111...` redacted (a non-hex letter anywhere in the token), where "any adjacent letter" or "adjacent a-f" would not. The window is bounded so a 10 MB hex dump costs a constant per candidate.
+Shapes still redacted, every path (process, redactOnly, redactStandaloneText, redactRequestBody, rule-only): contiguous 13, 16, 19 digits; 4-4-4-4 groups with single spaces or dashes, including with hex-looking text touching them (`a<groups>b`, `cafe<groups>`, `<groups>D`, `cc<groups>ab`); in prose; after `:` `=` `"` `(` tab or newline; before a comma; `Visa<card>`, `<card>USD`, `id_<card>`, `ID=xyz<card>`, `pan=<card>gh`, `x<card>`, `card <card>`, `cafe <card>`.
 
-Shapes still redacted (before and after, all tested through process, redactOnly, redactStandaloneText, redactRequestBody and the rule-only path): contiguous 13, 16 and 19 digits; 4-4-4-4 groups with single spaces or single dashes; in prose; after `:` `=` `"` `(` tab or newline; before a comma; glued to a non-hex word before or after; after `_`; after a hex-looking word and a space (`deadbeef <card>`); grouped between hex words (`cafe <4-4-4-4> babe`).
+ACCEPTED WEAKENING (for the hard-rule review): separator-free Luhn-valid runs glued to a hex-only token are no longer redacted. Tested: `a<card>`, `<card>f`, `cc<card>`, `cafe<card>`, `B<card>`, `<card>D`, `ID=abc<card>`, `pan=<card>ab`. This is the task gate (hex dumps hold such runs by chance, about 1 in 10) and the cost of it.
 
-Shape no longer redacted (the only one): a Luhn-valid run touching a hex-only alphanumeric token, e.g. `e<card>f`, `<hex dump><card><hex dump>`, `<card>cd`.
+Pre-existing and unchanged: a card next to `.` or `-`, non-uniform groupings such as 4-4-4-4-3, and spaced all-digit hex dumps are not redacted before or after.
 
-Not covered before or after (pre-existing, unchanged): a card directly followed or preceded by `.` or `-` (the pattern's lookarounds exclude them, so `Charge <card>.` is not redacted); non-uniform groupings such as 4-4-4-4-3; space-separated hex dumps (`xxd` style) whose groups are all digits are indistinguishable from a card. A real card glued to hex-only letters (`cc<card>`, `<card>abc`) is the residual the boundary rule trades away.
+## Differential and fuzz results (against the ORIGINAL patterns from origin/development, `tests/unit/pipeline/redaction-review-fixes.test.ts` and `redaction-pathological.test.ts`)
+
+- anthropic, openai, slack, jwt, nostr (`X{n}X*`): 6,000 random texts each, identical matches (30 to several hundred texts per rule contain a match; the test asserts the generator reaches it).
+- private-key: 8,000 random BEGIN/END mixes including CERTIFICATE, PUBLIC KEY, RSA, ENCRYPTED, BLOCK, unterminated and four-dash ENDs, glued ENDs: identical matches to the original (over 500 with a match).
+- connection-password: 8,000 random texts: every password span the original matched is matched with the same span; second pass over every output is a no-op. The four review inputs (129 letters, `Ab9` x70, `deadbeef` x20, a 200-letter scheme with a boundary far away), each bare and with `postgres`, redact exactly the password span and are idempotent.
+- email: 2,100 generated realistic texts (7 contexts x 300 addresses): identical output to the original. 8,000 fuzz texts with class runs up to 128 (over 1,000 with a match): identical output, including the resume-after-a-match case. Long shapes (129, 200, 5000 alphanumeric; 129 and 400 dotted): the last 128 characters and the domain are redacted, the head beyond stays.
+- card: 6,000 random texts, the new rule's matches are a subset of the old rule's and every dropped match is a separator-free run touching a hex-only token.
+
+## Performance (final)
+
+| Input | Time |
+| --- | --- |
+| `a.` x 10 MB, rule table only / whole stage | 50 ms / 200 ms |
+| 10 MB of one letter, rule table only | 84 ms |
+| 10 MB of 127 digits + `:` | 127 ms |
+| 320,000 `-----BEGIN PRIVATE KEY-----` lines + `-----END CERTIFICATE-----` | 55 ms |
+| same + unterminated `-----END PRIVATE KEY` | 57 ms |
+| 10 MB single runs (sk-ant-, sk-, xoxb-, jwt payload, nsec1) through every path | 25-570 ms |
+| 50,000 distinct keys (ghp_, sk-ant-, sk-...+) | 100-230 ms |
+
+Corrections to the first revision's numbers: its email bound measured about 0.75 s/MB (7.6 s at 10 MB) on `a.` x N, and the review measured about 1.2 s/MB (about 12 s at 10 MB) on a loaded machine. That was linear but blocked the event loop for the duration; DUSTSEC.23 owns event-loop stalls on large bodies. Anchoring email on `@` and connection-password on `:` removed the cost rather than bounding it, so the stall no longer applies to these two rules. The earlier statement that the connection-password and email fixes cost "a constant per start" is superseded by this table.
 
 ## Residual risks
 
-- email: a local part longer than 128 characters with no `.`, `+`, `-` or `%` in it is no longer matched (the pattern needs a word boundary to start); with one, it is redacted from the first boundary within 128 characters of the `@`. connection-password has the same shape of residual for a scheme over 128 characters (password still redacted when any boundary lies within 128 of `://`).
-- Dense adversarial text is still 0.75-1.1 s/MB for email (bounded, linear), not milliseconds.
-- credit-card: see above.
-- `validateAt` and `scanEnd` are new optional fields on `RedactionRule` (src/pipeline, not src/interfaces); plugin rules do not get them.
+- email: only the part of a local part beyond 128 characters stays (RFC 5321 max is 64). A local part consisting only of `.%+-` characters is not an address and is not matched, as before.
+- connection-password: a scheme is any letter within 128 characters before `://`; strictly more matches than the original, never fewer.
+- credit-card: the accepted weakening above.
+- `validateAt`, `scanEnd` and `extendStart` are optional fields on `RedactionRule` (src/pipeline, not src/interfaces); plugin rules do not get them.
+- The ghp_ 7.4 s in the design note still could not be reproduced.
