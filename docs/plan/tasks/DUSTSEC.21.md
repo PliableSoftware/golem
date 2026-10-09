@@ -68,16 +68,21 @@ octet-stream, pdf, archives, protobuf/grpc) or (b) it has no, an unknown, or a t
 with a known binary magic signature (PNG, JPEG, GIF, PDF, ZIP, gzip, 7z, RAR, RIFF, ELF, bzip2, zstd,
 wasm, Ogg, MP3, MP4 ftyp). Every other body is TEXT whether or not it holds NUL bytes (a NUL never
 makes a body opaque) and is redacted losslessly (UTF-8, or latin1 when not valid UTF-8). **A client
-can still choose a known-binary label to avoid scanning non-JSON text.** That is accepted by design:
-binary cannot be scanned reliably and the label is client-chosen. Claude Code always labels JSON as
+can still choose a known-binary label to avoid scanning non-JSON text, and a body that starts with a
+known magic signature AND has a C0 control byte (other than tab, newline, CR) or invalid UTF-8 in its
+first 4 KiB is likewise forwarded unscanned.** Both are accepted by design: binary cannot be scanned
+reliably and the label and the leading bytes are client-chosen. Claude Code always labels JSON as
 JSON, and JSON under any label is still walked.
 
-**UTF-16/32.** (Round 3: the sparse check now also reads UTF-32.) A non-opaque body with NULs is scanned over its WHOLE length in 1 KiB windows
-(half-window steps): dense NULs at a consistent parity, or NUL-dominated windows, are refused (502,
-nothing forwarded). Sparse cases (a short UTF-16 secret in a large body, mostly-CJK text) are caught
-by decoding the body as UTF-16 at both alignments and both endiannesses and refusing if the text
-redactor finds a secret in any view. Binary with a magic signature or a known-binary label is never
-refused or altered. Cost: the decode check runs only on NUL-bearing non-opaque bodies.
+**UTF-16/32.** A non-opaque, non-JSON body containing NULs is scanned over its WHOLE length in 1 KiB
+windows (half-window steps): dense NULs at a consistent parity, or NUL-dominated windows, are
+refused. Independently of density, the body is read as UTF-16 (2 alignments x 2 endiannesses) and
+UTF-32 (4 alignments x 2 endiannesses), 12 views in all, each projected to its ASCII characters, and
+refused if the text redactor finds a secret in any view. That catches a short wide-encoded secret in
+a large body and mostly-CJK text. The refusal is a `RequestBodyRefusal(502)` (status kept at 502),
+so the proxy answers it directly and `redactOnly` does not repeat the scan. Bodies that are opaque
+(a known-binary label, or a magic signature plus a binary look) are never refused or altered by this
+check. Cost: it runs only on NUL-bearing non-opaque non-JSON bodies.
 
 **Duplicate JSON keys (revised in round 3).** `JSON.parse` keeps the last value, so the walk missed a
 secret in a shadowed first value while the original bytes were forwarded. A raw-text redaction pass
@@ -111,7 +116,10 @@ a way past the limits. The `golem-bypass` skill text now says so.
   RIFF, OggS, Rar! and ftyp are printable ASCII, so printable text starting with them is TEXT and is
   redacted. Consequence: an uncompressed PDF whose first 4 KiB are all printable and sent with no
   label is redacted as text rather than forwarded untouched; a PDF with the usual binary comment line,
-  or any PDF labelled application/pdf, is unaffected.
+  or any PDF labelled application/pdf, is unaffected. More generally, an unlabelled, all-printable
+  PDF (or other binary that looks printable in its first 4 KiB) is redacted as TEXT, which can alter
+  its bytes and break the file, because the proxy cannot tell it apart; Claude Code does not send
+  unlabelled PDFs.
 - **Limits stated plainly.** The 32 MiB default bounds ADMISSION, not stall time: the JSON walk
   is synchronous at roughly 0.7 s per MiB on bodies made of many small strings, so a pathological
   32 MiB body can block the event loop for tens of seconds, and `redactOnly` can repeat the walk.

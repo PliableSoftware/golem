@@ -326,13 +326,17 @@ export function redactAnyBody(input: ProxyRequest): ProxyRequest {
   if (!/json/.test(mime) && hasBinaryMagic(body) && looksBinary(body)) return input;
 
   if (isWideEncoded(body, contentType)) {
-    throw new Error(
-      "request body is UTF-16/UTF-32 encoded and cannot be scanned for secrets; refusing it",
+    throw new RequestBodyRefusal(
+      502,
+      "golem proxy: the request body is UTF-16/UTF-32 encoded and cannot be scanned for " +
+        "secrets. Nothing was forwarded.",
     );
   }
   if (body.includes(0) && (looksLikeWideText(body) || wideViewHoldsSecret(body))) {
-    throw new Error(
-      "request body looks UTF-16/UTF-32 encoded and cannot be scanned for secrets; refusing it",
+    throw new RequestBodyRefusal(
+      502,
+      "golem proxy: the request body looks UTF-16/UTF-32 encoded and cannot be scanned for " +
+        "secrets. Nothing was forwarded.",
     );
   }
 

@@ -19,7 +19,7 @@ import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from "n
 /** The request is refused. `status` is the HTTP status to answer with. */
 export class RequestBodyRefusal extends Error {
   constructor(
-    readonly status: 400 | 413 | 415 | 503,
+    readonly status: 400 | 413 | 415 | 502 | 503,
     message: string,
   ) {
     super(message);

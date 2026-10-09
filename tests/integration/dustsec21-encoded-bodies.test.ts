@@ -910,3 +910,47 @@ describe("DUSTSEC.21 review 2: the in-flight reservation is released", () => {
     }
   });
 });
+
+describe("DUSTSEC.21 review 4: refusals are direct and the scanner does not over-match", () => {
+  it("a wide-encoding refusal does not re-run redactOnly (and is 502, nothing forwarded)", async () => {
+    const base = await build();
+    let redactOnlyCalls = 0;
+    const pipeline: RequestPipeline = {
+      ...base,
+      process: (r) => base.process(r),
+      redactOnly: (r) => {
+        redactOnlyCalls += 1;
+        return (base.redactOnly as NonNullable<typeof base.redactOnly>)(r);
+      },
+    };
+    const wide = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(messagesBody(), "utf16le")]);
+    for (const path of routes) {
+      const r = await send(pipeline, path, { headers: jsonHeaders, body: wide });
+      expectRefusedNothingForwarded(r, 502);
+    }
+    expect(redactOnlyCalls).toBe(0);
+  });
+
+  const inner = "x";
+  const benign: Record<string, (tail: string) => string> = {
+    "sibling objects in an array sharing keys": (t) =>
+      `{"l":[{"k":1,"v":2},{"k":3,"v":4},{"k":5,"v":6}]${t}}`,
+    "the same key at different depths": (t) => `{"k":1,"o":{"k":2,"p":{"k":3}}${t}}`,
+    "a duplicate key only inside a string value that looks like JSON": (t) =>
+      `{"s":"{\\"a\\":1,\\"a\\":2}","note":"${inner}"${t}}`,
+    "a single __proto__ key": (t) => `{"__proto__":1,"x":2${t}}`,
+    "an object after a closing brace in a string": (t) => `{"s":"} , {\\"k\\":1}","k":2${t}}`,
+  };
+  for (const path of ["/v1/messages", "/v1/some/other"]) {
+    const tail = path === "/v1/messages" ? ',"messages":[]' : "";
+    for (const [name, make] of Object.entries(benign)) {
+      it(`${name} is NOT refused (${path})`, async () => {
+        const body = make(tail);
+        const r = await send(await build(), path, { headers: jsonHeaders, body });
+        expect(r.status).toBe(200);
+        expect(r.hits).toBe(1);
+        expect(r.body).toBe(body);
+      });
+    }
+  }
+});
