@@ -192,11 +192,12 @@ origin, so there is only one.
   pair. Reversing pass 2 back to forward order fails four of its tests, which is
   the check that it is testing the ordering and not merely the outcome.
 
-**The `team` origin is populated, but not by every reader.** It has its rank and its
+**The `team` origin is populated on every surface (G3).** It has its rank and its
 `LayerName` value, and `loadConfig`'s `teamLayer` option
 (`src/config/loader.ts:209`) is where an already-resolved payload goes. This page
 once said nothing fetched one; that stopped being true when `team-layer-fetch`
-shipped. `loadConfigWithTeamLayer` (`src/portal/team-layer.ts:596`) does the two-pass
+shipped. `loadEffectiveConfig` (`src/config/effective.ts`, the only production entry point; a
+test fails if a file calls the raw `loadConfig`) does the two-pass
 load: an ordinary load to learn the `team` binding, then a second load with the cached
 payload supplied (an unlinked project never pays the second pass). It reads a
 file already on disk; only `golem init` and `golem team sync` open a socket
@@ -229,7 +230,7 @@ rules are not a setting. A broken *binding* (the `team` section naming an org th
 project cannot resolve) is handled one step earlier and also degrades to local
 configuration with a notice (`resolveTeamLayerForProject`,
 `src/portal/team-layer.ts:543-560`). Before DUSTSEC.14 an invalid cached team row
-threw through `loadConfigWithTeamLayer` into the proxy start; the code now matches
+threw through `loadEffectiveConfig` into the proxy start; the code now matches
 the rule this page always stated.
 
 The cache's *path* did change later, but not because of this design: Decision 63

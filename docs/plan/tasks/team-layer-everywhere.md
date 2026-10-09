@@ -130,3 +130,10 @@ Not matched by the grep because they hand the loader's result on or wrap it: `sr
 | `src/session/known-projects.ts:129`, `vscode-extension/extension.js:32`, `src/cli/init.ts:325,345,346,387,599`, `src/cli/status-render.ts:192` | existence / marker checks and init writers on `.golem/settings*.json` | excluded: no setting value is read |
 | `vscode-extension/extension.js` (stats/status/config) | shells out to `golem status/stats --json` and `golem config set/unset` | no change needed: covered by the CLI conversion; the extension reads no settings file itself |
 | `src/config/control-surface-settings.ts` | control-surface (config UI) view | goes through `control-surface-runtime.ts` loads (section A) |
+
+### Outcome (2026-10-09)
+
+- Entry point: `loadEffectiveConfig` (`src/config/effective.ts`), cache only, lazy team import for linked projects. `loadConfigWithTeamLayer` is gone (moved and renamed). The raw `loadConfig` stays exported only for the cascade's own tests; a guard test enforces it.
+- Counts: 84 section-A sites, 2 team-aware before, 82 converted; section B: 12 direct file readers, 1 converted (`persona-watcher`, now also polls `~/.golem/teams/`), 11 deliberately excluded with reasons above.
+- Hook latency (fresh measurement, in-process, 30 runs): unlinked +0 ms (raw 1.9 ms vs 1.25 ms, noise); linked with cache +4.4 ms per call (5.5 ms vs 1.1 ms); first linked call in a fresh process ~18 ms for the lazy `team-layer` import. No memo: the cache file is re-read per call, so staleness is zero beyond the last `golem team sync`.
+- Tests: `tests/unit/config/team-layer-everywhere.test.ts` (29: status, config get/list, TUI, MCP, two hook reads, dial reload, persona watcher) and `tests/unit/config/loader-entry-point.test.ts` (3, the bypass guard).

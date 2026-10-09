@@ -134,18 +134,17 @@ deliberately separate functions:
 - **a config load that asks for the team layer** reads that file and nothing else.
   No socket, no keychain, no failure mode.
 
-**Not every config load asks.** The team origin is applied only by
-`loadConfigWithTeamLayer` (`src/portal/team-layer.ts:596`), and only two production
-callers use it: the proxy foreground (`src/cli/commands/proxy.ts:192`) and
-`golem status` (`src/cli/status-collect.ts:145`). Plain `loadConfig` never populates
-the `team` origin, and that is what `golem config list/get/set`, the panel and
-`config schema` call (`src/cli/config.ts:60,89`). This page used to say "every config
-load"; that was never the shipped behaviour. Whether enforced team policy must also
-apply on those surfaces (and on hook processes) is **open** (Phase 1 contradiction G3,
-a security-class question left for the user) and this page does not decide it. The
+**Every settings read asks (G3, `team-layer-everywhere`).** The team origin is applied by
+`loadEffectiveConfig` (`src/config/effective.ts`), the one production entry point: status,
+`golem config`, the TUI, hooks, the MCP server, the proxy and its hot-reload all call it.
+It reads the local cache only, never the network, so it is safe on the hook path. For a linked
+project it costs one extra small file read and a second cascade pass (about 4 ms measured
+in-process, plus a one-off ~18 ms lazy import in a fresh hook process); an unlinked project
+pays nothing. The persona watcher also polls `~/.golem/teams/` so a running daemon sees a
+`golem team sync`. Invalid team values still warn and skip the whole layer. The
 `unlinked` short-circuit still holds everywhere: an unlinked project does one load and
-no second pass. UNVERIFIED: the full list of non-proxy processes (hooks, MCP server)
-that call plain `loadConfig`; only the two callers above were confirmed by grep.
+no second pass. A grep-based test (`tests/unit/config/loader-entry-point.test.ts`) fails when
+production code reaches for the raw `loadConfig` or hand-reads the settings files.
 
 Collapsing them would put a network round trip behind every `golem` command and
 every proxy request. It would also make an offline machine *slower* than an
