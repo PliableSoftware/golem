@@ -64,7 +64,7 @@ doesn't touch code or wiki structure.
 
 **Phase 1: done and merged.** DUST1.1-DUST1.12 notes and `SUMMARY.md`.
 
-**Security batch: done except one decision.** `DUSTSEC.1`-`DUSTSEC.20` shipped (`DUSTSEC.19` and `DUSTSEC.20` came out of Phase 5). `DUSTSEC.10` (R8, no relay-connected signal at the hook) is open for a USER decision. `DUSTSEC.21` and `DUSTSEC.22` are filed redaction follow-ups. `npm-claim-golem-run` is open for the user.
+**Security batch: done except one decision.** `DUSTSEC.1`-`DUSTSEC.22` shipped (`DUSTSEC.19`-`22` came out of Phase 5). `DUSTSEC.10` (R8, no relay-connected signal at the hook) is open for a USER decision. `DUSTSEC.23` (an asynchronous redaction walk) and `DUSTSEC.24` (a stack overflow in the named rules, and the credit-card rule inside hex dumps) are filed follow-ups. `npm-claim-golem-run` is open for the user.
 
 **Phase 2: done and merged.** `DUST2.1`-`DUST2.10`, `DUST2.24`, `DUST2.26`. `DUST2.11`-`DUST2.23` are roadmap items and stay queued; `DUST2.25` is blocked on a USER decision. Open contradictions G3, M2, H2, P3, P4 are in spec section 10.
 

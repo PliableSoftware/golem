@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.22
 title: "A secret in an unbroken run longer than 128 characters is never a high-entropy sweep candidate, so it can leak whole"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "A failing-first test with runtime-built values shows an over-length unbro
 depends_on: []
 touches: [src/pipeline/redaction-rules.ts, src/pipeline/redaction.ts, tests]
 created: 2026-10-08
+updated: 2026-10-09T07:36:55.264Z
 ---
 
 ## What this is
@@ -90,3 +91,7 @@ call stack size exceeded` on 10 MB of repeated `sk-ant-` or `sk-` ending in `+` 
 `{32,}` over a multi-megabyte run; verified with `redactIdentifierText`, unchanged code; the proxy
 turns it into a 502). (2) the `credit-card` rule rewrites Luhn-valid digit runs of 13 or more
 inside hex dumps.
+
+## Outcome
+
+shipped (PR 277); two independent review passes

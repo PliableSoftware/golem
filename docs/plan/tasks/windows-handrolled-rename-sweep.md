@@ -1,7 +1,7 @@
 ---
 task: windows-handrolled-rename-sweep
 title: "About 17 modules hand-roll a temp file plus a bare rename and still fail on Windows under contention"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Each module either routes through replaceViaTemp or renameWithRetry, or h
 depends_on: []
 touches: [src/hooks, src/session, src/tasks, src/cli, src/shared, tests]
 created: 2026-10-08
+updated: 2026-10-09T07:36:55.809Z
 ---
 
 ## What this is
@@ -20,3 +21,7 @@ Mechanical, one module per commit. Prefer one shared helper over seventeen copie
 
 - Changing lock semantics (the lock acquisition fix is merged).
 - The proxy-runtime webcache test flake (separate task, may be unrelated).
+
+## Outcome
+
+shipped (PR 275)
