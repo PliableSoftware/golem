@@ -126,6 +126,17 @@ describe("SessionEvent contract: wire form", () => {
   });
 });
 
+describe("SessionDroppedFrame contract (amendment 2026-10-09)", () => {
+  it("is framed with no id: line and carries no seq, so it can never collide with a real event", () => {
+    const frame = sseFrame({ type: "ended", dropped: true, reason: "slow client" });
+    expect(frame).toBe(
+      `event: ended\ndata: ${JSON.stringify({ type: "ended", dropped: true, reason: "slow client" })}\n\n`,
+    );
+    expect(frame).not.toMatch(/^id:/m);
+    expect(frame).not.toContain("seq");
+  });
+});
+
 describe("SessionMessage contract: MessageLedger is idempotent by messageId", () => {
   it("a repeated id resolves to the original seq, never a new one", () => {
     const ledger = new MessageLedger();

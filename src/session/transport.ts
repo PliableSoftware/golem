@@ -17,7 +17,11 @@ import type {
   JoinQueueMessage,
   LiveConversation,
 } from "../interfaces/join-queue.js";
-import type { SessionEvent, SessionMessageResponse } from "../interfaces/session-events.js";
+import type {
+  SessionDroppedFrame,
+  SessionEvent,
+  SessionMessageResponse,
+} from "../interfaces/session-events.js";
 import { appendHostLog } from "./host-log.js";
 import { MessageLedger, type SessionBus } from "./session-bus.js";
 
@@ -170,9 +174,15 @@ export function parseSessionPath(
   return null;
 }
 
-/** One SSE frame. `id:` is the cursor a client resumes from. */
-export function sseFrame(event: SessionEvent): string {
-  return `id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+/**
+ * One SSE frame. `id:` is the cursor a client resumes from. A
+ * {@link SessionDroppedFrame} has no seq, so it gets NO `id:` line: an absent id
+ * leaves the client's `lastEventId` untouched, where any number could collide
+ * with a real event on resume (2026-10-09 amendment).
+ */
+export function sseFrame(event: SessionEvent | SessionDroppedFrame): string {
+  const id = "seq" in event ? `id: ${event.seq}\n` : "";
+  return `${id}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
 function json(res: ServerResponse, status: number, payload: unknown): void {
@@ -231,13 +241,7 @@ export function handleStream(
     {
       send: (event) => write(sseFrame(event)),
       close: (reason) => {
-        write(
-          sseFrame({
-            type: "ended",
-            seq: session.bus.cursor + 1,
-            reason,
-          } as SessionEvent),
-        );
+        write(sseFrame({ type: "ended", dropped: true, reason }));
         res.end();
       },
     },

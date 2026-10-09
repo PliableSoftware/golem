@@ -12,6 +12,18 @@
  *   resumes with `Last-Event-ID: <seq>` and receives strictly what came after.
  *   An implementation MUST NOT reuse or reorder a `seq` within a session.
  *
+ * - **Amendment 2026-10-09 (DUST3.15, USER decision DROP): one frame has no
+ *   `seq`.** When the server closes a subscriber for backpressure it writes a
+ *   synthetic {@link SessionDroppedFrame}. That frame is not a session event: it
+ *   is not stored in the ring and never published, so it has no place in the
+ *   sequence. Stamping it `cursor + 1` collided with the next real event; stamping
+ *   the last real seq reused one. It therefore carries NO `seq` field and the SSE
+ *   framing emits NO `id:` line for it, so an `EventSource` keeps its last real
+ *   `lastEventId` and a resume receives exactly what it missed. It is deliberately
+ *   not a member of {@link SessionEvent}, so "every SessionEvent carries a seq"
+ *   still holds. A client MUST treat it as "this connection was dropped, reconnect"
+ *   and MUST NOT render it as the session having ended.
+ *
  * - **Connection state is an EVENT, never an inference.** ADR-0006's rule — "a
  *   dropped link shows not connected, never a stale approved" — is inherited
  *   here for conversation, where the same failure looks like a message the user
@@ -100,6 +112,17 @@ export interface SessionParkedEvent {
 export interface SessionEndedEvent {
   readonly type: "ended";
   readonly seq: number;
+  readonly reason: string;
+}
+
+/**
+ * The synthetic frame sent to a subscriber the server dropped for backpressure.
+ * NOT a {@link SessionEvent}: no `seq`, no SSE `id:`. The session is still live;
+ * only this connection ended. See the 2026-10-09 amendment above.
+ */
+export interface SessionDroppedFrame {
+  readonly type: "ended";
+  readonly dropped: true;
   readonly reason: string;
 }
 

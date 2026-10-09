@@ -249,7 +249,19 @@ export function renderChatPage(options: ChatPageOptions): string {
   }
 
   function handle(ev) {
-    if (typeof ev.seq === "number" && ev.seq > lastSeq) lastSeq = ev.seq;
+    // The server's synthetic drop frame has no seq: this connection was closed for
+    // backpressure, the session is still live. Reconnect; do not say it ended.
+    if (ev.type === "ended" && ev.dropped === true) {
+      if (es !== null) es.close();
+      append(el("div", "gap", "Connection dropped (" + ev.reason + ") — reconnecting."));
+      setTimeout(connect, 1000);
+      return;
+    }
+    if (typeof ev.seq === "number" && ev.seq > 0) {
+      // A resume must never repeat an event already rendered.
+      if (ev.seq <= lastSeq) return;
+      lastSeq = ev.seq;
+    }
     switch (ev.type) {
       case "attached":
         if (ev.gap) {
