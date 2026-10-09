@@ -60,6 +60,28 @@ describe("groupPlanTasks", () => {
     expect(ready.map((t) => t.id)).toStrictEqual(["B"]);
   });
 
+  it("files a legacy `state: blocked` doc under blocked, shown as queued with its reason", () => {
+    const legacy = task("L", { blocked: "no keys" }, "blocked");
+    const { ready, blocked } = groupPlanTasks([task("A"), legacy]);
+    expect(ready.map((t) => t.id)).toStrictEqual(["A"]);
+    expect(blocked.map((t) => t.id)).toStrictEqual(["L"]);
+    expect(legacy.state).toBe("queued");
+  });
+
+  it("renders both a `blocked:` doc and a legacy `state: blocked` doc in the blocked section", () => {
+    const out = renderPlanIndex([
+      task("A", { blocked: "needs hardware" }),
+      task("L", { blocked: "no keys" }, "blocked"),
+      task("R"),
+    ]);
+    expect(out).toContain("1 ready, 2 blocked, 0 done");
+    const section = out.split("### Blocked or waiting (visible, not lost)")[1] ?? "";
+    expect(section).toContain("[A](tasks/A.md)");
+    expect(section).toContain("[L](tasks/L.md)");
+    expect(section).toContain("no keys");
+    expect(section).not.toContain("[R](tasks/R.md)");
+  });
+
   it("keeps a blocked task in a non-terminal state — blocked is metadata, not a state", () => {
     const { blocked } = groupPlanTasks([task("B", { blocked: "no keys" })]);
     expect(blocked[0]?.state).toBe("queued");

@@ -71,24 +71,21 @@ golem task list --plan         # roadmap only
 golem task done R8.5 --note …  # close it, then regenerate
 ```
 
-### `blocked`: metadata or state? (OPEN, H2)
+### `blocked` is metadata, not a state (decided, H2)
 
-**This is an unresolved contradiction, left for the user** (DECISIONS.md H2; Decision
-55(d) is a recorded decision, so the default rule is not applied). The page records both
-readings and does not choose.
+USER decision 2026-10-09 (DECISIONS.md H2), matching Decision 55(d) and CLAUDE.md:
+`blocked` is a frontmatter key on a `queued` task, not a lifecycle state. A blocked task
+is work that exists and will be done; burying it in a state is how items get lost. The
+`blocked:` key carries the reason, and `golem task index` treats a task with
+`plan.blocked` set, or an **unfinished** `depends_on`, as blocked
+(`src/cli/plan-index.ts:35-66`). A **dangling** dependency does not count, so a typo
+cannot park a task forever.
 
-- **Decision 55(d) / the original intent:** `blocked` is **metadata, not a state**. A
-  blocked task stays `queued`; it is work that exists and will be done, and burying it in
-  a terminal state is how items get lost. The frontmatter `blocked:` key carries the
-  reason, and `golem task index` treats a task with `plan.blocked` set, or an
-  **unfinished** `depends_on`, as blocked (`src/cli/plan-index.ts:35-66`). A **dangling**
-  dependency does not count, so a typo cannot park a task forever.
-- **The code and `docs/plan/tasks/README.md` also treat it as a state:** `TASK_STATES`
-  contains `blocked` (`src/tasks/types.ts:19-27`, commented "waiting on the human"), and
-  the README's `state` row lists `queued` · `running` · `blocked` · `paused` · `done` ·
-  `failed` · `cancelled` (`docs/plan/tasks/README.md:35`).
-
-Both exist in the shipped code today; which one is canonical is not decided here.
+- `TASK_STATES` no longer lists `blocked`, and the README's `state` row no longer offers it.
+- **Read compatibility is kept.** A document (or stored task file) that still says
+  `state: blocked` parses as `queued`; `parsePlanTask` keeps its `blocked:` reason, or
+  fills a placeholder reason when it has none, so the index still files it under blocked.
+  No existing task document was edited.
 
 ## Escalating a task
 

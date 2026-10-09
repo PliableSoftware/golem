@@ -32,13 +32,13 @@ golem task done R8.5 --note …  # close it; re-run `index --write`
 |---|---|
 | `task` | stable id, also the filename (`R8.5`, `21e`). Never reused. |
 | `title` | one-line goal, as it appears in the index. |
-| `state` | `queued` · `running` · `blocked` · `paused` · `done` · `failed` · `cancelled`. |
+| `state` | `queued` · `running` · `paused` · `done` · `failed` · `cancelled`. There is no `blocked` state: blocked is the `blocked` key below, on a `queued` task. An old `state: blocked` is still read, as `queued` with its reason. |
 | `owner` | `agent` (an agent can do it) or `user` (an outward or credentialed act an agent must not take). |
 | `size` | `S` · `M` · `L` — rough effort, for picking work, not for scheduling. |
 | `discipline` | optional, free-form — which *kind* of worker should staff this (`code`, `review`, `write`, whatever a project decides). The routing axis, distinct from `owner` (the permission axis: may an agent do this at all). **Inert on an unrecognised value, and inert when absent**: no validation, no warning, no staffing lookup — a task naming a discipline nobody staffs behaves exactly as one naming none. That is deliberate (USER, 2026-08-30), not a gap to "fix" into a closed set; staffing becomes visible on demand via `golem personas` (R14.1), not by a warning here. |
 | `design` | where the design already lives, so the brief does not restate it. |
 | `gate` | the one-line definition of done / what decides it. |
-| `blocked` | why it cannot start *now*, when that is a fact about the world (no hardware, no keys, needs a decision). Keeps it visible rather than lost. |
+| `blocked` | metadata, not a state (USER decision H2): the task stays `queued`. Why it cannot start *now*, when that is a fact about the world (no hardware, no keys, needs a decision). Keeps it visible rather than lost. |
 | `created` | optional ISO date the doc was written; read into the task's `createdAt`. |
 | `updated` | optional ISO date of the last change; falls back to `created` when absent. |
 | `depends_on` | task ids that must land first. |

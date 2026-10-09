@@ -16,6 +16,7 @@ import {
   planTaskSlug,
   planTasksDir,
   serializePlanTask,
+  TASK_STATES,
 } from "../../../src/tasks/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
@@ -73,6 +74,24 @@ describe("parsePlanTask", () => {
   it("reads a `blocked` reason", () => {
     const task = parsePlanTask("---\ntask: R7.5\nblocked: needs credentials\n---\n\nbody\n");
     expect(task.plan?.blocked).toBe("needs credentials");
+  });
+
+  it("reads a legacy `state: blocked` as queued, keeping the stated reason", () => {
+    const task = parsePlanTask(
+      "---\ntask: R7.6\nstate: blocked\nblocked: needs credentials\n---\n\nbody\n",
+    );
+    expect(task.state).toBe("queued");
+    expect(task.plan?.blocked).toBe("needs credentials");
+  });
+
+  it("reads a legacy `state: blocked` with no reason as queued with a placeholder reason", () => {
+    const task = parsePlanTask("---\ntask: R7.7\nstate: blocked\n---\n\nbody\n");
+    expect(task.state).toBe("queued");
+    expect(task.plan?.blocked).toMatch(/state: blocked/);
+  });
+
+  it("does not list blocked among the states the tool writes", () => {
+    expect(TASK_STATES as readonly string[]).not.toContain("blocked");
   });
 
   it("reads a free-form `discipline`", () => {
