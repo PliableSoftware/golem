@@ -566,22 +566,24 @@ export async function checkWiki(
     }
   }
 
-  // R11.5 — a debrief nobody indexed is a debrief nobody finds.
+  // R11.5 — a page nobody indexed is a page nobody finds.
   //
   // `WIKI.md`'s Index is the entry point the wiki-first rule tells every agent
-  // to skim, and the close-out checklist says to author a debrief — but nothing
-  // tied the two together, so the Index quietly fell 39 debriefs behind (every
-  // one from 2026-07-16 on). The vector index still found them; graph traversal
-  // from the Index did not, which is the half the wiki exists for.
+  // to skim; graph traversal starts there. A page is listed when the Index body
+  // names its wiki-relative path (how debriefs are listed) or links its title
+  // as `[[Title]]` (how every other page is listed). Originally scoped to
+  // `debriefs/` only, which let six concept/question/synthesis pages go
+  // unindexed unnoticed (DUST2.8).
   //
-  // Scoped to `debriefs/` deliberately: those are append-only records that must
-  // stay reachable. Concept pages are linked from each other and from the zone
-  // sections, so requiring an Index line for every one of them would be noise.
+  // Exempt: the schema page itself (`type: schema`, i.e. WIKI.md) — it IS the
+  // index. There is no generated-page allow-list because no wiki page is
+  // generated; add one here if that changes.
   const indexPage = pages.find((p) => p.type === "schema");
   if (indexPage !== undefined) {
     for (const page of pages) {
-      if (!page.relPath.startsWith("debriefs/")) continue;
+      if (page === indexPage) continue;
       if (indexPage.body.includes(page.relPath)) continue;
+      if (indexPage.body.includes(`[[${page.title}]]`)) continue;
       issues.push({
         relPath: page.relPath,
         message: "not listed in WIKI.md — add an Index line so graph traversal can reach it",
