@@ -159,6 +159,29 @@ export interface BuildProxyOptions {
 }
 
 /**
+ * The live dial reload: effective settings (team layer included, from its local
+ * cache) re-read from disk. Fail-safe — a read that throws keeps `fallback`'s
+ * policy rather than dropping to a default, because compressing less (or more)
+ * than was asked for because a config read blipped is exactly the class of
+ * misreport this project keeps closing.
+ */
+export async function reloadPolicy(
+  dir: string,
+  fallback: GolemSettings,
+  userDir?: string,
+): Promise<PipelinePolicy> {
+  try {
+    const fresh = await loadEffectiveConfig({
+      projectDir: dir,
+      ...(userDir !== undefined && { userDir }),
+    });
+    return policyFromSettings(fresh.settings);
+  } catch {
+    return policyFromSettings(fallback);
+  }
+}
+
+/**
  * Build a `GolemProxy` wired to the A3 redaction→compression pipeline exactly
  * the way `golem proxy` wires it: `NativeLosslessCompression` rooted at `dir`,
  * the OPT-IN Headroom semantic sidecar when `compression.headroom_sidecar` is
@@ -213,17 +236,7 @@ export function buildProxyFromSettings(
     if (cachedPolicy !== null && now - cachedPolicy.at < DIAL_RELOAD_TTL_MS) {
       return cachedPolicy.policy;
     }
-    let policy: PipelinePolicy;
-    try {
-      const fresh = await loadEffectiveConfig({ projectDir: dir });
-      policy = policyFromSettings(fresh.settings);
-    } catch {
-      // Fail-safe: keep the policy we were built with rather than dropping to a
-      // default. Compressing less (or more) than the user asked for because a
-      // config read blipped is exactly the class of misreport this project keeps
-      // closing.
-      policy = policyFromSettings(settings);
-    }
+    const policy = await reloadPolicy(dir, settings);
     cachedPolicy = { at: now, policy };
     return policy;
   };

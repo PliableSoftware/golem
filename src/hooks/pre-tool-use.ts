@@ -66,7 +66,7 @@ import { toolArgument } from "./tool-argument.js";
  * false regardless: erroring into a session-wide hard block is worse than briefly
  * degrading to advisory, so a config-read failure never blocks every tool call.
  */
-async function readSnoozeEnforced(projectDir: string): Promise<boolean> {
+export async function readSnoozeEnforced(projectDir: string): Promise<boolean> {
   try {
     const { settings } = await loadEffectiveConfig({ projectDir });
     return settings.snooze.enforce;
@@ -88,7 +88,7 @@ export interface SpawnGateSettings {
  * deadlock a session the way a session-wide deny could — and "never silently
  * allow" is the whole point of the gate.
  */
-async function readSpawnGateSettings(projectDir: string): Promise<SpawnGateSettings> {
+export async function readSpawnGateSettings(projectDir: string): Promise<SpawnGateSettings> {
   try {
     const { settings } = await loadEffectiveConfig({ projectDir });
     return {

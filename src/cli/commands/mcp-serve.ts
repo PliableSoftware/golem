@@ -165,6 +165,22 @@ export function closeKnowledgeWatchers(knowledge: KnowledgeBase | undefined): vo
   if (typeof closable?.closeWatchers === "function") closable.closeWatchers();
 }
 
+/**
+ * The settings the MCP server runs under: the effective config, team layer
+ * included (from its local cache; the server never reaches the network for it).
+ * One named seam so a test can prove the server sees team policy.
+ */
+export async function readMcpServeSettings(
+  projectDir: string,
+  userDir?: string,
+): Promise<GolemSettings> {
+  const { settings } = await loadEffectiveConfig({
+    projectDir,
+    ...(userDir !== undefined && { userDir }),
+  });
+  return settings;
+}
+
 export default function register(program: Command): void {
   const mcp = program.command("mcp").description("Golem MCP server");
   mcp
@@ -173,7 +189,7 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory (for the CCR store)", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
-        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
+        const settings = await readMcpServeSettings(opts.dir);
         let knowledge: KnowledgeBase | undefined;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled

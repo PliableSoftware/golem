@@ -39,8 +39,10 @@
  * a ledger write never touches either of them.
  */
 
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { defaultUserDir } from "../config/paths.js";
+import { TEAM_CACHE_DIR_NAME } from "../portal/binding.js";
 import type { InitAction } from "./init.js";
 import { syncPersonaArtifacts } from "./persona-sync.js";
 
@@ -90,6 +92,31 @@ async function fileSignature(absPath: string): Promise<string> {
 }
 
 /**
+ * One signature for every cached team layer under `<userDir>/teams/`.
+ *
+ * The team layer is part of the effective settings (team-layer-everywhere), and
+ * it changes when `golem team sync` rewrites its cache, not when a settings file
+ * does. Without this a running daemon would keep enforcing the old team policy
+ * until something else happened to touch a settings file. The directory is
+ * listed rather than one path derived, so the watcher needs no binding: an
+ * unlinked project has no `teams/` entry that matters and the signature is
+ * simply constant.
+ */
+export async function teamCacheSignature(userDir: string): Promise<string> {
+  const dir = path.join(userDir, TEAM_CACHE_DIR_NAME);
+  let names: string[];
+  try {
+    names = (await readdir(dir)).filter((n) => n.endsWith(".json")).sort();
+  } catch {
+    return ABSENT;
+  }
+  const sigs = await Promise.all(
+    names.map(async (n) => `${n}=${await fileSignature(path.join(dir, n))}`),
+  );
+  return sigs.join(",");
+}
+
+/**
  * Start polling `.golem/settings.json` and `.golem/settings.local.json` for
  * `projectDir`, resyncing the persona-generated artifacts whenever either
  * changes. Runs one sync immediately, before the poll loop is armed, so a
@@ -105,6 +132,11 @@ export async function startPersonaWatcher(
   const debounceMs = options.debounceMs ?? 500;
   const pollMs = options.pollMs ?? 1000;
   const paths = personaSettingsPaths(projectDir);
+  const userDir = options.userDir ?? defaultUserDir();
+  const signatures = async (): Promise<string[]> => [
+    ...(await Promise.all(paths.map((p) => fileSignature(p)))),
+    await teamCacheSignature(userDir),
+  ];
 
   const sync = async (): Promise<void> => {
     // Defensive, even though `syncPersonaArtifacts` already isolates a
@@ -138,14 +170,14 @@ export async function startPersonaWatcher(
 
   // Baseline signatures: only a change AFTER the watcher starts is polled for
   // (the immediate sync above already covers whatever is on disk at start).
-  let prev = await Promise.all(paths.map((p) => fileSignature(p)));
+  let prev = await signatures();
   let stopped = false;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
   const poll = async (): Promise<void> => {
     let cur: string[];
     try {
-      cur = await Promise.all(paths.map((p) => fileSignature(p)));
+      cur = await signatures();
     } catch {
       return; // one of the two briefly unreadable (mid-write) — try again next tick
     }
