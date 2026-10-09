@@ -3,9 +3,9 @@
  *
  * The KnowledgeBase is store-agnostic: it talks to a `VectorDriver`, so the
  * default pure-TS `FileVectorDriver` (durable, under `.golem/knowledge`), a
- * possible LanceDB engine (decision memo, verification-notes §26) and a
- * Qdrant-server driver (config URL, spec Decision 12; not implemented, see
- * `openKnowledgeBase`) are interchangeable, and a native engine can be an
+ * possible LanceDB engine (decision memo, verification-notes §26) are
+ * interchangeable (a Qdrant-server driver was once planned and is not
+ * implemented; `knowledge.vector_db_url` is deprecated and ignored), and a native engine can be an
  * OPTIONAL dependency lazily loaded behind this seam (CLAUDE.md: no heavyweight
  * native deps in the default install).
  *

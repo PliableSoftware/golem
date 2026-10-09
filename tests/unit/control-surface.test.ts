@@ -28,21 +28,6 @@ let projectDir: string;
 
 /** Keeps the header cheap and deterministic: no Ollama probe, no real network. */
 const localProbe = async () => ({ reachable: false });
-/**
- * `golemInit`'s external-state probe, injected.
- *
- * The default one reads the developer's HOME and refuses when there is no
- * `~/.claude` / `~/.claude.json`. The slider apply path ACTIVATES an
- * uninitialized project (Decision 43), so without this the test depended on
- * Claude Code being installed on the machine running it — which is why it was the
- * single red test in an otherwise green CI suite for four consecutive merges,
- * failing identically on Node 22 and 24. Same shape every other init-touching
- * test in this repo already uses.
- */
-const initProbe = {
-  claudeCodeInstalled: () => Promise.resolve(true),
-  headroomWrapActive: () => Promise.resolve(false),
-};
 const OPTS = () => ({
   projectDir,
   userDir,
@@ -50,7 +35,6 @@ const OPTS = () => ({
   env: {},
   probeTimeoutMs: 50,
   localProbe,
-  initProbe,
 });
 
 const projectFile = () => path.join(projectDir, ".golem", "settings.json");

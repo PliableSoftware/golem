@@ -16,11 +16,7 @@ import type { VectorDriver } from "./driver.js";
 import { inferenceEmbedFn } from "./embedder.js";
 import { FileVectorDriver } from "./file-driver.js";
 import { hashingEmbedFn } from "./hashing-embedder.js";
-import {
-  GolemKnowledgeBase,
-  type KnowledgeBaseOptions,
-  NotImplementedYetError,
-} from "./knowledge-base.js";
+import { GolemKnowledgeBase, type KnowledgeBaseOptions } from "./knowledge-base.js";
 
 export type { RawChunk } from "./chunker.js";
 export {
@@ -139,11 +135,6 @@ export function knowledgeDir(projectDir: string): string {
 
 export interface OpenKnowledgeBaseOptions extends KnowledgeBaseOptions {
   readonly projectDir: string;
-  /**
-   * Qdrant server URL (spec Decision 12). When set, opening throws
-   * NotImplementedYetError (no server driver yet).
-   */
-  readonly vectorDbUrl?: string;
   /** Inject a driver directly (tests, or another driver). */
   readonly driver?: VectorDriver;
   /**
@@ -158,8 +149,7 @@ export interface OpenKnowledgeBaseOptions extends KnowledgeBaseOptions {
 
 /**
  * Build a KnowledgeBase, selecting the vector driver and the embedder:
- *  - driver: an injected `driver` wins; else `vectorDbUrl` throws
- *    NotImplementedYetError (no Qdrant driver); else the embedded default
+ *  - driver: an injected `driver` wins; else the embedded default
  *    (`FileVectorDriver`, durable; in-memory is for tests);
  *  - embedder: explicit `embed` wins; else `inference` (WS-D bge-m3, SEMANTIC);
  *    else the pure-TS hashing embedder (LEXICAL) so the KB works with zero setup.
@@ -178,12 +168,6 @@ export function openKnowledgeBase(options: OpenKnowledgeBaseOptions): KnowledgeB
 
 function selectDriver(options: OpenKnowledgeBaseOptions): VectorDriver {
   if (options.driver !== undefined) return options.driver;
-  if (options.vectorDbUrl !== undefined && options.vectorDbUrl !== "") {
-    throw new NotImplementedYetError(
-      `Qdrant server driver (vector_db_url=${options.vectorDbUrl})`,
-      "C1-followup",
-    );
-  }
   // Embedded default: the durable, pure-TS file driver under knowledgeDir — an
   // index survives across sessions with no native dependency (§26 refinement:
   // brute-force at dev-KB scale; LanceDB stays the OPTIONAL scale upgrade behind

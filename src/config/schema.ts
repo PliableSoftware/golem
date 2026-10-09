@@ -16,8 +16,8 @@
  *   in docs/plan/verification-notes.md §17.
  * - `inference.ollama_base_url` — spec §6 (Ollama default backend,
  *   URL-addressable for LAN offload, Decision 12).
- * - `knowledge.*` — enabled toggle, optional external vector-DB URL (spec §6:
- *   embedded store by default, Qdrant server mode via config URL), watch paths.
+ * - `knowledge.*` — enabled toggle, watch paths (the embedded store is always
+ *   used; the former `vector_db_url` key is deprecated and ignored).
  * - `telemetry.*` — enabled toggle + dashboard port (spec §5).
  *
  * Section names MUST be single snake_case tokens without underscores — the
@@ -520,8 +520,13 @@ export const SETTINGS_LEAVES = {
   knowledge: {
     /** Master toggle for the vector knowledge base. */
     enabled: z.boolean(),
-    /** Optional external vector-DB URL (e.g. Qdrant server); embedded store when unset. */
-    vector_db_url: z.string().url().optional(),
+    /**
+     * DEPRECATED, no effect. No external vector-DB driver exists; the embedded
+     * store is always used. Still accepted (any value, so an old malformed
+     * or non-string value cannot fail a load) and warned about once per load; see
+     * `DEPRECATED_SETTINGS` in `./migrations.ts`.
+     */
+    vector_db_url: z.unknown().optional(),
     /** Paths auto-ingested and watched for changes. */
     watch_paths: z.array(z.string()),
     /**

@@ -92,7 +92,6 @@ describe("deriveKind", () => {
     // proxy.upstream_model is `.optional()`; compression.level is an enum
     // through the legacy 0-5 remap. Both must report their underlying type.
     expect(kindOf("proxy", "upstream_model")).toBe("text");
-    expect(kindOf("knowledge", "vector_db_url")).toBe("url");
     expect(kindOf("compression", "level")).toBe("enum");
   });
 
