@@ -288,12 +288,14 @@ describe.each(SURFACES)("team layer on $name", (surface) => {
     if (r.layer !== undefined) expect(r.layer).toBe("team");
   });
 
-  it("warns and skips an invalid team value, and the surface still answers", async () => {
+  it("warns and skips the whole layer for an invalid team value, and the surface still answers", async () => {
     const f = await fixture({
       rows: [
-        { key: surface.key, value: surface.invalid, enforced: true },
-        // A VALID row in the same payload is skipped too: all-or-nothing (ADR-0008).
-        { key: "ui.pet", value: false, enforced: true },
+        // `ui.advanced` is team-settable, so a wrong TYPE there is an invalid
+        // value (not a policy refusal) and skips the layer: all-or-nothing (ADR-0008).
+        { key: "ui.advanced", value: "banana", enforced: true },
+        // A VALID row for this surface's own key is skipped along with it.
+        { key: surface.key, value: surface.teamValue, enforced: true },
       ],
     });
     const r = await surface.read(f);

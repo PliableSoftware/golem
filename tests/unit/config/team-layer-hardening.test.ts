@@ -16,7 +16,7 @@ import { readMcpServeSettings } from "../../../src/cli/commands/mcp-serve.js";
 import { getConfig, listConfig } from "../../../src/cli/config.js";
 import { collectStatus } from "../../../src/cli/status-collect.js";
 import { collectControlSurface } from "../../../src/config/control-surface.js";
-import { loadEffectiveConfig, REMOTE_DENIED_SETTINGS } from "../../../src/config/index.js";
+import { loadEffectiveConfig } from "../../../src/config/index.js";
 import {
   readTeamLayerCache,
   translateTeamRows,
@@ -61,67 +61,6 @@ async function project(opts: {
 const load = (p: { userDir: string; projectDir: string }) =>
   loadEffectiveConfig({ projectDir: p.projectDir, userDir: p.userDir, env: {} });
 
-describe("interim stricter-only floor", () => {
-  it.each([
-    ["plugins.enabled", false],
-    ["plugins.load", ["evil-plugin"]],
-    ["telemetry.dashboard_lan", true],
-    ["proxy.upstream_base_url", "https://evil.example"],
-  ])("a team may not set %s at all", async (key, value) => {
-    expect(REMOTE_DENIED_SETTINGS.has(key)).toBe(true);
-    for (const enforced of [false, true]) {
-      const p = await project({ rows: [{ key, value, enforced }] });
-      const config = await load(p);
-      const [section, leaf] = key.split(".") as [string, string];
-      const got = (config.settings as unknown as Record<string, Record<string, unknown>>)[
-        section
-      ]?.[leaf];
-      expect(got).not.toEqual(value);
-      expect(config.provenance[key]?.layer).toBe("default");
-      expect(config.warnings.some((w) => w.includes("REFUSED") && w.includes(key))).toBe(true);
-    }
-  });
-
-  it("denies plugins.enabled even when the team tries to turn it OFF (no direction is declared)", async () => {
-    const p = await project({ rows: [{ key: "plugins.enabled", value: false, enforced: true }] });
-    const config = await load(p);
-    expect(config.settings.plugins.enabled).toBe(true);
-  });
-
-  it.each([
-    "security.write_lan",
-    "security.join_injection",
-  ])("a team may force %s to false but never to true", async (key) => {
-    const [section, leaf] = key.split(".") as [string, string];
-    const read = (c: Awaited<ReturnType<typeof load>>) =>
-      (c.settings as unknown as Record<string, Record<string, unknown>>)[section]?.[leaf];
-
-    // Loosening: refused, loudly, whatever the importance.
-    for (const enforced of [false, true]) {
-      const c = await load(await project({ rows: [{ key, value: true, enforced }] }));
-      expect(read(c)).toBe(false);
-      expect(c.warnings.some((w) => w.includes("REFUSED") && w.includes(key))).toBe(true);
-    }
-
-    // Tightening: accepted and enforced over the user's own loosening.
-    const p = await project({
-      userSettings: { [section]: { [leaf]: true } },
-      rows: [{ key, value: false, enforced: true }],
-    });
-    const c = await load(p);
-    expect(read(c)).toBe(false);
-    expect(c.provenance[key]?.layer).toBe("team");
-  });
-
-  it("refuses a non-boolean for a false-only key rather than coercing it", async () => {
-    const c = await load(
-      await project({ rows: [{ key: "security.write_lan", value: "false", enforced: true }] }),
-    );
-    expect(c.settings.security.write_lan).toBe(false);
-    expect(c.warnings.some((w) => w.includes("REFUSED"))).toBe(true);
-  });
-});
-
 describe("hostile row keys", () => {
   const KEYS = [
     "proxy.constructor",
@@ -141,6 +80,11 @@ describe("hostile row keys", () => {
       ],
     });
     const config = await load(p);
+    // The hostile row is a plain unknown key: it must not cost the team its
+    // legitimate tightening in the same payload, and the layer is not skipped.
+    expect(config.settings.ui.pet).toBe(false);
+    expect(config.provenance["ui.pet"]?.layer).toBe("team");
+    expect(config.warnings.some((w) => w.includes("SKIPPED"))).toBe(false);
     expect(config.settings.proxy.upstream_base_url).toBe("https://api.anthropic.com");
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.getPrototypeOf(config.settings.proxy)).toBe(Object.prototype);

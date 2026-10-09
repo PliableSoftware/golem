@@ -44,8 +44,9 @@ describe("loadEffectiveConfig fallback", () => {
 
     expect(config.settings.telemetry.enabled).toBe(true);
     expect(config.team.teamLayer).toBeUndefined();
+    expect(config.teamFailure).toContain("boom");
     expect(
-      config.warnings.some((w) => w.includes("team layer SKIPPED") && w.includes("boom")),
+      config.warnings.some((w) => w.includes("TEAM POLICY NOT APPLIED") && w.includes("boom")),
     ).toBe(true);
   });
 });

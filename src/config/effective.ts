@@ -43,6 +43,7 @@
  */
 
 import type { TeamLayerResolution } from "../portal/team-layer.js";
+import { ConfigError } from "./errors.js";
 import { type GolemConfig, type LoadConfigOptions, loadConfig } from "./loader.js";
 import { defaultUserDir } from "./paths.js";
 
@@ -54,6 +55,8 @@ export interface LoadEffectiveConfigOptions extends LoadConfigOptions {
 export interface EffectiveConfig extends GolemConfig {
   /** How the team layer resolved. Always present; usually "nothing applies". */
   readonly team: TeamLayerResolution;
+  /** Set when the team layer could not be applied for a reason other than an invalid value. */
+  readonly teamFailure?: string;
 }
 
 /** Nothing applies, and nothing was touched to find out. */
@@ -85,15 +88,7 @@ export async function loadEffectiveConfig(
       ...(now === undefined ? {} : { now }),
     });
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return {
-      ...first,
-      warnings: [
-        ...first.warnings,
-        `team layer SKIPPED: it could not be resolved (${reason}). Using local configuration.`,
-      ],
-      team: UNLINKED,
-    };
+    return degraded(first, UNLINKED, err, "the team layer could not be read");
   }
 
   if (team.teamLayer === undefined) {
@@ -110,24 +105,68 @@ export async function loadEffectiveConfig(
 
   try {
     const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
-    return { ...second, team };
-  } catch (err) {
-    // The loader already skips a bad team layer with a warning. This catches
-    // anything else a team payload could provoke: nothing on the team path may
-    // stop a proxy, a hook or the MCP server (ADR-0008, DUSTSEC.14).
-    const reason = err instanceof Error ? err.message : String(err);
+    // Keys the loader refused (the relative rules need the member's own value, so
+    // only the loader can say) are not "applied", whatever the cache rows said.
+    const refused = new Set(second.refused);
+    const isRefused = (label: string): boolean => refused.has(label.replace(/ \(enforced\)$/, ""));
     return {
-      ...first,
-      warnings: [
-        ...first.warnings,
-        `team layer SKIPPED: applying it failed (${reason}). Using local configuration.`,
-      ],
+      ...second,
       team: {
-        fromCache: team.fromCache,
-        applied: [],
-        skipped: [],
-        ...(team.notice !== undefined && { notice: team.notice }),
+        ...team,
+        applied: team.applied.filter((label) => !isRefused(label)),
+        skipped: [
+          ...team.skipped,
+          ...second.refused
+            .filter((k) => !team.skipped.some((x) => x.key === k))
+            .map((key) => ({ key, reason: "REFUSED: the team policy only allows tightening" })),
+        ],
       },
     };
+  } catch (err) {
+    return degraded(first, team, err, "applying the team layer failed");
   }
+}
+
+let announced = false;
+
+/**
+ * The team layer could not be applied for a reason that is NOT an invalid team
+ * value. ConfigError is the loader's own, expected path (it skips the layer with
+ * a warning inside `loadConfig`); anything else is a bug or a broken disk, and
+ * it must not stop a proxy, a hook or the MCP server (ADR-0008, DUSTSEC.14), so
+ * we still return the local result. But a machine that quietly runs without the
+ * policy someone believes is in force is the hazard the whole design exists to
+ * prevent, so this is loud: a warning on every surface, a `teamFailure` field,
+ * and one stderr line per process.
+ */
+function degraded(
+  first: GolemConfig,
+  team: TeamLayerResolution,
+  err: unknown,
+  what: string,
+): EffectiveConfig {
+  const reason = err instanceof Error ? err.message : String(err);
+  const expected = err instanceof ConfigError;
+  const message = expected
+    ? `team layer SKIPPED: ${what} (${reason}). Using local configuration.`
+    : `TEAM POLICY NOT APPLIED: ${what} (${reason}). This machine is running WITHOUT its team's settings until this is fixed.`;
+  if (!expected && !announced) {
+    announced = true;
+    try {
+      process.stderr.write(`golem: ${message}\n`);
+    } catch {
+      // stderr closed: the warning below still travels with the result.
+    }
+  }
+  return {
+    ...first,
+    warnings: [...first.warnings, message],
+    team: {
+      fromCache: team.fromCache,
+      applied: [],
+      skipped: [],
+      ...(team.notice !== undefined && { notice: team.notice }),
+    },
+    teamFailure: message,
+  };
 }

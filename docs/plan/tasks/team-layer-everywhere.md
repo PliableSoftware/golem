@@ -147,3 +147,12 @@ Not matched by the grep because they hand the loader's result on or wrap it: `sr
 - Guard test is per LINE, covers single quotes, template literals, `files.local` style reads, and fails on stale exemptions.
 - `writeTeamLayerCache` uses `replaceViaTemp`.
 - `team.notice` for a linked team that is NOT applied (sync off, no cache, portal denial) is appended to `warnings` inside `loadEffectiveConfig`, so status, TUI, config (now printed on stderr and carried in `--json`), MCP (stderr) and the proxy all show it.
+
+### Second review (2026-10-09): the deny-list is replaced by a default-deny table
+
+- `src/config/team-policy.ts` classifies every one of the 78 schema leaves (settable, false-only, true-only, lower-only, narrow-roots, denied); unknown keys are denied; `TEAM_POLICY` is a total `Record` over the schema's leaf paths and `tests/unit/config/team-policy.test.ts` fails when the schema has a leaf with no class. `REMOTE_DENIED_SETTINGS` and `REMOTE_FALSE_ONLY_SETTINGS` are derived from it. The interim lists from the first review are gone.
+- Relative rules (`lower-only`, `narrow-roots`) are judged in the loader against the member's own value at the moment the team layer applies; the loader reports refused keys in `GolemConfig.refused`, and `loadEffectiveConfig` removes them from `team.applied`.
+- `translateTeamRows` reports policy-refused rows as `REFUSED:` in `skipped` (so `golem team sync` lists them as refused) and settles duplicate keys last-wins before judging.
+- `loadEffectiveConfig`: a ConfigError stays the loader's quiet "SKIPPED"; any other throw returns the local result but is LOUD: warning `TEAM POLICY NOT APPLIED`, `teamFailure` on the result, one stderr line per process.
+- `readTeamLayerCache` returns null only for ENOENT or a corrupt file; sharing violations are retried (win32, via `win-fs-retry`) and then thrown, which the loader path reports as above.
+- Examples swapped in existing tests: none beyond the first review's `security.join_injection` -> `snooze.enforce` (both still settable by a team: `snooze.enforce` is true-only and the tests send true).

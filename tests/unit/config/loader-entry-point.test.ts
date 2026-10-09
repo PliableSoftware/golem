@@ -31,12 +31,69 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Source lines with whole-line comments dropped; keeps `file:line` for messages. */
-function codeLines(file: string): { line: number; text: string }[] {
-  return readFileSync(file, "utf8")
+/**
+ * Source lines with COMMENTS blanked but all code kept, even when code follows a
+ * comment on the same line (`/* x *\/ readFile(...)`) or precedes a trailing `//`.
+ * A small scanner rather than a regex: strings and template literals are kept
+ * verbatim (a path inside a string IS the thing being looked for), comment
+ * markers inside strings are not comments, and `'` / `"` strings end at the line
+ * break so one stray quote cannot swallow the rest of the file.
+ */
+export function codeLines(file: string): { line: number; text: string }[] {
+  return stripComments(readFileSync(file, "utf8"))
     .split("\n")
-    .map((text, i) => ({ line: i + 1, text }))
-    .filter(({ text }) => !/^\s*(\*|\/\/|\/\*)/.test(text));
+    .map((text, i) => ({ line: i + 1, text }));
+}
+
+export function stripComments(src: string): string {
+  let out = "";
+  let i = 0;
+  let mode: "code" | "block" | "line" | "'" | '"' | "`" = "code";
+  while (i < src.length) {
+    const c = src[i] as string;
+    const next = src[i + 1];
+    if (mode === "code") {
+      if (c === "/" && next === "*") {
+        mode = "block";
+        out += "  ";
+        i += 2;
+      } else if (c === "/" && next === "/") {
+        mode = "line";
+        out += "  ";
+        i += 2;
+      } else {
+        if (c === "'" || c === '"' || c === "`") mode = c;
+        out += c;
+        i += 1;
+      }
+    } else if (mode === "block") {
+      if (c === "*" && next === "/") {
+        mode = "code";
+        out += "  ";
+        i += 2;
+      } else {
+        out += c === "\n" ? "\n" : " ";
+        i += 1;
+      }
+    } else if (mode === "line") {
+      if (c === "\n") {
+        mode = "code";
+        out += c;
+      } else out += " ";
+      i += 1;
+    } else {
+      out += c;
+      if (c === "\\") {
+        out += next ?? "";
+        i += 2;
+        continue;
+      }
+      if (c === mode) mode = "code";
+      else if (c === "\n" && mode !== "`") mode = "code";
+      i += 1;
+    }
+  }
+  return out;
 }
 
 const rel = (f: string): string => path.relative(SRC, f).split(path.sep).join("/");
@@ -199,6 +256,26 @@ describe("one settings entry point (team-layer-everywhere)", () => {
   it("every exemption still matches a line (no stale exemptions)", () => {
     expect(staleExemptions(RAW_LOADER_PATTERN, RAW_LOADER_EXEMPT)).toEqual([]);
     expect(staleExemptions(SETTINGS_FILE_PATTERN, SETTINGS_FILE_EXEMPT)).toEqual([]);
+  });
+
+  describe("comment stripping", () => {
+    const code = (src: string): string => stripComments(src).trim();
+    it("keeps code that follows a block comment on the same line", () => {
+      expect(code("/* why */ readFile('.golem/settings.json')")).toContain("settings.json");
+    });
+    it("keeps code before a trailing line comment and drops the comment", () => {
+      const out = code("const a = loadConfig(); // loadEffectiveConfig");
+      expect(out).toContain("loadConfig()");
+      expect(out).not.toContain("loadEffectiveConfig");
+    });
+    it("drops whole comment lines and multi-line block comments", () => {
+      expect(code("/**\n * loadConfig\n */\nconst x = 1;")).not.toContain("loadConfig");
+    });
+    it("does not treat // inside a string as a comment", () => {
+      expect(code("const u = 'http://x'; readFile(`${d}/.golem/settings.json`);")).toContain(
+        "settings.json",
+      );
+    });
   });
 
   describe("the detector itself", () => {

@@ -60,6 +60,8 @@ import path from "node:path";
 import { z } from "zod";
 import { replaceViaTemp } from "../config/file-io.js";
 import { SECTION_NAMES } from "../config/schema.js";
+import { staticRefusal } from "../config/team-policy.js";
+import { isRenameRetryable } from "../shared/win-fs-retry.js";
 import { VERSION } from "../version.js";
 import {
   readTeamBinding,
@@ -167,10 +169,12 @@ export interface TranslatedTeamLayer {
  *    shape every settings origin has. A row that is not is SKIPPED with a
  *    reason rather than coerced, since guessing at `a.b.c` would either invent
  *    a section or silently drop a level.
- * 2. Nothing is filtered for policy. `proxy.bypass_all` arriving here is
+ * 2. Nothing is dropped for policy. `proxy.bypass_all` arriving here is
  *    translated like any other key and handed to the loader, which refuses it
- *    LOUDLY as a remote origin's key. Dropping it quietly here would leave an
- *    admin believing the portal set it — see the module note on the floor.
+ *    LOUDLY as a remote origin's key. A row the team policy refuses is listed in
+ *    `skipped` as REFUSED and left out of `applied`; the relative rules
+ *    (lower-only, narrow-roots) need the member's own value and are finished by
+ *    the loader, which reports them in `GolemConfig.refused`.
  *
  * A later row wins over an earlier one for the same key: the wire is a list and
  * the loader takes an object, so a duplicate has to resolve somehow, and
@@ -182,7 +186,17 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
   const applied: string[] = [];
   const skipped: { key: string; reason: string }[] = [];
 
+  // Last row for a key wins (see above), so settle duplicates BEFORE judging
+  // them: otherwise an earlier refused row would stay in `skipped` after a later
+  // acceptable one replaced it.
+  const lastByKey = new Map<string, TeamSettingRow>();
   for (const row of rows) {
+    const k = row.key.trim();
+    lastByKey.delete(k);
+    lastByKey.set(k, row);
+  }
+
+  for (const row of lastByKey.values()) {
     const key = row.key.trim();
     const parts = key.split(".");
     if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
@@ -214,6 +228,16 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
 
     // `enforced` is the whole contract: the important band at `team` rank.
     if (row.enforced && !important.includes(key)) important.push(key);
+
+    // The team policy (USER decision P4: tighten only). A refused row STILL goes
+    // to the loader, which drops it with its loud REFUSED warning on every
+    // surface, but it is REPORTED as refused here and never counted as applied:
+    // an admin must not read "applied" for something this machine will drop.
+    const refusal = staticRefusal(key, row.value);
+    if (refusal !== undefined) {
+      if (!skipped.some((x) => x.key === key)) skipped.push({ key, reason: `REFUSED: ${refusal}` });
+      continue;
+    }
     const label = row.enforced ? `${key} (enforced)` : key;
     if (!applied.includes(label)) applied.push(label);
   }
@@ -282,21 +306,38 @@ const teamCacheSchema = z.object({
 export type TeamLayerCache = z.infer<typeof teamCacheSchema>;
 
 /**
- * Read one org's cache. `null` for absent, unreadable, or malformed.
+ * Read one org's cache. `null` ONLY when there is no usable cache: the file is
+ * absent (ENOENT), or it parses to nothing valid.
  *
- * Never throws and never distinguishes those three, because the caller's next
- * move is identical for all of them: fall back to local config, out loud. A
- * corrupt cache is not an error condition to be handled, it is an absent one.
+ * It THROWS for any other read failure. A sharing violation (EBUSY / EACCES /
+ * EPERM while a sync or an antivirus holds the file) is retried briefly, and if
+ * it persists it surfaces as an error rather than as "no cache": reading a held
+ * file as "no team policy" would silently drop every tightening the team set.
+ * `loadEffectiveConfig` turns that throw into a loud warning, not a crash.
  */
 export async function readTeamLayerCache(
   userDir: string,
   orgId: string,
+  retry: {
+    readonly tries?: number;
+    readonly delayMs?: number;
+    readonly platform?: NodeJS.Platform;
+  } = {},
 ): Promise<TeamLayerCache | null> {
+  const file = teamCachePath(userDir, orgId);
+  const tries = Math.max(1, retry.tries ?? 10);
+  const delayMs = retry.delayMs ?? 50;
   let raw: string;
-  try {
-    raw = await readFile(teamCachePath(userDir, orgId), "utf8");
-  } catch {
-    return null;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      raw = await readFile(file, "utf8");
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      // The shared helper decides what is transient (Windows sharing violations).
+      if (attempt >= tries || !isRenameRetryable(err, retry.platform)) throw err;
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
   }
   try {
     const parsed = teamCacheSchema.safeParse(JSON.parse(raw));
@@ -448,7 +489,9 @@ export interface ResolveTeamLayerOptions {
 }
 
 /**
- * The read path: cache only, no network, cannot fail.
+ * The read path: cache only, no network. A missing or corrupt cache resolves to "no
+ * team layer" with a notice; an UNREADABLE one (a persistent sharing violation) throws,
+ * and `loadEffectiveConfig` reports that loudly instead of treating it as no policy.
  *
  * Called wherever configuration is loaded, so it is allowed to do exactly one
  * thing — read one file — and is allowed to fail at nothing. A missing cache is

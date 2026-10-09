@@ -96,18 +96,28 @@ Provenance names the **team**, not just the layer: a team value's `source` reads
 the cache. `C:\Users\me\.golem\teams\org_2abc.json` answers a different
 question from *whose policy is this*.
 
-## The floor: keys a remote origin may never set
+## The floor: a team may only tighten (default-deny)
 
-`REMOTE_DENIED_SETTINGS` in `src/config/loader.ts` is compiled in, never fetched
-— a list the remote can edit is not a floor. It carries `proxy.bypass_all`, the
-three `portal.*` identity keys, the four `team.*` keys, and (interim stricter-only floor, USER decision P4) `plugins.enabled`, `plugins.load`, `telemetry.dashboard_lan` and `proxy.upstream_base_url`. `security.write_lan` and `security.join_injection` (`REMOTE_FALSE_ONLY_SETTINGS`) may be set by a team to `false` only: a team may tighten, never loosen. The full per-key direction table is the follow-up task `team-security-stricter-only`. A denied key arriving
-from the team origin is **DROPPED, not sanitised**, with a warning that names it:
+USER decision P4: an organisation can make a member's machine safer, never less safe. A
+deny-list cannot be completed key by key, so `src/config/team-policy.ts` classifies EVERY
+leaf of the settings schema (`TEAM_POLICY`; a missing key is a compile error and a test
+fails if the schema gains one) and anything not in the table is denied:
 
-**Decided 2026-10-09 (P4, USER, revised the same day):** a team may set a `security.*` key
-only toward a STRICTER value and can never loosen one; a key with no declared stricter
-direction stays denied remotely. The user first said "any security setting" and revised
-it on discussion. Consistent with the `proxy.bypass_all` ban. The code is the task
-`team-security-stricter-only` (not built); see ADR-0008's amendment.
+| class | meaning | examples |
+|---|---|---|
+| `settable` | harmless preference or tuning | `ui.*`, `compression.level`, `knowledge.enabled`, timeouts |
+| `false-only` | a team may force a risky boolean OFF, never on | `security.write_lan`, `security.join_injection`, `telemetry.dashboard_lan`, `plugins.enabled`, `knowledge.lsp_enabled`, `compression.headroom_sidecar` |
+| `true-only` | a protective boolean, ON only | `snooze.enforce`, `snooze.spawn_gate` |
+| `lower-only` | a number, only LOWER than the member's own effective value | `security.unlock_window_minutes`, `idle_relock_minutes`, `step_up_max_age_minutes`, `device_cert_days`, `proxy.max_request_body_bytes` |
+| `narrow-roots` | `security.origination_roots`: non-empty, and inside the member's roots | |
+| `denied` | commands, URLs, endpoints, credentials, paths, gateways, personas and prompts, plugins, LSP, vector DB, Headroom config, ports, and `proxy.bypass_all`, `portal.*`, `team.*` | `knowledge.lsp_servers`, `proxy.gateways`, `inference.model`, `inference.personas`, `knowledge.watch_paths` |
+
+`REMOTE_DENIED_SETTINGS` and `REMOTE_FALSE_ONLY_SETTINGS` are derived from the table. A refused
+key is dropped PER KEY (the rest of the layer applies) with a warning that names the key, the
+team's value and the rule; only an INVALID value skips the whole layer (ADR-0008). Refused keys
+are listed as REFUSED, never as applied, in `golem team sync` (static rules) and in
+`team.applied`/`team.skipped` (the relative rules, which need the member's own value). A denied
+key arriving from the team origin is **DROPPED, not sanitised**, with a warning that names it:
 
 ```
 team org_…: REFUSED "proxy.bypass_all" — a remote origin may never set it, at any

@@ -22,3 +22,7 @@ The comparison is against what the member's own layers resolve to, not against t
 
 - Building the phone-approval setting (R13.9).
 - The other non-security team keys.
+
+## Status after `team-layer-everywhere` (2026-10-09)
+
+The classification, the per-direction enforcement and the tests landed in `team-layer-everywhere` (see `src/config/team-policy.ts`), for ALL keys and not only `security.*`. What remains for this task: a `raise-only` class (a number where higher is stricter; `knowledge.local_answer_min_confidence` is denied until then), relative refusals are not visible in the `golem team sync` report (they need the member's own value, so only load-time warnings and `team.skipped` show them), and the independent review of the table itself.

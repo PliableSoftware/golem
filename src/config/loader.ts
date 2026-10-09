@@ -76,6 +76,7 @@ import {
   SECTION_NAMES,
   SETTINGS_LEAVES,
 } from "./schema.js";
+import { teamRefusal } from "./team-policy.js";
 
 /** Which layer supplied a value. See {@link ORIGIN_ORDER} for the ranking. */
 export type LayerName = "default" | "user" | "team" | "project" | "local" | "env" | "override";
@@ -141,44 +142,7 @@ export const ORIGIN_ORDER: readonly LayerName[] = [
  * CLAUDE.md governs — importance is a dial, and no dial value disables
  * redaction.
  */
-export const REMOTE_DENIED_SETTINGS: ReadonlySet<string> = new Set([
-  "proxy.bypass_all",
-  "portal.url",
-  "portal.issuer",
-  "portal.client_id",
-  "team.org_id",
-  "team.portal_url",
-  "team.sync",
-  "team.skills",
-  // Interim stricter-only floor (USER decision P4, 2026-10-09: a team may only
-  // TIGHTEN, never loosen). These four have no "stricter" direction a remote
-  // could apply, only a way to widen what a machine loads, exposes or talks to,
-  // so they are denied outright until `team-security-stricter-only` lands the
-  // per-key direction table. `plugins.*` also decides which code runs inside the
-  // process that does redaction.
-  "plugins.enabled",
-  "plugins.load",
-  "telemetry.dashboard_lan",
-  "proxy.upstream_base_url",
-]);
-
-/**
- * Boolean keys a remote origin may only set to `false`: turning them off is the
- * stricter direction, turning them on exposes the machine (a LAN write surface,
- * injected join text). A team may force them off, never on. Interim, like the
- * four keys above; the full per-key table is `team-security-stricter-only`.
- */
-export const REMOTE_FALSE_ONLY_SETTINGS: ReadonlySet<string> = new Set([
-  "security.write_lan",
-  "security.join_injection",
-]);
-
-/** Why a remote origin may not set `dotted` to `value`, or undefined when it may. */
-function remoteRefusal(dotted: string, value: unknown): "denied" | "loosening" | undefined {
-  if (REMOTE_DENIED_SETTINGS.has(dotted)) return "denied";
-  if (REMOTE_FALSE_ONLY_SETTINGS.has(dotted) && value !== false) return "loosening";
-  return undefined;
-}
+export { REMOTE_DENIED_SETTINGS, REMOTE_FALSE_ONLY_SETTINGS } from "./team-policy.js";
 
 /** The `"!important"` declaration list, top-level and sibling to the sections. */
 const IMPORTANT_KEY = "!important";
@@ -250,6 +214,8 @@ export interface GolemConfig {
   readonly files: SettingsFilePaths;
   /** Non-fatal issues: unknown keys/sections, unrecognized GOLEM_* vars. */
   readonly warnings: readonly string[];
+  /** Dotted keys a REMOTE origin sent that the team policy refused (they did not apply). */
+  readonly refused: readonly string[];
 }
 
 type MutableTree = Record<string, Record<string, unknown>>;
@@ -270,6 +236,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
   }
 
   const warnings: string[] = [];
+  const refused: string[] = [];
 
   // Every object-shaped origin is read and parsed ONCE. Both bands resolve over
   // the same parsed declarations, so the second pass costs no file I/O.
@@ -324,7 +291,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     }
     const origin = origins.get(layer);
     if (origin !== undefined) {
-      applyObjectLayer(tree, provenance, warnings, origin, "normal");
+      applyObjectLayer(tree, provenance, warnings, origin, "normal", refused);
     }
   }
 
@@ -334,7 +301,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
   for (const layer of [...ORIGIN_ORDER].reverse()) {
     const origin = origins.get(layer);
     if (origin !== undefined && origin.important.size > 0) {
-      applyObjectLayer(tree, provenance, warnings, origin, "important");
+      applyObjectLayer(tree, provenance, warnings, origin, "important", refused);
     }
   }
 
@@ -344,6 +311,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     provenance: provenance as Provenance,
     files,
     warnings,
+    refused,
   });
 }
 
@@ -598,6 +566,7 @@ function applyObjectLayer(
   warnings: string[],
   origin: ObjectLayer,
   band: Band,
+  refused?: string[],
 ): void {
   const { layer, raw, sourceFile, label, important, remote } = origin;
   for (const [sectionName, sectionValue] of Object.entries(raw)) {
@@ -622,9 +591,10 @@ function applyObjectLayer(
       // A declaration resolves in exactly one band; the other pass skips it
       // before doing any work, so nothing below can run or warn twice.
       if (important.has(dotted) !== (band === "important")) continue;
-      const refusal = remote ? remoteRefusal(dotted, value) : undefined;
+      const refusal = remote ? teamRefusal(dotted, value, tree[sectionName]?.[key]) : undefined;
       if (refusal !== undefined) {
-        warnings.push(remoteRefusalWarning(label, dotted, refusal));
+        warnings.push(remoteRefusalWarning(label, dotted, refusal, value));
+        refused?.push(dotted);
         continue;
       }
       let leaf = leafSchema(sectionName, key);
@@ -681,9 +651,12 @@ function applyObjectLayer(
         // Checked again on the RESOLVED key: a rename must not be a way for a
         // remote to reach a denied leaf under its old, undenied spelling.
         const resolved = `${targetSection}.${targetKey}`;
-        const resolvedRefusal = remote ? remoteRefusal(resolved, value) : undefined;
+        const resolvedRefusal = remote
+          ? teamRefusal(resolved, value, tree[targetSection]?.[targetKey])
+          : undefined;
         if (resolvedRefusal !== undefined) {
-          warnings.push(remoteRefusalWarning(label, resolved, resolvedRefusal));
+          warnings.push(remoteRefusalWarning(label, resolved, resolvedRefusal, value));
+          refused?.push(resolved);
           continue;
         }
       }
@@ -730,17 +703,19 @@ function applyObjectLayer(
 function remoteRefusalWarning(
   label: string,
   dotted: string,
-  kind: "denied" | "loosening" = "denied",
+  reason: string,
+  value: unknown,
 ): string {
-  if (kind === "loosening") {
-    return (
-      `${label}: REFUSED "${dotted}" — a remote origin may only set it to false ` +
-      `(teams may tighten, never loosen). The value was DROPPED, not applied.`
-    );
+  let shown = "";
+  try {
+    shown = JSON.stringify(value) ?? String(value);
+  } catch {
+    shown = String(value);
   }
+  if (shown.length > 60) shown = `${shown.slice(0, 57)}...`;
   return (
-    `${label}: REFUSED "${dotted}" — a remote origin may never set it, at any ` +
-    `importance (ADR-0008 floor). The value was DROPPED, not applied.`
+    `${label}: REFUSED "${dotted}" (team value ${shown}) — ${reason}. ` +
+    "The value was DROPPED, not applied (teams may tighten, never loosen)."
   );
 }
 
