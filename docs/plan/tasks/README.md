@@ -21,7 +21,36 @@ golem task show R8.5           # the full brief
 golem task index --summary     # one-screen ready/blocked view
 golem task index --write       # regenerate the ROADMAP.md index in place
 golem task done R8.5 --note …  # close it; re-run `index --write`
+golem task resume R8.5         # print the headless command that starts the work
 ```
+
+**A document that cannot be parsed is never dropped silently** (DUST2.12). `list`,
+`index`, `index --summary` and `index --json` each report every unreadable doc with its
+path and reason; `index` and `index --write` also splice an "Unparseable task documents"
+table into the generated ROADMAP region and **exit 1** (the index is still written, with
+the readable tasks), so a script or CI step cannot miss it. `list` exits 0 but prints the
+block (on stderr with `--json`, whose array shape is unchanged). The drift test in
+`tests/integration/plan-tasks-roadmap.test.ts` fails if this repo has one.
+
+### Resuming a plan task
+
+A plan task is a committed document, not a conversation, so `golem task resume <id>`
+means "start a fresh headless session from the brief": `claude -p "<brief>"` with no
+`--resume` or `--continue`. Without `--spawn` it only prints the command. Rules:
+
+- `owner: user` tasks are refused (an agent must not do them).
+- A task with a `blocked` reason or an unfinished `depends_on` prints a warning, and
+  `--spawn` is refused.
+- Resuming never writes the document: no `running` state, no attempt count. Committed
+  files are not machine bookkeeping. Close the task with `golem task done`.
+
+### Parked sessions record their worktree
+
+`golem task add` and the `snooze` park note (local tasks) capture the git worktree they
+were made in: path, branch, HEAD and the dirty files (capped at 50). `golem task show`
+prints it; `golem task resume` prints it, warns if the worktree is gone or HEAD moved,
+and with `--spawn` launches in that directory when it still exists. Nothing is recorded
+outside a git checkout.
 
 `ROADMAP.md` holds only a **generated** index of links to these files, between the
 `golem:task-index` markers. Edit the task document, never that table.

@@ -7,7 +7,13 @@
 
 import { spawn } from "node:child_process";
 import type { Task, TaskStore } from "../tasks/index.js";
-import { FileTaskStore, formatResumeCommand, PlanTaskStore } from "../tasks/index.js";
+import {
+  describeWorktree,
+  FileTaskStore,
+  formatResumeCommand,
+  type PlanTaskProblem,
+  PlanTaskStore,
+} from "../tasks/index.js";
 
 /**
  * Which home a task lives in.
@@ -36,18 +42,37 @@ export function storeForScope(scope: TaskScope, projectDir: string): TaskStore {
  * picture, the local set is this session's.
  */
 export async function listScopedTasks(projectDir: string, only?: TaskScope): Promise<ScopedTask[]> {
+  return (await listScopedTasksWithProblems(projectDir, only)).entries;
+}
+
+/** {@link listScopedTasks} plus the plan documents that could not be parsed. */
+export async function listScopedTasksWithProblems(
+  projectDir: string,
+  only?: TaskScope,
+): Promise<{ entries: ScopedTask[]; problems: PlanTaskProblem[] }> {
   const out: ScopedTask[] = [];
+  let problems: PlanTaskProblem[] = [];
   if (only !== "local") {
-    for (const task of await new PlanTaskStore(projectDir).list()) {
-      out.push({ task, scope: "plan" });
-    }
+    const plan = await new PlanTaskStore(projectDir).listWithProblems();
+    problems = plan.problems;
+    for (const task of plan.tasks) out.push({ task, scope: "plan" });
   }
   if (only !== "plan") {
     for (const task of await new FileTaskStore(projectDir).list()) {
       out.push({ task, scope: "local" });
     }
   }
-  return out;
+  return { entries: out, problems };
+}
+
+/** The loud block for documents the plan store could not read; empty when there are none. */
+export function renderPlanProblems(problems: readonly PlanTaskProblem[]): string {
+  if (problems.length === 0) return "";
+  const lines = [
+    `UNPARSEABLE plan task documents — ${problems.length} (NOT in the list or the roadmap; fix them):`,
+  ];
+  for (const p of problems) lines.push(`  ${p.path}: ${p.reason}`);
+  return `${lines.join("\n")}\n`;
 }
 
 /**
@@ -111,9 +136,12 @@ export function renderTaskList(tasks: readonly Task[]): string {
  * machine only). Plan ids print in full — they are short and meaningful, and
  * truncating `R8.5` to 8 chars would be worse than useless.
  */
-export function renderScopedTaskList(entries: readonly ScopedTask[]): string {
+export function renderScopedTaskList(
+  entries: readonly ScopedTask[],
+  problems: readonly PlanTaskProblem[] = [],
+): string {
   if (entries.length === 0) {
-    return "no tasks (roadmap work: `golem task index`; a local park: `golem task add`)\n";
+    return `${renderPlanProblems(problems)}no tasks (roadmap work: \`golem task index\`; a local park: \`golem task add\`)\n`;
   }
   const plan = entries.filter((e) => e.scope === "plan");
   const local = entries
@@ -142,7 +170,8 @@ export function renderScopedTaskList(entries: readonly ScopedTask[]): string {
     }
   }
 
-  return `${lines.join("\n")}\n`;
+  const table = `${lines.join("\n")}\n`;
+  return problems.length > 0 ? `${table}\n${renderPlanProblems(problems)}` : table;
 }
 
 /** Detailed view for `golem task show <id>`. */
@@ -172,7 +201,7 @@ export function renderTask(task: Task): string {
   if (task.idempotencyKey !== undefined) lines.push(`  idem-key:   ${task.idempotencyKey}`);
   if (task.notBefore !== undefined) lines.push(`  not before: ${task.notBefore}`);
   if (task.worktree !== undefined) {
-    lines.push(`  worktree:   ${task.worktree.path} @ ${task.worktree.baseCommit}`);
+    lines.push(`  worktree:   ${describeWorktree(task.worktree)}`);
     if (task.worktree.dirtyFiles.length > 0) {
       lines.push(`    dirty:    ${task.worktree.dirtyFiles.join(", ")}`);
     }
@@ -209,7 +238,7 @@ export interface SpawnResult {
  * event on a later tick, and a successful one as `'spawn'`. We wait for
  * whichever comes first, so the failure carries the OS error message.
  */
-export function spawnResume(argv: string[]): Promise<SpawnResult> {
+export function spawnResume(argv: string[], cwd?: string): Promise<SpawnResult> {
   const command = formatResumeCommand(argv);
   const bin = argv[0];
   const rest = argv.slice(1);
@@ -221,7 +250,11 @@ export function spawnResume(argv: string[]): Promise<SpawnResult> {
   });
   return new Promise((resolve) => {
     try {
-      const child = spawn(bin, rest, { detached: true, stdio: "ignore" });
+      const child = spawn(bin, rest, {
+        detached: true,
+        stdio: "ignore",
+        ...(cwd !== undefined ? { cwd } : {}),
+      });
       child.once("error", (err) => resolve(failure(err.message)));
       child.once("spawn", () => {
         child.unref();

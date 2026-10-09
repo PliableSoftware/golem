@@ -189,3 +189,33 @@ describe("spawnResume", () => {
     expect(result.note).toBe("empty command");
   });
 });
+
+describe("renderScopedTaskList with unparseable plan docs", () => {
+  const problems = [{ name: "b.md", path: "/r/b.md", reason: "bad" }];
+
+  it("appends the loud block after the table", () => {
+    const plan = parsePlanTask("---\ntask: P1\ntitle: T\n---\n\nbody\n");
+    const out = renderScopedTaskList([{ task: plan, scope: "plan" }], problems);
+    expect(out).toContain("P1");
+    expect(out).toContain("UNPARSEABLE plan task documents — 1");
+    expect(out).toContain("/r/b.md: bad");
+  });
+
+  it("does not claim 'no tasks' without the problem list when only broken docs exist", () => {
+    const out = renderScopedTaskList([], problems);
+    expect(out).toContain("/r/b.md: bad");
+  });
+});
+
+describe("spawnResume cwd", () => {
+  it("launches in the given directory", async () => {
+    const result = await spawnResume([process.execPath, "-e", "0"], process.cwd());
+    expect(result.spawned).toBe(true);
+  });
+
+  it("reports a missing cwd as a failed launch, not a crash", async () => {
+    const result = await spawnResume([process.execPath, "-e", "0"], "/golem-no-such-dir-xyz");
+    expect(result.spawned).toBe(false);
+    expect(result.note).toMatch(/run it manually/);
+  });
+});

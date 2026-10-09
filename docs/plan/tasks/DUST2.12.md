@@ -26,3 +26,18 @@ partial/not started (rows 27, 29).
 ## Out of scope
 
 - H2 `blocked` state vs metadata (open, USER). Fixing the four XS docs (DUST2.9).
+
+## Implementation notes (2026-10-09)
+
+Decisions taken on the safe reading; revisit any of them freely.
+
+- **Exit codes.** `index` (all modes) exits 1 when any doc is unparseable, but still writes
+  the readable index plus a visible "Unparseable" section in ROADMAP. `list` exits 0 (a read
+  view) and prints the block; `--json` keeps its bare array and warns on stderr.
+- **Plan resume = fresh session from the brief**, never `--continue`. It does not write the
+  committed doc (no `running`/attempts), refuses `owner: user`, refuses `--spawn` when
+  blocked or waiting on an unfinished dependency. `blocked` stays metadata.
+- **Worktree capture** applies to local tasks (`task add`, snooze park note), not plan docs.
+  Schema gained optional `branch`. `resume --spawn` launches with `cwd` = the recorded
+  worktree when it still exists.
+- Not done: capturing the worktree in other park paths (none found besides these two).

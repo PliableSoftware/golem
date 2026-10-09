@@ -20,6 +20,7 @@
 
 import { FileTaskStore } from "../tasks/store.js";
 import { createTask } from "../tasks/types.js";
+import { captureWorktree } from "../tasks/worktree.js";
 
 /** Max length of the derived one-line title (matches `taskTitle` in cli/task.ts). */
 const TITLE_MAX = 60;
@@ -57,7 +58,16 @@ export async function persistSnoozeNote(
     if (trimmed.length === 0) return { ok: false, error: "note is empty" };
     const title = snoozeNoteTitle(trimmed);
     const nowIso = opts.nowIso ?? new Date().toISOString();
-    const task = createTask({ prompt: trimmed, ...(title.length > 0 ? { title } : {}) }, nowIso);
+    // Where the session was parked: a linked worktree is not the repo root (r029).
+    const worktree = await captureWorktree(projectDir);
+    const task = createTask(
+      {
+        prompt: trimmed,
+        ...(title.length > 0 ? { title } : {}),
+        ...(worktree !== undefined ? { worktree } : {}),
+      },
+      nowIso,
+    );
     const stored = await new FileTaskStore(projectDir).put(task, nowIso);
     return { ok: true, id: stored.id };
   } catch (err) {

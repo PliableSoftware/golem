@@ -90,7 +90,7 @@ const LIST_KEYS = new Set(["depends_on", "touches"]);
  * Throws on a malformed document rather than returning a partial one: unlike a
  * telemetry read (fail-open, the point is not to lose the request), a task file that
  * does not parse is work about to be silently dropped from the roadmap. The *store*
- * decides how loud that is — `list()` skips and keeps going, `get()` surfaces it.
+ * decides how loud that is — `listWithProblems()` reports it and keeps going, `get()` surfaces it.
  */
 export function parsePlanTask(raw: string): Task {
   const lines = raw.split("\n");
@@ -194,6 +194,15 @@ export function planTaskSlug(id: string): string {
   return path.basename(id.replace(/[^\w.-]+/g, "-"));
 }
 
+/** A plan-task document that could not be read: which file, and why. */
+export interface PlanTaskProblem {
+  /** File name inside `docs/plan/tasks/` (stable across machines, used by the index). */
+  readonly name: string;
+  /** Absolute path, for the terminal. */
+  readonly path: string;
+  readonly reason: string;
+}
+
 /**
  * File-backed store over `docs/plan/tasks/*.md`.
  *
@@ -209,25 +218,45 @@ export class PlanTaskStore {
     this.#dir = planTasksDir(projectDir);
   }
 
-  /** Every readable plan task. An unparseable file is skipped, never fatal to a list. */
-  async list(): Promise<Task[]> {
+  /**
+   * Every readable plan task, plus every document that could not be read.
+   *
+   * One bad file must not hide the rest of the roadmap, but it must not vanish
+   * either: DUST1.7 row 25 found four docs (one an open bug) silently absent from
+   * ROADMAP. Callers decide how loud to be; none may ignore `problems`.
+   */
+  async listWithProblems(): Promise<{ tasks: Task[]; problems: PlanTaskProblem[] }> {
     let names: string[];
     try {
       names = await readdir(this.#dir);
     } catch {
-      return [];
+      return { tasks: [], problems: [] };
     }
     const tasks: Task[] = [];
-    for (const name of names) {
+    const problems: PlanTaskProblem[] = [];
+    for (const name of names.sort()) {
       if (!name.endsWith(".md") || name === "README.md") continue;
+      const file = path.join(this.#dir, name);
       try {
-        const raw = await readFile(path.join(this.#dir, name), "utf8");
+        const raw = await readFile(file, "utf8");
         tasks.push(parsePlanTask(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw));
-      } catch {
-        // Skip: one bad file must not hide the rest of the roadmap.
+      } catch (err) {
+        problems.push({
+          name,
+          path: file,
+          reason: err instanceof Error ? err.message : String(err),
+        });
       }
     }
-    return tasks;
+    return { tasks, problems };
+  }
+
+  /**
+   * Every readable plan task. Drops unparseable files — use {@link listWithProblems}
+   * wherever the result is shown to a person or written to a generated file.
+   */
+  async list(): Promise<Task[]> {
+    return (await this.listWithProblems()).tasks;
   }
 
   /** One task by id, or null. */

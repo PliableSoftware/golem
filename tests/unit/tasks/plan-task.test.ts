@@ -242,6 +242,31 @@ describe("PlanTaskStore", () => {
     expect(listed[0]?.id).toBe("R8.5");
   });
 
+  it("reports an unparseable file with its path and reason, alongside the good ones", async () => {
+    const store = new PlanTaskStore(dir);
+    await store.put(parsePlanTask(DOC));
+    await writeFile(path.join(planTasksDir(dir), "broken.md"), "not a task", "utf8");
+    await writeFile(
+      path.join(planTasksDir(dir), "badstate.md"),
+      "---\ntask: X1\nstate: bogus\n---\n\nbody\n",
+      "utf8",
+    );
+    const { tasks, problems } = await store.listWithProblems();
+    expect(tasks.map((t) => t.id)).toStrictEqual(["R8.5"]);
+    expect(problems.map((p) => p.name)).toStrictEqual(["badstate.md", "broken.md"]);
+    expect(problems[1]?.path).toBe(path.join(planTasksDir(dir), "broken.md"));
+    expect(problems[1]?.reason).toContain("leading --- frontmatter delimiter");
+    expect(problems[0]?.reason).toContain('unknown state "bogus"');
+  });
+
+  it("reports nothing for a clean tree, README.md and non-markdown included", async () => {
+    const store = new PlanTaskStore(dir);
+    await store.put(parsePlanTask(DOC));
+    await writeFile(path.join(planTasksDir(dir), "README.md"), "# x\n", "utf8");
+    await writeFile(path.join(planTasksDir(dir), "notes.txt"), "x", "utf8");
+    expect((await store.listWithProblems()).problems).toStrictEqual([]);
+  });
+
   it("ignores README.md and non-markdown files", async () => {
     const store = new PlanTaskStore(dir);
     await store.put(parsePlanTask(DOC));

@@ -232,3 +232,23 @@ describe("renderPlanSummary", () => {
     expect(out).toContain("[discipline: astrology]");
   });
 });
+
+describe("unparseable documents", () => {
+  const problems = [{ name: "broken.md", path: "/r/docs/plan/tasks/broken.md", reason: "no ---" }];
+
+  it("renderPlanIndex lists them inside the generated region", () => {
+    const out = renderPlanIndex([], problems);
+    expect(out).toContain("Unparseable task documents");
+    expect(out).toContain("[broken.md](tasks/broken.md) | no ---");
+    expect(out.indexOf("Unparseable")).toBeLessThan(out.indexOf(PLAN_INDEX_END));
+  });
+
+  it("renderPlanIndex has no such section when everything parsed", () => {
+    expect(renderPlanIndex([], [])).not.toContain("Unparseable");
+  });
+
+  it("renderPlanSummary reports them with the full path", () => {
+    expect(renderPlanSummary([], problems)).toContain("UNPARSEABLE (1)");
+    expect(renderPlanSummary([], problems)).toContain("/r/docs/plan/tasks/broken.md: no ---");
+  });
+});
