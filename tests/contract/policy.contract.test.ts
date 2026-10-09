@@ -53,7 +53,6 @@ describe("PipelinePolicy level table", () => {
     expect(stages.losslessCompression).toBe(false);
     expect(stages.toolResultCache).toBe(false);
     expect(stages.semanticCompression).toBe("off");
-    expect(stages.semanticCache).toBe("off");
   });
 
   it("level 1 is lossless only (byte-faithful)", () => {
@@ -63,17 +62,17 @@ describe("PipelinePolicy level table", () => {
     expect(stages.semanticCompression).toBe("off");
   });
 
-  it("level 2 (balanced) adds stale-turn semantic compression + strict semantic cache", () => {
+  it("level 2 (balanced) adds stale-turn semantic compression", () => {
     const stages = policyFor(CompressionLevel.Balanced).stages;
     expect(stages.losslessCompression).toBe(true);
     expect(stages.semanticCompression).toBe("stale_turns");
-    expect(stages.semanticCache).toBe("strict");
   });
 
   it("level 3 (aggressive) enables max semantic compression (no local drafts — Decision 31)", () => {
     const stages = policyFor(CompressionLevel.Aggressive).stages;
     expect(stages.semanticCompression).toBe("aggressive");
-    expect(stages.semanticCache).toBe("loose");
+    // semanticCache was removed (2026-10-09 amendment): never read anywhere.
+    expect("semanticCache" in stages).toBe(false);
     // A pure compression dial — no local-model fields exist.
     expect("localDrafts" in stages).toBe(false);
     expect("localOnlyAnswers" in stages).toBe(false);

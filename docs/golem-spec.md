@@ -192,7 +192,7 @@ Runtime — **DECIDED (v0.2): Ollama-first behind an OpenAI-compatible interface
 ### 3.4 Caching & dedup
 What ships: the CCR store (content-addressed originals, `.golem/ccr`), the WebFetch raw-page cache (`.golem/webcache`, Decision 42) and native lossless dedup/compaction. What is specified but **not built** (§12, no task unless noted):
 - **Exact response cache** — hash(request) → response (no code; DUST1.11 row 9).
-- **Semantic cache** — `StageConfig.semanticCache` is set per level (`src/interfaces/policy.ts`) but has no reader in `src` (a dead field in a frozen interface).
+- **Semantic cache** — not built. The dead `StageConfig.semanticCache` field was removed from the frozen interface on 2026-10-09.
 - **Tool-result cache** with mtime invalidation — `StageConfig.toolResultCache` is read only by `src/mcp/in-memory-compression.ts:80,90`, not by the proxy path (DUST2.20).
 
 ### 3.5 Additional offload candidates (per your ask)
@@ -222,8 +222,8 @@ What ships: the CCR store (content-addressed originals, `.golem/ccr`), the WebFe
 |---|---|
 | `off` | Redaction ONLY. Nothing else touches the request. Not a bypass. |
 | `1` — Lossless | Redaction + dedup, structural compaction, cache alignment. **Lossless and prefix-stable** (the hard-rule wording, DECISIONS.md C1: not "byte-faithful" — the stage may rewrite bytes, but never loses information and never changes an already-sent prefix; recorded-shape tests guard it, DUST2.24). Default. |
-| `2` — Balanced | + semantic compression of stale turns (`stale_turns`; optional Headroom sidecar, `compression.headroom_sidecar`, non-caching upstreams only). First lossy tier. The table also sets `toolResultCache` and `semanticCache: strict`, but neither has a reader on the proxy path (§3.4). |
-| `3` — Aggressive | + max semantic compression (`aggressive`; sidecar), `semanticCache: loose` (no reader). Same sidecar requirement as level 2. |
+| `2` — Balanced | + semantic compression of stale turns (`stale_turns`; optional Headroom sidecar, `compression.headroom_sidecar`, non-caching upstreams only). First lossy tier. The table also sets `toolResultCache`, which has no reader on the proxy path (§3.4). |
+| `3` — Aggressive | + max semantic compression (`aggressive`; sidecar). Same sidecar requirement as level 2. |
 
 **No level disables redaction** — that is `proxy.bypass_all`, never the default,
 CLI-only (no MCP/tool call, panel, remote surface or header can switch redaction off — the per-request `x-golem-bypass` header and `POST /__golem/pipeline/false` were removed by DUSTSEC.2; `src/proxy/headers.ts:44-48` now only strips the header), and surfaced
@@ -308,7 +308,7 @@ Mechanism: **flat** skills `.claude/skills/golem-<cmd>/SKILL.md` → `/golem-<cm
 | Local LLM quality too low on small GPUs | Tier routing; local model reachable only through explicit `coder` (Decision 31); a stage that cannot run is skipped |
 | Proxy breaks streaming/tool-use semantics | Responses pass through untouched; requests are lossless and prefix-stable at level ≤ 1; recorded-shape tests against real API shapes (DUST2.24) |
 | Prompt-cache interference (edits break prefix stability) | Cache-alignment stage explicitly optimizes for prefix stability |
-| Semantic cache serves stale/wrong answers | *(Feature not built — `semanticCache` has no reader; risk row is dormant, §3.4)* |
+| Semantic cache serves stale/wrong answers | *(Feature not built — the `semanticCache` field was removed 2026-10-09; risk row is dormant, §3.4)* |
 | LAN security (prompts traverse network) | Redaction before transit; localhost-only default; mTLS on the device write surface (ADR-0006). Hub↔worker mTLS is not built (no worker protocol, DUST2.25) |
 | Remote session access widens attack surface (Decision 20c) | Localhost-first; exposure is opt-in and token-authenticated; mTLS on LAN; documented threat model + rate limiting before any relay ships; no golem.run rendezvous without user consent |
 | Cruise-control autonomy takes an irreversible action (Decision 20d) | Mandatory approval gates for deploys/pushes/deletes/outward-facing calls; autonomy level is explicit and per-task; dry-run default for destructive steps; full action log |
@@ -682,7 +682,7 @@ Every `partial` / `not-started` row, either as an owning task or in **Not starte
 | 1.2/r003 | target-model-friendly prompt translation (20g generalised) | only wire-schema translation exists |
 | 1.3/r034 | unified MCP surface re-exporting Headroom tools | §1.2 |
 | 1.3/r041, 1.11/r009 (G07) | exact response cache | no code |
-| 1.3/r042, 1.11/r025 (G06) | semantic cache | `semanticCache` has no reader |
+| 1.3/r042, 1.11/r025 (G06) | semantic cache | `semanticCache` field removed 2026-10-09 |
 | 1.3/r046 | eval harness (replay per level, judge, quality curves) | R2.6 is a live cost A/B only |
 | 1.3/r047 | canary mode | |
 | 1.4/r002 | Qdrant server via config URL | throws `NotImplementedYetError` |
