@@ -45,14 +45,15 @@ export {
 } from "./host-gate.js";
 export {
   appendHostLog,
-  HOST_LOG_MAX_LINES,
+  HOST_LOG_KEEP_ROTATED,
+  HOST_LOG_MAX_BYTES,
   type HostDecisionEntry,
   type HostLifecycleEntry,
   type HostLogEntry,
+  type HostLogRotation,
   type HostTurnEntry,
   hostLogPath,
   readHostLog,
-  trimHostLog,
 } from "./host-log.js";
 export {
   findHostSession,

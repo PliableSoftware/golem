@@ -74,15 +74,14 @@ up past 200 events is dropped with a reason telling it to reconnect. The ring
 still holds everything, so **dropping it costs a reconnect, not data** — the
 alternative trades a correctness property for a convenience one.
 
-**Shipped caveat (DUST1.10 row 23).** The drop is not quite "a reconnect, not
-data". When a subscriber is dropped, `close` writes a synthetic `ended` frame with
-`id: session.bus.cursor + 1` (`src/session/transport.ts:230-238`; the frame's
-`id:` line is its `seq`, `:171-173`). Two consequences read from the code, not
-run: the client is told `ended` ("the session is over") for a session that is
-still live, and a client that stores that frame's id as its `Last-Event-ID` can
-resume after an event it never received. The bus text "nothing was lost"
-(`src/session/session-bus.ts:111`) is therefore not guaranteed. Open defect; not
-fixed by this page.
+**Fixed 2026-10-09 (DUST3.15, USER decision DROP).** `close` writes a synthetic
+`SessionDroppedFrame` (`{type:"ended", dropped:true, reason}`) with **no `seq` and
+no SSE `id:` line** (`sseFrame` in `src/session/transport.ts`). An absent id leaves
+the client's `lastEventId` on the last real event, so a resume gets exactly what
+it missed, and no seq is reused. It is not a `SessionEvent`; the frozen contract
+in `src/interfaces/session-events.ts` carries a dated amendment. `chat-page.ts`
+renders it as "connection dropped, reconnecting" (the session is still live) and
+now skips any event whose seq it already rendered.
 
 ## Acknowledgement means delivered
 

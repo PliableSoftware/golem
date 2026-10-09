@@ -19,7 +19,7 @@ type Unstamped = SessionEvent extends infer E
 
 /** One of every variant, so the union is exercised end to end. */
 const ONE_OF_EACH: readonly Unstamped[] = [
-  { type: "attached", sessionId: "s", resumedFrom: 0, gap: false },
+  { type: "attached", sessionId: "s", resumedFrom: 0, epoch: "e1", gap: false },
   { type: "text", text: "hi" },
   { type: "tool_call", id: "t1", name: "Read", input: { path: "x" } },
   { type: "tool_result", toolCallId: "t1", isError: false, content: "ok" },
@@ -123,6 +123,17 @@ describe("SessionEvent contract: wire form", () => {
       const data = frame.split("\n").find((l) => l.startsWith("data: "));
       expect(JSON.parse((data ?? "").slice(6))).toEqual(stamped);
     }
+  });
+});
+
+describe("SessionDroppedFrame contract (amendment 2026-10-09)", () => {
+  it("is framed with no id: line and carries no seq, so it can never collide with a real event", () => {
+    const frame = sseFrame({ type: "ended", dropped: true, reason: "slow client" });
+    expect(frame).toBe(
+      `event: ended\ndata: ${JSON.stringify({ type: "ended", dropped: true, reason: "slow client" })}\n\n`,
+    );
+    expect(frame).not.toMatch(/^id:/m);
+    expect(frame).not.toContain("seq");
   });
 });
 
