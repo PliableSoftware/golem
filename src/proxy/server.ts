@@ -26,6 +26,13 @@ import { mapUpstreamError, PROXY_ERROR_HEADER } from "./errors.js";
 import { forwardableRequestHeaders, forwardableResponseHeaders } from "./headers.js";
 import { classifyRateLimit, decideRetry } from "./rate-limit-retry.js";
 import {
+  BodyBudget,
+  type BodyHold,
+  normalizeRequestBody,
+  RequestBodyRefusal,
+  readBody,
+} from "./request-body.js";
+import {
   type ProxyConfig,
   type ProxyRequest,
   type ProxyRequestOutcome,
@@ -33,27 +40,6 @@ import {
   resolveProxyConfig,
 } from "./types.js";
 import { UsageSniffer } from "./usage-sniffer.js";
-
-/**
- * Buffer the whole request body. Deliberately uncapped: the proxy binds
- * loopback-only and serves the local developer's own Claude Code traffic
- * (bounded JSON documents), so a size limit would only add a failure mode.
- * Revisit if the proxy ever binds a non-loopback interface.
- */
-function readBody(req: IncomingMessage): Promise<Buffer | null> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      if (chunks.length === 0) {
-        resolve(null);
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    });
-    req.on("error", reject);
-  });
-}
 
 /**
  * R9.2: replace the body's `model` with the target's real model id, for a
@@ -102,6 +88,8 @@ const MAX_POOLED_ORIGINS = 32;
 
 export class GolemProxy {
   readonly config: ProxyConfig;
+  /** DUSTSEC.21: request-body bytes held across concurrent requests. */
+  readonly #bodyBudget: BodyBudget;
 
   /**
    * When false, the proxy forwards every request as a raw passthrough (no
@@ -129,6 +117,7 @@ export class GolemProxy {
 
   constructor(options: ProxyServerOptions = {}) {
     this.config = resolveProxyConfig(options);
+    this.#bodyBudget = new BodyBudget(this.config.maxInFlightBodyBytes);
     // R11.1: `proxy.bypass_all` starts the proxy with the pipeline OFF, which is
     // the same state `golem off` reaches at runtime — the difference is that this
     // one survives a restart, and the restart is the reason the runtime toggle
@@ -171,6 +160,11 @@ export class GolemProxy {
   address(): AddressInfo | null {
     const addr = this.server.address();
     return addr && typeof addr === "object" ? addr : null;
+  }
+
+  /** Request-body bytes currently reserved against the in-flight cap (tests, diagnostics). */
+  get bodyBytesInFlight(): number {
+    return this.#bodyBudget.used;
   }
 
   async close(): Promise<void> {
@@ -270,15 +264,52 @@ export class GolemProxy {
     });
 
     let forward: ProxyRequest;
+    const hold: BodyHold = { bytes: 0 };
+    // Idempotent: called when the final upstream response headers arrive (the body
+    // is no longer needed: the retry loop has ended) and again on close.
+    const releaseHold = (): void => {
+      this.#bodyBudget.release(hold.bytes);
+      hold.bytes = 0;
+    };
     try {
-      const body = await readBody(req);
+      // Release what this request reserved once the response is done, however it ends.
+      res.once("close", releaseHold);
+      const body = await readBody(req, this.config.maxRequestBodyBytes, this.#bodyBudget, hold);
+      let headers = forwardableRequestHeaders(req.headers);
+      let readable = body;
+      // DUSTSEC.21: decode a content-encoded body so redaction can read it. Only
+      // when the pipeline is on: `proxy.bypass_all` forwards byte-faithfully.
+      if (body !== null && this.#pipelineEnabled) {
+        const normalized = normalizeRequestBody(body, headers, this.config.maxRequestBodyBytes);
+        // A decoded body is a separate buffer held alongside the wire form:
+        // reserve it too. (Identity and BOM-strip share the wire buffer.)
+        const extra = normalized.body.buffer === body.buffer ? 0 : normalized.body.length;
+        if (extra > 0 && !this.#bodyBudget.tryReserve(extra)) {
+          throw new RequestBodyRefusal(
+            503,
+            "golem proxy: too many large request bodies are in flight (proxy memory cap). " +
+              "Nothing was forwarded; retry shortly.",
+          );
+        }
+        hold.bytes += extra;
+        readable = normalized.body;
+        headers = normalized.headers;
+      }
       forward = {
         method: req.method ?? "GET",
         url: req.url ?? "/",
-        headers: forwardableRequestHeaders(req.headers),
-        body,
+        headers,
+        body: readable,
       };
     } catch (err) {
+      if (err instanceof RequestBodyRefusal) {
+        // Fail closed: nothing was forwarded. `connection: close` because an
+        // oversized body may still be arriving and is not worth draining.
+        res.setHeader("connection", "close");
+        if (err.status === 503) res.setHeader("retry-after", "1");
+        failProxy(err.status, err.message);
+        return;
+      }
       // We could not even read the client request — nothing to forward.
       failProxy(400, `golem proxy: could not read request (${String(err)})`);
       return;
@@ -334,12 +365,22 @@ export class GolemProxy {
       try {
         forward = await this.config.pipeline.process(original);
       } catch (err) {
+        if (err instanceof RequestBodyRefusal) {
+          // The pipeline refused the BODY itself (e.g. duplicate JSON keys): a
+          // client error, answered directly. Nothing is forwarded.
+          failProxy(err.status, err.message);
+          return;
+        }
         this.config.onPipelineError?.(err, original);
         try {
           const redactOnly = this.config.pipeline.redactOnly;
           if (redactOnly === undefined) throw new Error("pipeline has no redaction-only fallback");
           forward = redactOnly.call(this.config.pipeline, original);
         } catch (redactErr) {
+          if (redactErr instanceof RequestBodyRefusal) {
+            failProxy(redactErr.status, redactErr.message);
+            return;
+          }
           failProxy(
             502,
             "golem proxy: the request pipeline failed and redaction could not be " +
@@ -506,6 +547,13 @@ export class GolemProxy {
       }
       attempt += 1;
     }
+
+    // DUSTSEC.21: the retry loop is over and nothing replays the request body after
+    // the response headers, so stop counting it against the in-flight cap: a long
+    // SSE stream must not hold its request's bytes for its whole life. (The proxy
+    // still references the buffer until the response ends; this bounds ADMISSION,
+    // it does not shrink the resident set of requests already streaming.)
+    releaseHold();
 
     // Translating upstream (R6.1 case b): convert the response to the Anthropic
     // shape. This is the ONLY path that parses/reserializes a response body — the

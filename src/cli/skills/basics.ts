@@ -88,6 +88,11 @@ DENIES an agent Bash call that runs \`golem off\` or \`golem config set\` on
 sandbox: a shell that writes a settings file another way, or an obfuscated command,
 is not caught. The MCP tools cannot set it at all.
 
+Even with the bypass on, the proxy still refuses a request body over
+\`proxy.max_request_body_bytes\` (413) and caps the request bytes held across
+concurrent requests (503). Those are memory-safety limits, not redaction: nothing is
+decoded, scanned or redacted in bypass mode, and "full bypass" means exactly that.
+
 Then remind them to run \`golem compression 1\` (or their previous value) to
 re-enable savings when done, and \`golem on\` if they used option 2 — every status
 surface shows the bypass while it is on, so it is not a state to leave behind.

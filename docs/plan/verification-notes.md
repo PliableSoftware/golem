@@ -11040,3 +11040,36 @@ delete-then-rename fallback is unchanged). Judged NOT to need it: `state-lock` a
 stale-lock breaks (lock semantics, already contention-aware, out of scope) and the `jsonl-store`
 telemetry rotation (a deliberate move of the live log; best-effort, retried on the next record).
 Tests: `tests/unit/win-rename-*.test.ts`, via `tests/helpers/flaky-rename.ts`.
+
+## 2026-10-09 — Request body handling before redaction (DUSTSEC.21)
+
+**Source:** Node 22 `zlib` docs (`maxOutputLength` on the sync decompressors raises
+`ERR_BUFFER_TOO_LARGE`), RFC 9110 §8.4 (`content-encoding` lists codings in the order applied),
+RFC 8259 §8.1 (JSON is UTF-8; a BOM is not part of the text). **[VERIFIED BY TEST]**, not against
+the live Anthropic API: whether the upstream accepts a gzip request body is unknown, which is why
+decoded bodies are forwarded identity-encoded (always accepted) instead of re-encoded.
+
+- Decode gzip/x-gzip/deflate/br (stacked codings undone in reverse), forward identity with
+  `content-encoding` removed; `content-length` is recomputed by the proxy. zstd and others: 415.
+- Undecodable body: 400. Over `proxy.max_request_body_bytes` (default 32 MiB, schema ceiling 256 MiB) on the wire or after
+  decompression: 413. Nothing is forwarded in any of these cases.
+- Walk cost measured 2026-10-09 (Linux, node 22): a 3.9 MB Messages body with 35,000 secrets
+  walked in 803 ms; 5 MB of plain text through the text redactor in 109 ms. Linear, as DUSTSEC.21
+  predicted, 49 MiB of JSON with 425k secrets took 4.7 s (review), so the 32 MiB default bounds one request at a few seconds; the walk stays synchronous and the cap bounds the stall, it does not remove it. Total in-flight buffered bytes are capped (503 + Retry-After).
+- JSON is parsed under any content label first; NUL-bearing UTF-16/32 without a BOM is refused.
+- NOT redacted by design: non-JSON opaque bodies (multipart, octet-stream, image/audio/video, PDF, archives,
+  unlabelled bodies containing NUL bytes), including the text fields inside a multipart upload.
+- Second review (2026-10-09): NUL bytes no longer make a text body opaque (opaque = known-binary
+  label, or magic signature under a text/no label, and not JSON); UTF-16/32 is refused by whole-body
+  window scan plus a UTF-16 decode check; duplicate JSON keys are detected by a byte scanner and
+  their raw text redacted; BOM stripped only for parsing; the in-flight reservation is released when
+  upstream headers arrive (no replay after the retry loop); size limit and cap also apply under
+  `proxy.bypass_all` (memory guard only, nothing decoded or redacted).
+- Third review (2026-10-09): duplicate JSON keys are refused (400) instead of text-redacted, because
+  the raw text holds the secret JSON-escaped. The wide-text check covers UTF-32 at four alignments
+  and does not depend on NUL density (measured +2.5 s on a 32 MiB NUL-bearing text body). A magic
+  signature makes a body opaque only if it also looks binary (printable GIF8/ID3/BZh/%PDF/RIFF/OggS/
+  Rar!/ftyp text is redacted). The 32 MiB default bounds admission, not stall time: the synchronous
+  JSON walk runs about 0.7 s per MiB on many-small-strings bodies, so a pathological 32 MiB body can
+  stall the event loop for tens of seconds (follow-up: async or worker-thread walk). The in-flight cap
+  bounds admission, not memory (streaming buffers stay resident after headers).

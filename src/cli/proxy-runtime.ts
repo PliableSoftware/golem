@@ -311,6 +311,7 @@ export function buildProxyFromSettings(
     connectTimeoutMs: settings.proxy.connect_timeout_ms,
     headersTimeoutMs: settings.proxy.request_timeout_ms,
     bodyTimeoutMs: settings.proxy.request_timeout_ms,
+    maxRequestBodyBytes: settings.proxy.max_request_body_bytes,
     pipeline,
     ...(mapUpstreamHeaders !== undefined ? { mapUpstreamHeaders } : {}),
     ...(translateUpstream !== undefined ? { translateUpstream } : {}),

@@ -130,11 +130,22 @@ describe("DUSTSEC.19 redaction over non-messages JSON bodies", () => {
     expect(r.body).toBe("");
   });
 
-  it("(f) a non-JSON body is forwarded unchanged", async () => {
-    const body = `plain text ${SECRET} {not json`;
+  it("(f) a text body that is not JSON is redacted (DUSTSEC.21 decision)", async () => {
     const r = await send(await build(), "/v1/messages/count_tokens", {
       method: "POST",
       contentType: "text/plain",
+      body: `plain text ${SECRET} {not json`,
+    });
+    expect(r.hits).toBe(1);
+    expect(r.body).toBe(`plain text ${PLACEHOLDER} {not json`);
+    expect(r.contentLength).toBe(String(Buffer.byteLength(r.body)));
+  });
+
+  it("(f2) an opaque (multipart) body is forwarded unchanged", async () => {
+    const body = `--B\r\ncontent-disposition: form-data; name="f"\r\n\r\n${SECRET}\r\n--B--`;
+    const r = await send(await build(), "/v1/files", {
+      method: "POST",
+      contentType: "multipart/form-data; boundary=B",
       body,
     });
     expect(r.hits).toBe(1);
