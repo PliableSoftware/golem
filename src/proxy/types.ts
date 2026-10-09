@@ -199,6 +199,13 @@ export interface ProxyServerOptions {
    * 64 MiB.
    */
   readonly maxRequestBodyBytes?: number;
+  /**
+   * DUSTSEC.21: cap on request-body bytes held at once across concurrent
+   * requests (wire form plus decoded form). Over it a request is answered 503
+   * with Retry-After and nothing is forwarded. Default: the larger of 256 MiB and
+   * twice `maxRequestBodyBytes`.
+   */
+  readonly maxInFlightBodyBytes?: number;
   /** Request pipeline hook. Default: {@link identityPipeline}. */
   readonly pipeline?: RequestPipeline;
   /**
@@ -381,6 +388,7 @@ export interface ProxyConfig {
   readonly headersTimeoutMs: number;
   readonly bodyTimeoutMs: number;
   readonly maxRequestBodyBytes: number;
+  readonly maxInFlightBodyBytes: number;
   readonly pipeline: RequestPipeline;
   readonly onPipelineError?: (err: unknown, request: ProxyRequest) => void;
   readonly onResponseUsage?: (usage: ResponseUsage | null, request: ProxyRequest) => void;
@@ -421,12 +429,14 @@ function defaultRateLimitSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export function resolveProxyConfig(options: ProxyServerOptions = {}): ProxyConfig {
+  const maxBody = options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES;
   return {
     upstreamBaseUrl: options.upstreamBaseUrl ?? DEFAULT_UPSTREAM_BASE_URL,
     connectTimeoutMs: options.connectTimeoutMs ?? 10_000,
     headersTimeoutMs: options.headersTimeoutMs ?? 300_000,
     bodyTimeoutMs: options.bodyTimeoutMs ?? 300_000,
-    maxRequestBodyBytes: options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES,
+    maxRequestBodyBytes: maxBody,
+    maxInFlightBodyBytes: options.maxInFlightBodyBytes ?? Math.max(256 * 1024 * 1024, 2 * maxBody),
     pipeline: options.pipeline ?? identityPipeline,
     ...(options.onPipelineError !== undefined ? { onPipelineError: options.onPipelineError } : {}),
     ...(options.onResponseUsage !== undefined ? { onResponseUsage: options.onResponseUsage } : {}),

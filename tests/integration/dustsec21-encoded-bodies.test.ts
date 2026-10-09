@@ -7,7 +7,7 @@
 
 import type { IncomingHttpHeaders, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
+import { brotliCompressSync, deflateRawSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { NativeLosslessCompression } from "../../src/compression/index.js";
 import { policyFor } from "../../src/interfaces/policy.js";
@@ -446,13 +446,132 @@ describe("DUSTSEC.21 (5) request body size limit", () => {
     expectCleanForward(r);
   });
 
-  it("the default limit is 64 MiB", async () => {
+  it("the default limit is 32 MiB", async () => {
     const { resolveProxyConfig } = await import("../../src/proxy/types.js");
-    expect(resolveProxyConfig().maxRequestBodyBytes).toBe(64 * 1024 * 1024);
+    expect(resolveProxyConfig().maxRequestBodyBytes).toBe(32 * 1024 * 1024);
   });
 
   it("the setting is schema-validated and positive", async () => {
     const { DEFAULT_SETTINGS } = await import("../../src/config/schema.js");
-    expect(DEFAULT_SETTINGS.proxy.max_request_body_bytes).toBe(64 * 1024 * 1024);
+    expect(DEFAULT_SETTINGS.proxy.max_request_body_bytes).toBe(32 * 1024 * 1024);
+  });
+});
+
+describe("DUSTSEC.21 review: JSON under ANY label is redacted as JSON", () => {
+  const labels = [
+    "application/octet-stream",
+    "image/png",
+    "multipart/form-data; boundary=XB",
+    "application/pdf",
+  ];
+  for (const label of labels) {
+    for (const path of routes) {
+      it(`${label} carrying JSON to ${path}`, async () => {
+        const r = await send(await build(), path, {
+          headers: { "content-type": label },
+          body: `  ${messagesBody()}`,
+        });
+        expect(r.status).toBe(200);
+        expect(r.body).not.toContain(SECRET);
+        expect(r.body).toContain(PLACEHOLDER);
+        expect(r.headers["content-length"]).toBe(String(r.raw.length));
+      });
+    }
+  }
+
+  it("the redactOnly fail-safe also redacts JSON under an opaque label", async () => {
+    const pipeline = await build({ policy: () => Promise.reject(new Error("policy boom")) });
+    for (const path of routes) {
+      const r = await send(pipeline, path, {
+        headers: { "content-type": "application/octet-stream" },
+        body: messagesBody(),
+      });
+      expect(r.body).not.toContain(SECRET);
+    }
+  });
+});
+
+describe("DUSTSEC.21 review: UTF-16 without a BOM", () => {
+  const swap = (b: Buffer) => Buffer.from(b).swap16();
+  const sources = {
+    json: messagesBody(),
+    text: `plain text ${SECRET} and some more words to pad it out`,
+  };
+  for (const [kind, src] of Object.entries(sources)) {
+    for (const [endian, body] of [
+      ["LE", Buffer.from(src, "utf16le")],
+      ["BE", swap(Buffer.from(src, "utf16le"))],
+    ] as const) {
+      for (const headers of [{}, { "content-type": "text/plain" }, jsonHeaders]) {
+        it(`${kind} UTF-16${endian} no BOM, headers ${JSON.stringify(headers)} is refused`, async () => {
+          const r = await send(await build(), "/v1/other", { headers, body });
+          expectRefusedNothingForwarded(r, 502);
+        });
+      }
+    }
+  }
+
+  it("true binary with a few NUL bytes (no label) is forwarded unchanged", async () => {
+    const blob = Buffer.from(Array.from({ length: 4096 }, (_, i) => (i * 37) % 256));
+    const r = await send(await build(), "/v1/files", { body: blob });
+    expect(r.hits).toBe(1);
+    expect(r.raw.equals(blob)).toBe(true);
+  });
+});
+
+describe("DUSTSEC.21 review: raw deflate", () => {
+  it("a raw (headerless) deflate body is decoded", async () => {
+    const r = await send(await build(), "/v1/messages", {
+      headers: { ...jsonHeaders, "content-encoding": "deflate" },
+      body: deflateRawSync(Buffer.from(messagesBody())),
+    });
+    expectCleanForward(r);
+  });
+});
+
+describe("DUSTSEC.21 review: in-flight buffered bytes are capped", () => {
+  it("concurrent bodies past the cap get 503 + Retry-After, nothing forwarded for them", async () => {
+    const got = { hits: 0 };
+    const upstream = await startUpstream(async (_req, res) => {
+      got.hits += 1;
+      await new Promise((r) => setTimeout(r, 300));
+      res.end("{}");
+    });
+    const proxy = await startProxy({
+      upstreamBaseUrl: upstream.origin,
+      pipeline: await build(),
+      maxRequestBodyBytes: 100_000,
+      maxInFlightBodyBytes: 150_000,
+    });
+    try {
+      const body = JSON.stringify({ pad: "a".repeat(90_000) });
+      const results = await Promise.all(
+        [0, 1, 2].map(() =>
+          rawRequest(proxy.origin, "/v1/other", { method: "POST", headers: jsonHeaders, body }),
+        ),
+      );
+      const statuses = results.map((x) => x.status).sort();
+      expect(statuses).toContain(503);
+      expect(statuses).toContain(200);
+      const refused = results.find((x) => x.status === 503);
+      expect(refused?.headers["retry-after"]).toBeDefined();
+      expect(got.hits).toBe(statuses.filter((s) => s === 200).length);
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  });
+});
+
+describe("DUSTSEC.21 review: setting validation", () => {
+  it("rejects 0, -1, 1.5, a string and a value over the upper bound", async () => {
+    const { leafSchema } = await import("../../src/config/schema.js");
+    const schema = leafSchema("proxy", "max_request_body_bytes");
+    expect(schema).toBeDefined();
+    for (const bad of [0, -1, 1.5, "100", 256 * 1024 * 1024 + 1]) {
+      expect(schema?.safeParse(bad).success).toBe(false);
+    }
+    expect(schema?.safeParse(256 * 1024 * 1024).success).toBe(true);
+    expect(schema?.safeParse(1).success).toBe(true);
   });
 });

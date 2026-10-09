@@ -281,11 +281,12 @@ export const SETTING_META = {
   },
   "proxy.max_request_body_bytes": {
     label: "Max request body",
-    summary: "Largest request body accepted, in bytes (default 64 MiB); larger gets a 413",
+    summary:
+      "Largest request body accepted, in bytes (default 32 MiB, max 256 MiB); larger gets a 413",
     detail:
       "Applies to the body on the wire and after decompression. A request over the limit is " +
       "refused with 413 and nothing is forwarded; it bounds how long redaction can hold the " +
-      "proxy's event loop. There is no unlimited value.",
+      "proxy's event loop. There is no unlimited value: the ceiling is 256 MiB.",
     advanced: true,
     restart: "proxy",
   },

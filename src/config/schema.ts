@@ -300,9 +300,14 @@ export const SETTINGS_LEAVES = {
      * and after decompression. Over it the proxy answers 413 and forwards
      * nothing. It bounds the synchronous redaction walk (linear in body size) so
      * one huge body cannot stall the event loop for every concurrent stream.
-     * Positive by construction: there is no value that means "unlimited".
+     * Bounded on both sides: positive, and at most 256 MiB, so no layer (project,
+     * team) can configure an unbounded stall. Default 32 MiB.
      */
-    max_request_body_bytes: z.number().int().positive(),
+    max_request_body_bytes: z
+      .number()
+      .int()
+      .positive()
+      .max(256 * 1024 * 1024, "proxy.max_request_body_bytes may not exceed 268435456 (256 MiB)"),
     /**
      * R13.x — idle timeout for project proxies (milliseconds). A proxy that has
      * served no requests for this duration exits on its own. Unset (default) means
@@ -1126,7 +1131,7 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     map_reasoning_to_thinking: true,
     request_timeout_ms: 600_000,
     connect_timeout_ms: 10_000,
-    max_request_body_bytes: 64 * 1024 * 1024,
+    max_request_body_bytes: 32 * 1024 * 1024,
     // R14.x: explicit proxy.targets retired — targets now derived from proxy.gateways
     gateways: [],
   },

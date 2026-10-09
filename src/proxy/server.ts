@@ -25,7 +25,13 @@ import { type Dispatcher, Pool } from "undici";
 import { mapUpstreamError, PROXY_ERROR_HEADER } from "./errors.js";
 import { forwardableRequestHeaders, forwardableResponseHeaders } from "./headers.js";
 import { classifyRateLimit, decideRetry } from "./rate-limit-retry.js";
-import { normalizeRequestBody, RequestBodyRefusal, readBody } from "./request-body.js";
+import {
+  BodyBudget,
+  type BodyHold,
+  normalizeRequestBody,
+  RequestBodyRefusal,
+  readBody,
+} from "./request-body.js";
 import {
   type ProxyConfig,
   type ProxyRequest,
@@ -82,6 +88,8 @@ const MAX_POOLED_ORIGINS = 32;
 
 export class GolemProxy {
   readonly config: ProxyConfig;
+  /** DUSTSEC.21: request-body bytes held across concurrent requests. */
+  readonly #bodyBudget: BodyBudget;
 
   /**
    * When false, the proxy forwards every request as a raw passthrough (no
@@ -109,6 +117,7 @@ export class GolemProxy {
 
   constructor(options: ProxyServerOptions = {}) {
     this.config = resolveProxyConfig(options);
+    this.#bodyBudget = new BodyBudget(this.config.maxInFlightBodyBytes);
     // R11.1: `proxy.bypass_all` starts the proxy with the pipeline OFF, which is
     // the same state `golem off` reaches at runtime — the difference is that this
     // one survives a restart, and the restart is the reason the runtime toggle
@@ -250,14 +259,28 @@ export class GolemProxy {
     });
 
     let forward: ProxyRequest;
+    const hold: BodyHold = { bytes: 0 };
     try {
-      const body = await readBody(req, this.config.maxRequestBodyBytes);
+      // Release what this request reserved once the response is done, however it ends.
+      res.once("close", () => this.#bodyBudget.release(hold.bytes));
+      const body = await readBody(req, this.config.maxRequestBodyBytes, this.#bodyBudget, hold);
       let headers = forwardableRequestHeaders(req.headers);
       let readable = body;
       // DUSTSEC.21: decode a content-encoded body so redaction can read it. Only
       // when the pipeline is on: `proxy.bypass_all` forwards byte-faithfully.
       if (body !== null && this.#pipelineEnabled) {
         const normalized = normalizeRequestBody(body, headers, this.config.maxRequestBodyBytes);
+        // A decoded body is a separate buffer held alongside the wire form:
+        // reserve it too. (Identity and BOM-strip share the wire buffer.)
+        const extra = normalized.body.buffer === body.buffer ? 0 : normalized.body.length;
+        if (extra > 0 && !this.#bodyBudget.tryReserve(extra)) {
+          throw new RequestBodyRefusal(
+            503,
+            "golem proxy: too many large request bodies are in flight (proxy memory cap). " +
+              "Nothing was forwarded; retry shortly.",
+          );
+        }
+        hold.bytes += extra;
         readable = normalized.body;
         headers = normalized.headers;
       }
@@ -272,6 +295,7 @@ export class GolemProxy {
         // Fail closed: nothing was forwarded. `connection: close` because an
         // oversized body may still be arriving and is not worth draining.
         res.setHeader("connection", "close");
+        if (err.status === 503) res.setHeader("retry-after", "1");
         failProxy(err.status, err.message);
         return;
       }
