@@ -18,9 +18,9 @@ import { addEventHook, removeEventHook } from "../../hooks/index.js";
 const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 /**
  * The gate is TWO hooks, wired and unwired together (R12.12): `PreToolUse`
- * classifies and asks, `PermissionRequest` answers a destructive/outward request
- * outright before a dialog can open. Wiring one without the other is a
- * half-installed gate, so `wire`/`unwire` always act on both.
+ * classifies and asks; `PermissionRequest` is inert (DUSTSEC.10: no decision, the
+ * native dialog asks the human) but stays wired so existing installs keep
+ * resolving it. `wire`/`unwire` always act on both.
  */
 const GATE_HOOKS: readonly (readonly [event: string, command: string])[] = [
   ["PreToolUse", "golem hook pre-tool-use"],
@@ -63,7 +63,7 @@ export default function register(program: Command): void {
             `⚠ Golem is auto-approving some steps at level "${level}". Destructive/outward actions still require your approval (ADR-0002). Set 'manual' to disable.\n`,
           );
         process.stdout.write(
-          "the gate needs the PreToolUse + PermissionRequest hooks wired (`golem init` does this by default; `golem autonomy wire`/`unwire` toggle them together). Turn the gate off without unwiring: `golem autonomy disable`.\n",
+          "the gate is the PreToolUse hook (`golem init` wires it by default; `golem autonomy wire`/`unwire` toggle it, together with an inert PermissionRequest hook that emits no decision, so destructive/outward prompts reach the native dialog). Turn the gate off without unwiring: `golem autonomy disable`.\n",
         );
       } catch (err) {
         _fail(err);

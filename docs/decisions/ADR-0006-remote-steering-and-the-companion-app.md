@@ -84,7 +84,7 @@ switch. Most of the value is in the first, which carries almost none of the risk
 | # | Capability | What it grants | Risk |
 |---|---|---|---|
 | **1. Observe** | Read the blocked state, limits and telemetry from a paired device | Disclosure of tool arguments and project names | Moderate — and bounded by redaction |
-| **2. Authorize** | Answer a permission prompt the hook is holding open | Code execution on the developer's machine | **Severe** — for `read`/`write`/`unknown`, now carried first-party by Anthropic's channel relay (R12.7); the `destructive`/`outward` exclusion needs a hook fix to hold against it (R12.11, R12.12) |
+| **2. Authorize** | Answer a permission prompt the hook is holding open | Code execution on the developer's machine | **Severe** — for `read`/`write`/`unknown`, now carried first-party by Anthropic's channel relay (R12.7); the `destructive`/`outward` exclusion needs a hook fix to hold against it (R12.11, R12.12). *(Superseded 2026-10-09: the R12.12 hook fix was removed, DUSTSEC.10, so Golem no longer enforces this exclusion against a relay answer; task DUSTSEC.25 closes the gap.)* |
 | **3. Resume** | Start work in an idle session | — | ~~Structurally unavailable (Decision 37)~~ — **not built by choice; see the re-verification below** |
 
 Capability 3 is not a design choice. It does not exist, R12.7 re-verifies that
@@ -150,7 +150,7 @@ the opposite — read this paragraph together with the block below.]**
 > **What does not change:** the class line itself (§2) is unamended; this
 > re-verification is about which layer enforces it.
 >
-> **SHIPPED 2026-08-28 (R12.12) — the fix half.** Golem now registers a
+> **SHIPPED 2026-08-28 (R12.12) — the fix half. (The deny described here was removed 2026-10-09, DUSTSEC.10, USER decision: the hook now emits no decision and the native dialog asks the human. See ADR-0002.)** Golem now registers a
 > `PermissionRequest` hook (`src/hooks/permission-request.ts`, wired by `golem
 > init` and `golem autonomy wire` alongside its `PreToolUse` sibling) that
 > returns `hookSpecificOutput.decision.behavior: "deny"` for `destructive` and
@@ -172,6 +172,16 @@ the opposite — read this paragraph together with the block below.]**
 > **Until it is confirmed, treat the class line as documented-and-enforced but
 > not observed, for a user running both Golem and a connected permission-relay
 > channel.**
+>
+> **Superseded 2026-10-09 (DUSTSEC.10, USER decision).** The `deny` this block
+> describes was removed, so the class line is no longer enforced against a relay
+> answer by Golem: the native dialog opens and a relay may be notified of it
+> (R12.13 unconfirmed). Task DUSTSEC.25 restores enforcement on the answer side.
+>
+> **Amended 2026-10-09 (USER decision; spec Decision 60(b)).** Remote authorship
+> into a LIVE session is gated on `security.join_injection` being on (off by
+> default), not on a `PermissionRequest` deny being active. Hosted sessions
+> unchanged.
 >
 > **Disposition:** recommend cancelling R12.3/R12.4/R12.8/R12.9 (the pairing,
 > hook-timing, relay, and hosted-account stack built to carry capability 2
@@ -500,7 +510,7 @@ Revision 2 adds four consequences, and they are not small:
 
 ## What must be ratified before R12.3–R12.7 start
 
-1. **The class line in §2** — that `destructive` and `outward` are never remotely
+1. **The class line in §2** *(superseded 2026-10-09: Decision 61 made it a setting, and DUSTSEC.10 removed the R12.12 deny that enforced it; see DUSTSEC.25)* — that `destructive` and `outward` are never remotely
    approvable, with no setting to change it. This is the load-bearing decision;
    accepting it is what keeps ADR-0002 unamended.
 2. **That `unknown` (arbitrary Bash) IS remotely approvable.** Without it the
@@ -544,8 +554,8 @@ carried no pointer to any of them.
   such key exists in the `security` settings today. What ships is the opposite
   extreme. A hosted session always denies those classes
   (`src/hooks/host-gate.ts:68-82`), and the R12.12 `PermissionRequest` deny
-  applies to every session when the gate is enabled (see the ADR-0002 amendment
-  of the same date). The threat-model rows that repeat "no setting" carry the same
+  applied to every session when the gate was enabled (removed 2026-10-09,
+  DUSTSEC.10; see the ADR-0002 amendments). The threat-model rows that repeat "no setting" carry the same
   pointer. Whether Decision 61 reaches hosted sessions is a separate open
   contradiction (P3) and is not decided here.
 - **Section 8, "No remote surface that changes settings".** Whether

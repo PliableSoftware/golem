@@ -140,7 +140,7 @@ Related: [[Redaction Stage]] (untouched), R5.1 `--permission-mode` plumbing
 > **Amended 2026-10-08 (DUST2.3; DECISIONS.md R8; SUMMARY rows 1.7/r017, 1.7/r019).**
 > The decision text above is unchanged and is history. Two things drifted.
 >
-> **1. Destructive and outward now end in a `deny`, not a human prompt.** The
+> **1. Destructive and outward now end in a `deny`, not a human prompt.** *(Superseded 2026-10-09: the deny was removed; see the final note below.)* The
 > `PreToolUse` gate still emits `ask` for both classes at every level
 > (`src/autonomy/gate.ts:27-34`). R12.12 added a second, earlier layer: the
 > `PermissionRequest` hook returns a real `deny` for `destructive` and `outward`
@@ -173,3 +173,27 @@ Related: [[Redaction Stage]] (untouched), R5.1 `--permission-mode` plumbing
 > and `git branch -D`, linter autofix flags and `git diff --output` no longer
 > classify as `read`. DUSTSEC.18 (`56983c4`) then judged git write flags on shell
 > words, so a quoted search term is data and an escaped flag is still a flag.
+
+> **Amended 2026-10-09 (DUSTSEC.10; USER DECISION; DECISIONS.md R8).** Item 1 of
+> the 2026-10-08 note above is superseded: the unconditional R12.12 `deny` is
+> **removed**. The `PermissionRequest` hook (`src/hooks/permission-request.ts`)
+> now returns NO decision for any action class at any autonomy level, so a
+> `destructive` or `outward` call reaches Claude Code's native permission dialog
+> and a human decides. "Destructive/outward means a human decides" holds again.
+>
+> - **Invariant 5 holds, strengthened.** `allow` is never emitted for either class
+>   by either hook; the `PermissionRequest` hook now emits nothing at all.
+>   `PreToolUse`'s `ask` is unchanged. `decidePermissionRequest` is deleted.
+> - **This was the USER's decision, against the recommendation** to keep the deny
+>   and amend this ADR to say so. The conditional version (deny only while a relay
+>   channel is connected) was not possible: no such signal exists at the hook
+>   (verification-notes, 2026-10-08).
+> - **Consequence accepted.** With a permission-relay channel connected, the relay
+>   may now be notified when the dialog opens. That is the effect R12.12 existed
+>   to prevent (verification-notes §141). **R12.13 stays unconfirmed**: nobody has
+>   observed live whether the relay fires (`owner: user`, needs an interactive
+>   session).
+> - The hook stays wired (inert) so existing installs' settings keep resolving
+>   `golem hook permission-request`; whether to stop wiring it is separate.
+> - Unchanged: the `PreToolUse` bypass guard and the deny of `golem off` /
+>   `proxy.bypass_all` (a different layer).

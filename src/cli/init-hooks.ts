@@ -71,12 +71,11 @@ import type { InitAction } from "./init.js";
  */
 const PRE_TOOL_USE_HOOK_COMMAND = "golem hook pre-tool-use";
 /**
- * R12.12 — the second, EARLIER half of the autonomy gate. `PreToolUse`'s `ask`
- * for a destructive/outward step only guarantees a dialog opens; this one
- * answers the request with a real `deny` before it can. Same `golem autonomy
- * enable/disable` toggle, same matcher-less wiring (the handler self-filters),
- * and wired/unwired in the same breath as its sibling — see
- * `src/hooks/permission-request.ts`.
+ * The `PermissionRequest` hook. Since DUSTSEC.10 it is inert: it emits no
+ * decision (R12.12's unconditional `deny` was removed by USER decision), so the
+ * native dialog that `PreToolUse`'s `ask` opens is what the human answers. Still
+ * wired/unwired in the same breath as its sibling so existing installs keep
+ * resolving it — see `src/hooks/permission-request.ts`.
  */
 const PERMISSION_REQUEST_HOOK_COMMAND = "golem hook permission-request";
 /**
@@ -228,8 +227,7 @@ export async function wireHooks(
   // PreToolUse: the snooze document-and-hold nudge + autonomy gate (outward and
   // destructive actions are gated at every level). See PRE_TOOL_USE_HOOK_COMMAND.
   actions.push(await addEventHook(options, "PreToolUse", PRE_TOOL_USE_HOOK_COMMAND));
-  // PermissionRequest: the same gate, one event earlier, where a decision can
-  // actually resolve the request instead of deferring it (R12.12).
+  // PermissionRequest: wired but inert (DUSTSEC.10) — emits no decision.
   actions.push(await addEventHook(options, "PermissionRequest", PERMISSION_REQUEST_HOOK_COMMAND));
   // PostToolUse on any tool: the result clears the blocked flag. UserPromptSubmit
   // alone left it stuck for the rest of the turn — answering a question, or
