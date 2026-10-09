@@ -23,3 +23,5 @@ it as skipped and does not re-create it.
   skill deleted in git is re-offered it once.
 - **Recourse:** `golem init --restore-skill <cmd>` (repeatable, or `all`).
 - `golem uninit` removes the record, so the next init offers everything again.
+
+Related: [[Guidance Rules]] (the `seededByDefault` record this follows) and [[Dust Method]] (the `golem-dust` skill is one of the skills this covers).
