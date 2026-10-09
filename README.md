@@ -63,6 +63,14 @@ present, and falls back to a self-contained binary (no Node needed) otherwise
 `npm i -g @pliable/golem` works directly. Keep current with `golem update` (the VS
 Code extension also surfaces an update prompt). Release process: [RELEASING.md](RELEASING.md).
 
+### Removing a skill, and getting it back
+
+Delete `.claude/skills/golem-<cmd>/` and it stays deleted: `golem init` records which
+skills the project was offered (`.golem/state/skills-offered.json`) and does not
+re-seed a removed one. A skill added in a later release is offered once. To bring one
+back, run `golem init --restore-skill <cmd>` (repeatable, or `--restore-skill all`).
+A skill you edited is always kept; `golem uninit` clears the record.
+
 ## Settings
 
 Run **`golem`** in a terminal — that's it, no subcommand — for an interactive control panel:

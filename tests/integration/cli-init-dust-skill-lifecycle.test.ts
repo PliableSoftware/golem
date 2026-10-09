@@ -7,6 +7,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { golemInit, golemUninit, type InitProbe } from "../../src/cli/init.js";
+import { skillDirName, skillsOfferedPath } from "../../src/cli/init-skills.js";
 import { hashManaged, managedRecordPath } from "../../src/cli/managed-files.js";
 import { P0_SKILLS } from "../../src/cli/skills.js";
 import { useTempDirs } from "../helpers/tmp.js";
@@ -123,14 +124,86 @@ describe("golem-dust skill lifecycle", () => {
     });
   });
 
-  // Pins today's behaviour for ALL skills; see task skill-opt-out-sticks.
-  it("re-seeds a deleted skill on the next init (opt-out does not stick yet)", async () => {
+  it("a deleted skill stays deleted on the next init, for every shipped skill", async () => {
     await golemInit({ projectDir, probe: okProbe });
-    await rm(path.dirname(skillPath), { recursive: true, force: true });
+    for (const name of Object.keys(P0_SKILLS)) {
+      await rm(path.join(projectDir, ".claude", "skills", skillDirName(name)), {
+        recursive: true,
+        force: true,
+      });
+    }
 
     const report = await golemInit({ projectDir, probe: okProbe });
 
-    expect(forDust(report.actions, "create")).toBe(true);
+    for (const name of Object.keys(P0_SKILLS)) {
+      const file = path.join(projectDir, ".claude", "skills", skillDirName(name), "SKILL.md");
+      await expect(readFile(file, "utf8")).rejects.toThrow();
+    }
+    expect(report.actions.some((a) => a.kind === "create" && a.path.includes("skills"))).toBe(
+      false,
+    );
+    const declined = report.actions.find(
+      (a) => a.kind === "skip" && a.path.replaceAll("\\", "/").endsWith(KEY),
+    );
+    expect(declined?.detail).toContain("declined");
+  });
+
+  it("--restore-skill style opt-back-in recreates only the named skill", async () => {
+    await golemInit({ projectDir, probe: okProbe });
+    await rm(path.dirname(skillPath), { recursive: true, force: true });
+    const otherDir = path.join(projectDir, ".claude", "skills", "golem-ship");
+    await rm(otherDir, { recursive: true, force: true });
+
+    await golemInit({ projectDir, probe: okProbe, restoreSkills: [COMMAND] });
+
     expect(await readFile(skillPath, "utf8")).toBe(P0_SKILLS[COMMAND]);
+    await expect(readFile(path.join(otherDir, "SKILL.md"), "utf8")).rejects.toThrow();
+  });
+
+  it("a skill added in a later release is offered once, others stay declined", async () => {
+    await golemInit({ projectDir, probe: okProbe });
+    await rm(path.dirname(skillPath), { recursive: true, force: true });
+    // Simulate an older record that predates a newly shipped skill.
+    const rec = skillsOfferedPath(projectDir);
+    const offered = (JSON.parse(await readFile(rec, "utf8")) as { offered: string[] }).offered;
+    await writeFile(
+      rec,
+      JSON.stringify({
+        offered: offered.filter((n) => n !== "ship" && n !== COMMAND).concat(COMMAND),
+      }),
+      "utf8",
+    );
+    const shipPath = path.join(projectDir, ".claude", "skills", "golem-ship", "SKILL.md");
+    await rm(path.dirname(shipPath), { recursive: true, force: true });
+
+    await golemInit({ projectDir, probe: okProbe });
+    expect(await readFile(shipPath, "utf8")).toBe(P0_SKILLS.ship);
+    await expect(readFile(skillPath, "utf8")).rejects.toThrow();
+
+    await rm(path.dirname(shipPath), { recursive: true, force: true });
+    await golemInit({ projectDir, probe: okProbe });
+    await expect(readFile(shipPath, "utf8")).rejects.toThrow();
+  });
+
+  it("uninit clears the offered record so the next init offers everything again", async () => {
+    await golemInit({ projectDir, probe: okProbe });
+    await rm(path.dirname(skillPath), { recursive: true, force: true });
+    await golemInit({ projectDir, probe: okProbe });
+
+    await golemUninit({ projectDir, probe: okProbe });
+    await expect(readFile(skillsOfferedPath(projectDir), "utf8")).rejects.toThrow();
+    await golemInit({ projectDir, probe: okProbe });
+
+    expect(await readFile(skillPath, "utf8")).toBe(P0_SKILLS[COMMAND]);
+  });
+
+  it("a hand-edited skill is kept even though the project has an offered record", async () => {
+    await golemInit({ projectDir, probe: okProbe });
+    const edited = `${P0_SKILLS[COMMAND]}\nMine.\n`;
+    await writeFile(skillPath, edited, "utf8");
+
+    await golemInit({ projectDir, probe: okProbe, restoreSkills: ["all"] });
+
+    expect(await readFile(skillPath, "utf8")).toBe(edited);
   });
 });

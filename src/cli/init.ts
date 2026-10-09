@@ -171,6 +171,11 @@ export interface InitOptions {
    */
   readonly noLoopbackCert?: boolean;
   /**
+   * Skills to re-create even though the project deleted them (`"all"` or command
+   * names). Without this a deleted skill stays deleted.
+   */
+  readonly restoreSkills?: readonly string[];
+  /**
    * Which `.claude` settings file to write: `local`
    * (`.claude/settings.local.json`, gitignored) or `project`
    * (`.claude/settings.json`, committed). Omitted, it comes from
@@ -420,7 +425,7 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
   }
 
   // 3. Skills: .claude/skills/golem-<cmd>/SKILL.md -> /golem-<cmd>.
-  actions.push(...(await installSkills(projectDir, dryRun)));
+  actions.push(...(await installSkills(projectDir, dryRun, options.restoreSkills ?? [])));
   // 3a. Retire the pre-2026-09-04 nested `.claude/skills/golem/<cmd>/` layout.
   // Those files were never DISCOVERABLE — Claude Code reads one level, so
   // `golem/` was checked for a SKILL.md that was not there and the namespace was
