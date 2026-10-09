@@ -3,11 +3,11 @@
  *
  * Frozen tool names (IMPLEMENTATION_PLAN §2.5): search, fetch,
  * ingest, expand, stats, level, coder (renamed from delegate, Decision 35),
- * golem_devices. Prompts: slider, index, search, stats, expand, bypass,
+ * golem_devices. Prompts: index, search, stats, expand, bypass,
  * devices, coder (surface in Claude Code as /mcp__golem__<prompt>).
  *
  * B1 ships the P0 tools (expand, stats, level) and all
- * eight prompts, over stdio and streamable-HTTP transports. P1 tools arrive
+ * seven prompts, over stdio and streamable-HTTP transports. P1 tools arrive
  * with task B3 once WS-C/WS-D implementations exist.
  */
 

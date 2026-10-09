@@ -1,7 +1,7 @@
 {
   "name": "golem-vscode",
   "displayName": "Golem",
-  "description": "Live Golem token-savings dashboard: compression stats, slider, and proxy status in a VS Code panel.",
+  "description": "Live Golem token-savings dashboard: compression stats, the compression dial, and proxy status in a VS Code panel.",
   "version": "0.54.3",
   "publisher": "golem-run",
   "engines": {
@@ -82,7 +82,7 @@
           "type": "number",
           "default": 15,
           "minimum": 5,
-          "description": "How often (seconds) the panel and status bar poll the golem CLI as a background safety net. Slider/state changes update immediately (optimistically for in-editor changes, via a file watcher for external ones), so this only needs to catch proxy up/down and savings drift."
+          "description": "How often (seconds) the panel and status bar poll the golem CLI as a background safety net. Dial/state changes update immediately (optimistically for in-editor changes, via a file watcher for external ones), so this only needs to catch proxy up/down and savings drift."
         }
       }
     }

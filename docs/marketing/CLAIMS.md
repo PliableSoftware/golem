@@ -83,7 +83,7 @@ Each item is banned in every wording, with the reason. A draft that needs one of
 | id | banned | reason |
 |---|---|---|
 | B-01 | That team policy is enforced everywhere, or where it is enforced. | G3, open. Only `golem status` loads the team layer; `golem config`, the panel, VS Code, hooks, MCP and the hot-reload do not. A security question, left for the user. |
-| B-02 | That the `slider` MCP prompt is gone, or that it is supported. | M2, open. The prompt still exists in `src/mcp/prompts.ts:14` (frozen contract). Keep-or-remove is the user's call. |
+| B-02 | That the `slider` MCP prompt is supported. | Removed 2026-10-09 (USER decision M2): it is no longer in `src/mcp/prompts.ts`, and calling it is an unknown-prompt error. The control is `golem compression`. |
 | B-03 | Whether `blocked` is a task state or task metadata. | H2, open. Code and README say state; Decision 55(d) and the wiki say metadata. |
 | B-04 | That Decision 61 covers hosted sessions. | P3, open. Whether it reaches hosted sessions given Decision 60(d) is undecided. |
 | B-05 | That `security.*` settings cannot be changed remotely. | P4/S17, open. Whether they belong on `REMOTE_DENIED_SETTINGS` is undecided. Only the keys listed in C-06 are known denied. |
