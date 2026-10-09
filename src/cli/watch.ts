@@ -93,8 +93,11 @@ export function renderWatchFrame(
         : red("proxy OFF");
   L.push(`${proxyText}  ${cyan(`→${report.proxy.upstream}`)}`);
   L.push(
-    `compression ${cyan(`${report.compression.level} ${report.compression.name}`)}   ` +
-      `local model ${known(report.local_model.reachable, green("reachable"), dim("down"))}`,
+    `compression ${cyan(
+      report.compression.level === report.compression.name
+        ? report.compression.level
+        : `${report.compression.level} ${report.compression.name}`,
+    )}   ` + `local model ${known(report.local_model.reachable, green("reachable"), dim("down"))}`,
   );
 
   // Autonomy level (R5.4) — warn when Golem is auto-approving.

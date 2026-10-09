@@ -247,8 +247,14 @@ export default function register(program: Command): void {
             );
             return;
           }
-          const result = spawnResume(argv);
-          await store.put({ ...task, state: "running", attempts: task.attempts + 1 });
+          const result = await spawnResume(argv);
+          // A launch that failed is not a running task: leave the state alone so
+          // the record does not claim work that never started.
+          await store.put(
+            result.spawned
+              ? { ...task, state: "running", attempts: task.attempts + 1 }
+              : { ...task, attempts: task.attempts + 1 },
+          );
           process.stdout.write(
             result.spawned
               ? `resumed task ${task.id} (pid ${result.pid ?? "?"})\n`

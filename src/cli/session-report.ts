@@ -52,7 +52,10 @@ export interface SessionStateReport {
     readonly bypass?: boolean;
   };
   readonly compression: {
-    /** `off | 1 | 2 | 3` (R11.1 / ADR-0004 — the slider's 0–3 scale is retired). */
+    /**
+     * `off | 1 | 2 | 3` (R11.1 / ADR-0004 — the slider's 0–3 scale is retired),
+     * or `unknown` when the state collector failed and the dial could not be read.
+     */
     readonly level: string;
     readonly name: string;
     /**
@@ -173,8 +176,10 @@ export async function collectSessionStateReport(
   // R11.1: `collectGolemState` (the status line's own reader) already resolves
   // the dial, so this no longer loads config a second time to ask the same
   // question.
-  const level = golem?.compression ?? 1;
-  const name = compressionName(level);
+  // No state read means the dial is unknown. Reporting a level here would state
+  // a made-up value (it used to say 1) on an honest-observability surface.
+  const level = golem?.compression === undefined ? "unknown" : String(golem.compression);
+  const name = golem?.compression === undefined ? "unknown" : compressionName(golem.compression);
   const blocked = blockedView(resolveBlock(session, Date.parse(nowIso) || Date.now()));
 
   return {
@@ -189,7 +194,7 @@ export async function collectSessionStateReport(
       ...(golem?.proxyBypass === true ? { bypass: true } : {}),
     },
     compression: {
-      level: String(level),
+      level,
       name,
       redaction_off: golem?.proxyBypassAll === true,
     },

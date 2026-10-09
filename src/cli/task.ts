@@ -204,30 +204,35 @@ export interface SpawnResult {
  * exec path), we DON'T fall back to a shell string (injection risk) — we return
  * the copy-pasteable command so the user runs it themselves. Honest degradation
  * over a fragile auto-launch.
+ *
+ * Async because Node reports a failed launch (ENOENT, EACCES) as an `'error'`
+ * event on a later tick, and a successful one as `'spawn'`. We wait for
+ * whichever comes first, so the failure carries the OS error message.
  */
-export function spawnResume(argv: string[]): SpawnResult {
+export function spawnResume(argv: string[]): Promise<SpawnResult> {
   const command = formatResumeCommand(argv);
   const bin = argv[0];
   const rest = argv.slice(1);
-  if (bin === undefined) return { spawned: false, command, note: "empty command" };
-  try {
-    const child = spawn(bin, rest, { detached: true, stdio: "ignore" });
-    let failed: string | undefined;
-    child.on("error", (err) => {
-      failed = err.message;
-    });
-    // NOTE: 'error' is emitted asynchronously, so `failed` is still undefined here and
-    // this branch is effectively unreachable. A spawn that cannot start (ENOENT) is
-    // caught by the missing-pid check below instead, without the error message.
-    if (failed !== undefined) {
-      return { spawned: false, command, note: `spawn failed: ${failed} — run it manually` };
+  if (bin === undefined) return Promise.resolve({ spawned: false, command, note: "empty command" });
+  const failure = (message: string): SpawnResult => ({
+    spawned: false,
+    command,
+    note: `spawn failed: ${message} — run it manually`,
+  });
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(bin, rest, { detached: true, stdio: "ignore" });
+      child.once("error", (err) => resolve(failure(err.message)));
+      child.once("spawn", () => {
+        child.unref();
+        resolve(
+          child.pid !== undefined
+            ? { spawned: true, pid: child.pid, command }
+            : failure("spawn produced no pid"),
+        );
+      });
+    } catch (err) {
+      resolve(failure(err instanceof Error ? err.message : String(err)));
     }
-    child.unref();
-    return child.pid !== undefined
-      ? { spawned: true, pid: child.pid, command }
-      : { spawned: false, command, note: "spawn produced no pid — run it manually" };
-  } catch (err) {
-    const note = `spawn failed: ${err instanceof Error ? err.message : String(err)} — run it manually`;
-    return { spawned: false, command, note };
-  }
+  });
 }
