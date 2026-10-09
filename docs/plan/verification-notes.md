@@ -11027,3 +11027,16 @@ have the bare rename; migrate them to `renameWithRetry` as a follow-up.
 
 **Not simulable here:** the real Windows error codes. Tests inject `platform` and the failing
 create/rename; only windows-latest CI confirms the real fix.
+
+**2026-10-09 follow-up (windows-handrolled-rename-sweep):** `replaceViaTemp` gained an optional
+`mode` (backwards compatible; the temp name is now random, not pid-suffixed, and the temp is removed on
+failure). Converted to it, 21 modules: hooks (`spawn-gate`, `delegation-ledger`, `snooze-nudge`,
+`session-state`, `coder-first-nudge`), proxy (`served-model`, `limit-prediction`, `context-ledger`,
+`loopback-serve`, `loopback-reach`), session (`conversation-store` with mode 0o600, `session-tree`,
+`live-conversations`), tasks (`store`, `plan-task`), `autonomy/policy`, cli (`json-file`,
+`local-model`), `update/index`, telemetry (`model-catalog`, `jsonl-store` rollup). `local-blob-store`
+`put` now uses `renameWithRetry` for its first rename (binary payload; its exists-already and
+delete-then-rename fallback is unchanged). Judged NOT to need it: `state-lock` and `file-driver`
+stale-lock breaks (lock semantics, already contention-aware, out of scope) and the `jsonl-store`
+telemetry rotation (a deliberate move of the live log; best-effort, retried on the next record).
+Tests: `tests/unit/win-rename-*.test.ts`, via `tests/helpers/flaky-rename.ts`.
