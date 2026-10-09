@@ -423,8 +423,8 @@ export const SETTING_META = {
     restart: "mcp",
   },
   "knowledge.vector_db_url": {
-    label: "External vector DB",
-    summary: "Qdrant server URL; the embedded store is used when unset",
+    label: "External vector DB (deprecated)",
+    summary: "No effect: the embedded store is always used. Remove this key",
     advanced: true,
     restart: "mcp",
   },

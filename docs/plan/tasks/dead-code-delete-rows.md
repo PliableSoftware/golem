@@ -96,6 +96,42 @@ records. `tsc --noEmit` (covers `src` and `tests`) is the compile-time proof for
   project is provably unchanged) and the decoy case failed (the removed scan was the only source of
   that entry). All three pass after.
 
+### Row notes: config area (executed 2026-10-09, branch `chore/dead-config`)
+
+Grep scope for both proofs: `src tests docs .claude vscode-extension scripts README.md`, case-sensitive and
+as bare identifiers, so string lookups (`"initProbe"`, `["vector_db_url"]`), env spellings
+(`GOLEM_KNOWLEDGE_VECTOR_DB_URL`) and dynamic imports would all have matched. No top-level `skills/` dir.
+
+**Row 13, `ApplyControlOptions.initProbe`: deleted.**
+- `grep -rn "initProbe" src tests docs .claude vscode-extension scripts`: `src` only the declaration
+  (`control-surface-types.ts:197`); `tests/unit/control-surface.test.ts:42,53` (fixture + `OPTS` entry,
+  no assertion); the rest are dated audit docs (`docs/plan/audit/dust-1/*`, `DUST3.2.md`) that record the finding.
+- `.claude`, `vscode-extension`, `scripts`: no hits. No `["initProbe"]` or spread forwarding: `applyControl`
+  and `control-surface.ts:113-114` forward options one named key at a time, `initProbe` is not among them.
+- `InitProbe` import in `control-surface-types.ts` had no other use in that file, so it went too. `InitProbe`
+  itself stays (`cli/init.ts`, many integration tests).
+- Deleted: the field + doc comment, the import, the test fixture + its comment + `OPTS` entry.
+
+**Row 9, `knowledge.vector_db_url`: KEPT as accepted-and-ignored; the dead driver branch deleted.**
+- `grep -rn "vector_db_url\|vectorDbUrl\|VECTOR_DB_URL" ...`: readers of the value: only `selectDriver`
+  (`knowledge/index.ts`), and no caller in `src` ever passed `vectorDbUrl` (`openKnowledgeBase(` call sites
+  checked: none set it; `tests/unit/knowledge/knowledge.test.ts:133` was the only caller). No env mapping
+  spelling, no vscode-extension, no scripts, no `.claude`, no README, no skill text hit.
+- Other hits: `schema.ts`, `ui-model.ts`, `team-policy.ts:98` (`D`) + `team-policy.test.ts:105` (KEPT, as
+  `TEAM_POLICY` is total over the schema), `config-ui-model.test.ts:95` (`kindOf` line dropped: the leaf is
+  now plain text), spec `:159,169` (reworded, they described the throw), wiki `Knowledge Base.md` (one line).
+  Dated history untouched: `verification-notes.md`, `audit/dust-1/*`, `DUST3.*`, `R10.4.md`, `PHASE3-INDEX.md`.
+- Mechanism: new `DEPRECATED_SETTINGS` / `deprecationFor` / `deprecationWarning` in `config/migrations.ts`;
+  `applyObjectLayer` pushes the warning after the value validates and any remote refusal passed, then applies
+  the value as before. NOT `RETIRED_SETTINGS` (raises). Schema loosened `z.string().url().optional()` to
+  `z.string().optional()` so an old malformed value cannot fail a load. Warning is once per declaration per
+  load, collected on `GolemConfig.warnings` (printed by `golem status` / `config list`), never an error.
+- Removal one release later: move the path to `RETIRED_SETTINGS` or drop it from the schema, and delete the
+  `TEAM_POLICY` entry and its test line together.
+- Published `config-schema.json` is a generated control-surface dump (labels, not JSON Schema), so there is no
+  `deprecated` flag to set: the control's label now reads "External vector DB (deprecated)", the repo's
+  existing convention (`proxy.model`). Regenerated at release; no committed copy to update.
+
 ### Rows LEFT
 
 | # | row | disposition | reason |

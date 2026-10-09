@@ -23,7 +23,8 @@ runs. Claude reaches it through the `search` / `fetch` / `ingest` MCP tools. Sou
 > **Code vs spec:** spec §3.1 targets Qdrant; the shipped default is an on-disk
 > `FileVectorDriver` (`src/knowledge/file-driver.ts`) — no server process, zero
 > install friction — behind the same `VectorDriver` seam a Qdrant driver can later
-> implement. **One collection per project** (no cross-project bleed). Without a
+> implement; the old `knowledge.vector_db_url` key is deprecated (accepted, ignored, warned
+> once on load). **One collection per project** (no cross-project bleed). Without a
 > configured embedder, `ingest`/`search` degrade rather than crash. `canonicalProjectId`
 > collapses a project id to one identity — Windows path-spelling variants, and (as
 > of 2026-08-22) a git worktree resolving to its main checkout — see

@@ -99,6 +99,49 @@ export const RETIRED_SETTINGS: readonly RetiredSetting[] = [
   // decision G1). A live setting is not retired.
 ];
 
+/**
+ * A setting that is still ACCEPTED but does nothing, slated for removal.
+ *
+ * The third state beside {@link SETTING_MIGRATIONS} (renamed, still works) and
+ * {@link RETIRED_SETTINGS} (gone, raises). Use it when a key was public and
+ * documented but never took effect, so an existing file may carry it and a hard
+ * failure on load would break someone for a setting that never did anything.
+ * The loader warns once per declaration and applies nothing; the key stays in
+ * the schema (and, if the team policy is total over the schema, in that table)
+ * until it is moved to {@link RETIRED_SETTINGS} one release later.
+ */
+export interface DeprecatedSetting {
+  /** The dotted path that is accepted and ignored. */
+  readonly path: string;
+  /** Why it does nothing, and what to do — prose, quoted in the warning. */
+  readonly note: string;
+  /** Release that deprecated it, quoted in the warning so it is traceable. */
+  readonly since: string;
+}
+
+export const DEPRECATED_SETTINGS: readonly DeprecatedSetting[] = [
+  {
+    path: "knowledge.vector_db_url",
+    note:
+      "no external vector DB driver exists, so the value is ignored and the embedded store " +
+      "is always used; remove the key",
+    since: "dead-code-delete-rows",
+  },
+];
+
+/** The deprecation record for a dotted path, or undefined if it is not deprecated. */
+export function deprecationFor(dotted: string): DeprecatedSetting | undefined {
+  return DEPRECATED_SETTINGS.find((d) => d.path === dotted);
+}
+
+/** The warning a deprecated key produces — names the file, the key, and what to do. */
+export function deprecationWarning(deprecated: DeprecatedSetting, label: string): string {
+  return (
+    `${label}: "${deprecated.path}" is deprecated (${deprecated.since}) and has no effect: ` +
+    `${deprecated.note}. It will be removed in a future release.`
+  );
+}
+
 /** The retirement record for a dotted path, or undefined if it is not retired. */
 export function retirementFor(dotted: string): RetiredSetting | undefined {
   return RETIRED_SETTINGS.find((r) => r.path === dotted);

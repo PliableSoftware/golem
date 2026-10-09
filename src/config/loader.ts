@@ -61,6 +61,8 @@ import { readEnvLayer } from "./env.js";
 import { ConfigError } from "./errors.js";
 import { isPlainObject, splitDotted } from "./file-io.js";
 import {
+  deprecationFor,
+  deprecationWarning,
   migrationFrom,
   migrationShadowedWarning,
   migrationWarning,
@@ -700,6 +702,11 @@ function applyObjectLayer(
           continue;
         }
       }
+      // Accepted-and-ignored keys: applied as written (nothing reads them) but
+      // reported once, so a file that still carries one is told rather than left
+      // believing it took effect. Never an error — the key worked "fine" before.
+      const deprecated = deprecationFor(`${targetSection}.${targetKey}`);
+      if (deprecated !== undefined) warnings.push(deprecationWarning(deprecated, label));
       const section = tree[targetSection];
       if (section !== undefined) {
         section[targetKey] = MERGE_PER_KEY_LEAVES.has(dotted)

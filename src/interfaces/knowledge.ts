@@ -2,7 +2,7 @@
  * KnowledgeBase + FederatedSearch — FROZEN CONTRACT (IMPLEMENTATION_PLAN §2.3).
  *
  * Implemented by `src/knowledge/` (WS-C) on an embedded TS-native vector store
- * (LanceDB candidate, spec Decision 17; Qdrant server mode via config URL).
+ * (LanceDB candidate, spec Decision 17).
  * One collection/table per project. MEMORY scope delegates to Headroom's
  * conversational memory, which is Python-only and therefore only available when
  * the optional sidecar is present (spec Decisions 13 + 18) — without it,
