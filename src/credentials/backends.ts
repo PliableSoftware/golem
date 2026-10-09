@@ -185,6 +185,11 @@ async function run(cmd: string, args: readonly string[], stdin?: string): Promis
     child.once("close", (code) => {
       resolve({ code, stdout, stderr, spawnFailed: false });
     });
+    // A helper that exits before it reads stdin (a locked keychain, a refused
+    // prompt) makes the write fail with EPIPE. With no listener that is an
+    // unhandled 'error' event and takes the whole process down; the exit code
+    // and stderr already say what went wrong, so the write error is dropped.
+    child.stdin?.on("error", () => {});
     // Always close stdin: a helper that reads to EOF would otherwise hang.
     child.stdin?.end(stdin ?? "", "utf8");
   });

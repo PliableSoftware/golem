@@ -90,6 +90,17 @@ describe.skipIf(process.platform === "win32")("keychain helpers via shims", () =
     });
   });
 
+  describe("a helper that exits before reading stdin", () => {
+    it("is a failed store, not an unhandled EPIPE that takes the process down", async () => {
+      // Larger than a pipe buffer, so the write cannot complete before the exit.
+      const big = "x".repeat(1_000_000);
+      await shim("secret-tool", `case "$1" in --help) exit 0;; *) exit 1;; esac`);
+      useShims();
+      const b = keychainBackend("linux", dir);
+      await expect(b?.set("ws-epipe", big)).rejects.toBeTruthy();
+    });
+  });
+
   describe.each(Object.entries(SECRETS))("macOS keychain — %s", (_n, secret) => {
     it("round-trips unchanged, dropping only the newline `security -w` appends", async () => {
       const store = join(dir, "mac.store");
