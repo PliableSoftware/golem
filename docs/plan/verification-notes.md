@@ -11073,3 +11073,112 @@ decoded bodies are forwarded identity-encoded (always accepted) instead of re-en
   JSON walk runs about 0.7 s per MiB on many-small-strings bodies, so a pathological 32 MiB body can
   stall the event loop for tens of seconds (follow-up: async or worker-thread walk). The in-flight cap
   bounds admission, not memory (streaming buffers stay resident after headers).
+
+## DUSTSEC.22 - named-prefix secrets inside unbroken runs over 128 characters (2026-10-09)
+
+**Finding (reproduced):** a documented-shape API id (33 chars) followed with no separator by a
+named-prefix key (105 chars) is one 138-char run. The entropy sweep only matches runs of 32 to 128
+chars, and the named rule's leading `\b` fails after a word character, so the key reached the
+upstream whole. A plain random 200-char run also passes through.
+
+**Legitimate long runs (must not be rewritten):** base64 image/document `data` (tens of KB to MB),
+thinking `signature` (std base64, hundreds of chars to several KB), long hex digests, long
+base64url blobs, uppercase hex dumps and base32 data. The `tests/helpers/recorded-conversations.ts`
+fixtures hold only tiny ones, so the measurement is by shape; the level<=1 recorded-shape suite is
+untouched and passes.
+
+**Decision:** scan INSIDE over-length runs for the named rules' prefix shapes and redact only the
+matched span, never the whole run. Pieces left by a cut get their edges re-checked, and
+`redactText` re-runs the stage while the in-run scan finds something (bound 16, fail closed: reaching it throws), so a second pass
+is a no-op. Design and residuals in `docs/plan/tasks/DUSTSEC.22.md`.
+
+**Correction (review BLOCK, same day).** The first cut scanned the AWS family (`AKIA`, `ASIA`,
+`ABIA`, `ACCA`, `A3T?` + 16 of `[A-Z0-9]`) anywhere in a run and claimed a chance rate below 1e-10.
+Wrong: `ACCA` is valid uppercase hex and `A3T` valid base32, so the rate in uppercase hex is
+16^-4 = 1.5e-5 per position (the tail `[A-Z0-9]{16}` is always satisfied), about 3e-11 in uniform
+base64 (5 prefixes x 64^-4 x (36/64)^16). Measured on the first cut, 5000 random blobs each:
+uppercase hex 256 chars 13 changed (0.26%), uppercase hex 4096 329 (6.6%), uppercase base32 512
+84 (1.7%). Chance-rate derivations now in the code comment, recomputed per prefix:
+
+- `sk-ant-` (7 fixed chars, needs `-`): about 2e-13 per position in base64url, impossible in hex,
+  base32 and standard base64.
+- `github_pat_` (11), `sk_live_` (8), `AccountKey=` (11): below 1e-14.
+- `nsec1` + 58 bech32: `1` is outside hex/base32, and a 58-char bech32 tail is about 1e-18 in base64.
+- Short prefixes that DO chance-match (`ghp_` 3e-7, `xox*-`, `AIza` 6e-8, `sk-` 4e-6, AWS 1.5e-5 in
+  hex) are edge-only: run start, or run end within a 300-char window.
+
+**Fix:** AWS family is edge-only, and is skipped when the whole run is uppercase `[A-Z0-9=]` (hex
+or base32 data, where an edge match is chance). `ghp_` edge shape is the exact 36 chars (was
+36-255; a 300-char base64url run matched 1 in 200000, now 0). `sk-` edge is only the documented
+openai shapes (`sk-proj-`/`sk-svcacct-`/`sk-admin-` + 32-256, or `sk-` + 48 alphanumerics); the
+generic `sk-` + 32-256 matched 4 of 5000 base64url blobs of 4096 chars.
+
+**Measured after the fix** (`findEmbeddedSecrets`, 5000 random blobs per row, no hits in any row,
+0 of every prefix): uppercase hex 256 (1.3 MB), uppercase hex 4096 (20.5 MB), uppercase base32 512
+(2.6 MB), lowercase hex 256, lowercase hex 4096, lowercase base32 512, standard base64 4096,
+base64url 4096, base62 4096 (each 20.5 MB where 4096). Zero changes on every corpus; standard base64
+had 0 hits in 20.5 MB sampled (the bar is 1e-6 per MB, which a 20 MB sample cannot prove by
+itself; the derived rate is 2 edges x 2e-11 per run, far under it). Residual false-match rate remains for base64url `_`
+shapes (`ghp_` exact: about 1e-7 per edge per run).
+
+**Pre-existing, found on the way (not this change):** the `credit-card` rule rewrites a 13+ digit
+run inside a hex dump when Luhn passes (about 1 in 10 such runs), so a random hex dump of
+4096 chars is often altered by that rule. Test corpora skip `\d{13}` for that
+reason. Also pre-existing: the named rules' `{16,}` / `{32,}` greedy quantifiers throw `RangeError:
+Maximum call stack size exceeded` on a 10 MB unbroken run that starts at a word boundary with a
+named prefix (`sk-ant-` or `sk-` repeated, verified with `redactIdentifierText`, code unchanged by
+this task). The new in-run scan uses a plain loop to find runs and bounded tails, so it does not.
+
+**Performance (probes capped at 30 s, `redactStandaloneText`):** 1 MB / 10 MB: random base64
+45 / 437 ms; `A` x n 30 / 281 ms; `AKIA` repeated 32 / 293 ms; `sk-` x 100 runs of 300 chars
+separated by spaces (with and without a trailing `+`) 14 / 102 ms; a random 10 MB run with a key
+glued on the end 735 ms. The `sk-ant-` repeated and `sk-`+`+` 10 MB runs crash in the pre-existing
+named rules (above), not in this change.
+
+**Residual (deliberate):** an over-length run with NO named prefix is indistinguishable from base64
+data and stays unredacted; closing it needs field-aware redaction (skip `source.data`,
+`signature`). An AWS, `ghp_`, `xox`, `AIza` or `sk-` secret with junk glued on BOTH sides is not at
+an edge and is not found; an AWS key glued to uppercase-only junk is also not found (that is
+indistinguishable from base32 data). A JWT is not covered (its dots end the run).
+
+**Glued-shape matrix (final, second review round).**
+
+| Shape | key at end | key at start | key in middle |
+| --- | --- | --- | --- |
+| sk-ant, github_pat, sk_live, nsec1 | redacted | redacted | redacted |
+| xoxb, sk-proj, sk-svcacct | redacted | redacted | redacted |
+| AKIA, ghp_, gho_, sk- + 48, AIza | redacted | redacted | leaks (edge-only) |
+| sk-None-, sk- + 51 | leaks | redacted | leaks |
+| ya29. | redacted | leaks | redacted |
+
+"End" is 100 junk chars + a documented-shape API id + the key; "start" is the key + id + 100 junk;
+"middle" is 80 junk chars each side. Every run is over 128 chars. Measured on the final code with
+`redactStandaloneText`, secret absent from the output = redacted. The same matrix on
+`origin/development` leaked EVERY cell except: key-at-start for sk-ant, github_pat, nsec1,
+sk-proj, sk-svcacct, sk- + 48, sk-None- and sk- + 51 (a run-start key has a word boundary), and
+ya29. at end and in the middle (its dot ends the run). So this change is a strict improvement:
+no cell is worse, and every glued shape in the first three rows is now closed at the end.
+ya29. at the start leaks on both (not touched: the dot splits the run, and a short-prefix scan
+there would chance-match).
+
+**Residuals (known residual, not a feature), each pinned by a test:** an id plus an `sk-None-` style
+key; an id plus an `sk-` key that is not 48 chars (a 51-char `sk-` key is only caught at the start);
+an id plus a `ghp_` key with junk glued after it; an id, a `ghp_` key and junk in the middle of a
+run; an `AIza` key in the middle of a run; a plain over-length run with no named prefix. Plus a
+small false-positive rate: an uppercase base32 run holding one `-` or one lowercase character
+loses the all-uppercase exemption, so an AWS-shaped edge can fire (measured over 2M random
+512-char runs with one such character mid-run: `-` 6.95e-5 per run, one lowercase 7.55e-5 per run);
+`sk-` + 48 alphanumerics at the edge of random base64url, about 2 x 64^-3 x (62/64)^48 = 1.7e-6 per
+300-char run (derived).
+
+**Fail closed at the pass bound:** `redactText` re-runs the stage while the in-run scan finds
+something. If the bound (16) is reached with the scan still finding something, it throws
+`RedactionBoundExceeded`; the proxy answers a pipeline throw, and a `redactOnly` throw, with a 502
+and forwards nothing. Normal inputs need at most 2 passes (1200 random mixtures run at a bound of 3
+without a throw).
+
+**Pre-existing, found on the way, NOT fixed here:** (1) the named rules throw `RangeError: Maximum
+call stack size exceeded` on 10 MB of repeated `sk-ant-` or `sk-` ending in `+` (greedy `{16,}` /
+`{32,}` over a multi-megabyte run; verified with `redactIdentifierText`, unchanged code; the proxy
+turns it into a 502). (2) the `credit-card` rule rewrites Luhn-valid digit runs of 13 or more
+inside hex dumps.

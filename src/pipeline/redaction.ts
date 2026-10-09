@@ -33,6 +33,8 @@ import {
   activeRedactionRules,
   ENTROPY_CANDIDATE_RE,
   ENTROPY_RULE_ID,
+  findEmbeddedSecrets,
+  findOverlengthRuns,
   isApiObjectId,
   isHighEntropyToken,
   type RedactionRule,
@@ -83,6 +85,35 @@ class PlaceholderTable {
   }
 }
 
+/** Hard bound on the DUSTSEC.22 re-scan loop in {@link redactText}. */
+const MAX_REDACTION_PASSES = 16;
+let passBound = MAX_REDACTION_PASSES;
+
+/**
+ * Thrown when the in-run scan still finds something on the final pass: the text
+ * may still hold a secret, so redaction FAILS CLOSED rather than return it. The
+ * proxy answers a throw from the pipeline, and from `redactOnly`, with a 502 and
+ * forwards nothing.
+ */
+export class RedactionBoundExceeded extends Error {
+  constructor(passes: number) {
+    super(
+      `redaction did not converge in ${passes} passes over an over-length run; ` +
+        "refusing to return text that may still hold a secret (fail closed)",
+    );
+    this.name = "RedactionBoundExceeded";
+  }
+}
+
+/** TEST ONLY: lower the pass bound; returns a function that restores it. */
+export function setRedactionPassBoundForTest(bound: number): () => void {
+  const previous = passBound;
+  passBound = bound;
+  return () => {
+    passBound = previous;
+  };
+}
+
 function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): [string, number] {
   // Redact by the EXACT matched span (whole match, or the captured group at its
   // real index) — never by first-substring replace, which can hit the wrong
@@ -129,16 +160,46 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
   return [result, count];
 }
 
-function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
+/**
+ * DUSTSEC.22 — redact named-prefix secrets glued inside runs longer than the
+ * sweep's ceiling. Only the matched span is replaced; the rest of the run is
+ * returned untouched, so base64 data holding no such secret is byte-identical.
+ * Runs BEFORE the sweep so the fragments it leaves are swept in the same pass,
+ * which keeps redaction idempotent.
+ */
+function applyOverlengthRuns(text: string, table: PlaceholderTable): [string, number] {
   let count = 0;
-  const out = text.replace(ENTROPY_CANDIDATE_RE, (match: string): string => {
+  let out = "";
+  let cursor = 0;
+  for (const [runStart, runEnd] of findOverlengthRuns(text)) {
+    const run = text.slice(runStart, runEnd);
+    const spans = findEmbeddedSecrets(run);
+    if (spans.length === 0) continue;
+    out += text.slice(cursor, runStart);
+    let at = 0;
+    for (const span of spans) {
+      out += run.slice(at, span.start);
+      out += table.placeholderFor(span.id, run.slice(span.start, span.end));
+      at = span.end;
+      count += 1;
+    }
+    out += run.slice(at);
+    cursor = runEnd;
+  }
+  return count === 0 ? [text, 0] : [out + text.slice(cursor), count];
+}
+
+function applyEntropy(text: string, table: PlaceholderTable): [string, number, number] {
+  const [scanned, embeddedCount] = applyOverlengthRuns(text, table);
+  let count = embeddedCount;
+  const out = scanned.replace(ENTROPY_CANDIDATE_RE, (match: string): string => {
     if (isApiObjectId(match) || !isHighEntropyToken(match)) {
       return match;
     }
     count += 1;
     return table.placeholderFor(ENTROPY_RULE_ID, match);
   });
-  return [out, count];
+  return [out, count, embeddedCount];
 }
 
 /**
@@ -154,13 +215,23 @@ function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
 export function redactText(text: string, table: PlaceholderTable): RedactionResult {
   let current = text;
   let total = 0;
-  for (const rule of activeRedactionRules()) {
-    const [next, count] = applyRule(current, rule, table);
-    current = next;
-    total += count;
+  // DUSTSEC.22: cutting a secret out of an over-length run leaves fragments that
+  // are tokens of their own (a boundary, a short run). Re-run the whole stage on
+  // the result while the in-run scan keeps finding something, so a second
+  // redaction pass is a no-op. Each extra pass strictly shortens the text that
+  // can still hold a secret. Reaching the bound is an error, never a silent stop.
+  for (let pass = 0; pass < passBound; pass += 1) {
+    for (const rule of activeRedactionRules()) {
+      const [next, count] = applyRule(current, rule, table);
+      current = next;
+      total += count;
+    }
+    const [afterEntropy, entropyCount, embeddedCount] = applyEntropy(current, table);
+    current = afterEntropy;
+    total += entropyCount;
+    if (embeddedCount === 0) return { text: current, count: total };
   }
-  const [afterEntropy, entropyCount] = applyEntropy(current, table);
-  return { text: afterEntropy, count: total + entropyCount };
+  throw new RedactionBoundExceeded(passBound);
 }
 
 /**
