@@ -284,13 +284,18 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "Credentials embedded in connection-string URLs " +
       "(scheme://user:password@host). Only the password is redacted so the " +
       "scheme, user, and host stay legible to the model.",
+    // DUSTSEC.24: the scheme is bounded to 128 characters. Unbounded, every start in a
+    // long `a.a.a.` run (a legal scheme alphabet) rescans the run looking for `://`:
+    // quadratic. Only the password is redacted, so a start inside a longer scheme
+    // changes nothing; the bound matters only to a scheme of 129+ letters and digits
+    // with no `.`, `+` or `-` in it.
     // The lookahead skips a group that is EXACTLY one connection-password
     // placeholder, so a second pass over already-redacted text cannot re-match
     // (and renumber) it (S10). It names that ONE kind and anchors on `]@`: a
     // password shaped like any other placeholder (attacker-chosen kind text, or
     // another rule's placeholder) is still redacted, as before.
     pattern:
-      /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
+      /\b[a-zA-Z][a-zA-Z0-9+.-]{0,127}:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
     group: 1,
   },
   {
