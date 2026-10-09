@@ -34,9 +34,9 @@ import {
   ENTROPY_CANDIDATE_RE,
   ENTROPY_RULE_ID,
   findEmbeddedSecrets,
+  findOverlengthRuns,
   isApiObjectId,
   isHighEntropyToken,
-  OVERLENGTH_RUN_RE,
   type RedactionRule,
 } from "./redaction-rules.js";
 
@@ -84,6 +84,9 @@ class PlaceholderTable {
     return out;
   }
 }
+
+/** Hard bound on the DUSTSEC.22 re-scan loop in {@link redactText}. */
+const MAX_REDACTION_PASSES = 16;
 
 function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): [string, number] {
   // Redact by the EXACT matched span (whole match, or the captured group at its
@@ -140,23 +143,27 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
  */
 function applyOverlengthRuns(text: string, table: PlaceholderTable): [string, number] {
   let count = 0;
-  const out = text.replace(OVERLENGTH_RUN_RE, (run: string): string => {
+  let out = "";
+  let cursor = 0;
+  for (const [runStart, runEnd] of findOverlengthRuns(text)) {
+    const run = text.slice(runStart, runEnd);
     const spans = findEmbeddedSecrets(run);
-    if (spans.length === 0) return run;
-    let result = "";
-    let cursor = 0;
+    if (spans.length === 0) continue;
+    out += text.slice(cursor, runStart);
+    let at = 0;
     for (const span of spans) {
-      result += run.slice(cursor, span.start);
-      result += table.placeholderFor(span.id, run.slice(span.start, span.end));
-      cursor = span.end;
+      out += run.slice(at, span.start);
+      out += table.placeholderFor(span.id, run.slice(span.start, span.end));
+      at = span.end;
       count += 1;
     }
-    return result + run.slice(cursor);
-  });
-  return [out, count];
+    out += run.slice(at);
+    cursor = runEnd;
+  }
+  return count === 0 ? [text, 0] : [out + text.slice(cursor), count];
 }
 
-function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
+function applyEntropy(text: string, table: PlaceholderTable): [string, number, number] {
   const [scanned, embeddedCount] = applyOverlengthRuns(text, table);
   let count = embeddedCount;
   const out = scanned.replace(ENTROPY_CANDIDATE_RE, (match: string): string => {
@@ -166,7 +173,7 @@ function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
     count += 1;
     return table.placeholderFor(ENTROPY_RULE_ID, match);
   });
-  return [out, count];
+  return [out, count, embeddedCount];
 }
 
 /**
@@ -182,13 +189,23 @@ function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
 export function redactText(text: string, table: PlaceholderTable): RedactionResult {
   let current = text;
   let total = 0;
-  for (const rule of activeRedactionRules()) {
-    const [next, count] = applyRule(current, rule, table);
-    current = next;
-    total += count;
+  // DUSTSEC.22: cutting a secret out of an over-length run leaves fragments that
+  // are tokens of their own (a boundary, a short run). Re-run the whole stage on
+  // the result while the in-run scan keeps finding something, so a second
+  // redaction pass is a no-op. Each extra pass strictly shortens the text that
+  // can still hold a secret; the bound only guards a pathological chain.
+  for (let pass = 0; pass < MAX_REDACTION_PASSES; pass += 1) {
+    for (const rule of activeRedactionRules()) {
+      const [next, count] = applyRule(current, rule, table);
+      current = next;
+      total += count;
+    }
+    const [afterEntropy, entropyCount, embeddedCount] = applyEntropy(current, table);
+    current = afterEntropy;
+    total += entropyCount;
+    if (embeddedCount === 0) break;
   }
-  const [afterEntropy, entropyCount] = applyEntropy(current, table);
-  return { text: afterEntropy, count: total + entropyCount };
+  return { text: current, count: total };
 }
 
 /**

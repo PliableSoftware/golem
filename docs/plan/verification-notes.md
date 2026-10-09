@@ -11082,16 +11082,61 @@ chars, and the named rule's leading `\b` fails after a word character, so the ke
 upstream whole. A plain random 200-char run also passes through.
 
 **Legitimate long runs (must not be rewritten):** base64 image/document `data` (tens of KB to MB),
-thinking `signature` (std base64, hundreds of chars to several KB), long hex digests (sha512 hex is
-exactly 128, longer ones occur), long base64url blobs. The `tests/helpers/recorded-conversations.ts`
-fixtures hold only tiny ones (`c2lnbmF0dXJl`, `iVBORw0KGgo=`), so the measurement is by shape, not by
-fixture: nothing recorded exceeds the ceiling, and the level<=1 recorded-shape suite is untouched.
+thinking `signature` (std base64, hundreds of chars to several KB), long hex digests, long
+base64url blobs, uppercase hex dumps and base32 data. The `tests/helpers/recorded-conversations.ts`
+fixtures hold only tiny ones, so the measurement is by shape; the level<=1 recorded-shape suite is
+untouched and passes.
 
 **Decision:** scan INSIDE over-length runs for the named rules' prefix shapes and redact only the
-matched span; never the whole run. Long or tightly constrained prefixes match anywhere; short ones
-(`sk-`, `ghp_`, `xoxb-`, `AIza`) match only at the run's start or end, because by chance they occur
-in about 1 in 1e6 positions of random base64url. Design and residuals in
-`docs/plan/tasks/DUSTSEC.22.md`.
+matched span, never the whole run. Pieces left by a cut get their edges re-checked, and
+`redactText` re-runs the stage while the in-run scan finds something (bound 16), so a second pass
+is a no-op. Design and residuals in `docs/plan/tasks/DUSTSEC.22.md`.
+
+**Correction (review BLOCK, same day).** The first cut scanned the AWS family (`AKIA`, `ASIA`,
+`ABIA`, `ACCA`, `A3T?` + 16 of `[A-Z0-9]`) anywhere in a run and claimed a chance rate below 1e-10.
+Wrong: `ACCA` is valid uppercase hex and `A3T` valid base32, so the rate in uppercase hex is
+16^-4 = 1.5e-5 per position (the tail `[A-Z0-9]{16}` is always satisfied), about 3e-11 in uniform
+base64 (5 prefixes x 64^-4 x (36/64)^16). Measured on the first cut, 5000 random blobs each:
+uppercase hex 256 chars 13 changed (0.26%), uppercase hex 4096 329 (6.6%), uppercase base32 512
+84 (1.7%). Chance-rate derivations now in the code comment, recomputed per prefix:
+
+- `sk-ant-` (7 fixed chars, needs `-`): about 2e-13 per position in base64url, impossible in hex,
+  base32 and standard base64.
+- `github_pat_` (11), `sk_live_` (8), `AccountKey=` (11): below 1e-14.
+- `nsec1` + 58 bech32: `1` is outside hex/base32, and a 58-char bech32 tail is about 1e-18 in base64.
+- Short prefixes that DO chance-match (`ghp_` 3e-7, `xox*-`, `AIza` 6e-8, `sk-` 4e-6, AWS 1.5e-5 in
+  hex) are edge-only: run start, or run end within a 300-char window.
+
+**Fix:** AWS family is edge-only, and is skipped when the whole run is uppercase `[A-Z0-9=]` (hex
+or base32 data, where an edge match is chance). `ghp_` edge shape is the exact 36 chars (was
+36-255; a 300-char base64url run matched 1 in 200000, now 0). `sk-` edge is only the documented
+openai shapes (`sk-proj-`/`sk-svcacct-`/`sk-admin-` + 32-256, or `sk-` + 48 alphanumerics); the
+generic `sk-` + 32-256 matched 4 of 5000 base64url blobs of 4096 chars.
+
+**Measured after the fix** (`findEmbeddedSecrets`, 5000 random blobs per row, no hits in any row,
+0 of every prefix): uppercase hex 256 (1.3 MB), uppercase hex 4096 (20.5 MB), uppercase base32 512
+(2.6 MB), lowercase hex 256, lowercase hex 4096, lowercase base32 512, standard base64 4096,
+base64url 4096, base62 4096 (each 20.5 MB where 4096). Zero changes on every corpus; standard base64
+had 0 hits in 20.5 MB sampled (the bar is 1e-6 per MB, which a 20 MB sample cannot prove by
+itself; the derived rate is 2 edges x 2e-11 per run, far under it). Residual false-match rate remains for base64url `_`
+shapes (`ghp_` exact: about 1e-7 per edge per run).
+
+**Pre-existing, found on the way (not this change):** the `credit-card` rule rewrites a 13+ digit
+run inside a hex dump when Luhn passes (about 1 in 10 such runs), so a random hex dump of
+4096 chars is often altered by that rule. Test corpora skip `\d{13}` for that
+reason. Also pre-existing: the named rules' `{16,}` / `{32,}` greedy quantifiers throw `RangeError:
+Maximum call stack size exceeded` on a 10 MB unbroken run that starts at a word boundary with a
+named prefix (`sk-ant-` or `sk-` repeated, verified with `redactIdentifierText`, code unchanged by
+this task). The new in-run scan uses a plain loop to find runs and bounded tails, so it does not.
+
+**Performance (probes capped at 30 s, `redactStandaloneText`):** 1 MB / 10 MB: random base64
+45 / 437 ms; `A` x n 30 / 281 ms; `AKIA` repeated 32 / 293 ms; `sk-` x 100 runs of 300 chars
+separated by spaces (with and without a trailing `+`) 14 / 102 ms; a random 10 MB run with a key
+glued on the end 735 ms. The `sk-ant-` repeated and `sk-`+`+` 10 MB runs crash in the pre-existing
+named rules (above), not in this change.
 
 **Residual (deliberate):** an over-length run with NO named prefix is indistinguishable from base64
-data and stays unredacted; closing it needs field-aware redaction (skip `source.data`, `signature`).
+data and stays unredacted; closing it needs field-aware redaction (skip `source.data`,
+`signature`). An AWS, `ghp_`, `xox`, `AIza` or `sk-` secret with junk glued on BOTH sides is not at
+an edge and is not found; an AWS key glued to uppercase-only junk is also not found (that is
+indistinguishable from base32 data). A JWT is not covered (its dots end the run).
