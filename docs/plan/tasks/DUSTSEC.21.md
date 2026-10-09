@@ -72,19 +72,20 @@ can still choose a known-binary label to avoid scanning non-JSON text.** That is
 binary cannot be scanned reliably and the label is client-chosen. Claude Code always labels JSON as
 JSON, and JSON under any label is still walked.
 
-**UTF-16/32.** A non-opaque body with NULs is scanned over its WHOLE length in 1 KiB windows
+**UTF-16/32.** (Round 3: the sparse check now also reads UTF-32.) A non-opaque body with NULs is scanned over its WHOLE length in 1 KiB windows
 (half-window steps): dense NULs at a consistent parity, or NUL-dominated windows, are refused (502,
 nothing forwarded). Sparse cases (a short UTF-16 secret in a large body, mostly-CJK text) are caught
 by decoding the body as UTF-16 at both alignments and both endiannesses and refusing if the text
 redactor finds a secret in any view. Binary with a magic signature or a known-binary label is never
 refused or altered. Cost: the decode check runs only on NUL-bearing non-opaque bodies.
 
-**Duplicate JSON keys.** `JSON.parse` keeps the last value, so the walk missed a secret in a shadowed
-first value while the original bytes were forwarded. A byte scanner now detects repeated keys (escaped
-spellings included). Only for such bodies the raw text is run through the text redactor: used if it
-still parses as JSON, otherwise refused. Applied in `process`, `redactOnly` and the generic walker.
-Deliberately NOT done for every body: a raw-text pass over all JSON would redact key names and
-escaped text that the structured walk leaves alone, and could change bodies that carry no secret.
+**Duplicate JSON keys (revised in round 3).** `JSON.parse` keeps the last value, so the walk missed a
+secret in a shadowed first value while the original bytes were forwarded. A raw-text redaction pass
+(the round-2 approach) does not work: the secret there may be JSON-escaped and match nothing. A byte
+scanner (escaped key spellings included) now finds repeated keys and the body is REFUSED: 400, nothing
+forwarded. No legitimate client sends duplicate keys (`JSON.stringify` never emits them). `process`
+and `redactOnly` both throw `RequestBodyRefusal(400)` and the proxy answers it directly. The
+raw-text pass is removed.
 
 **BOM.** The BOM is stripped only from the view used for parsing. An unchanged body is forwarded with
 its original bytes (BOM included); a rewritten body is re-serialised without it.
@@ -97,3 +98,27 @@ set of requests already streaming.
 **`proxy.bypass_all`.** The size limit and the in-flight cap still apply in bypass mode, as
 memory-safety guards. Nothing is decoded, scanned or redacted in bypass mode; "full bypass" is not
 a way past the limits. The `golem-bypass` skill text now says so.
+
+### Third review round (2026-10-09)
+
+- **Sparse wide text.** The decode check reads the whole body as UTF-16 (2 alignments x 2
+  endiannesses) and UTF-32 (4 alignments x 2 endiannesses) by projecting each code unit's ASCII value
+  (anything else becomes a space) and refusing if the text redactor finds a secret in any view. It does
+  not depend on the NUL ratio. Measured on a 32 MiB text body containing one NUL: 3.3 s in total, 0.8 s
+  of it the ordinary text pass, so about 2.5 s extra, paid only by NUL-bearing non-opaque non-JSON bodies.
+- **Magic signatures.** A signature makes a body opaque only if the body also looks binary (a C0
+  control byte other than tab/newline/CR in the first 4 KiB, or not valid UTF-8). GIF8, ID3, BZh, %PDF,
+  RIFF, OggS, Rar! and ftyp are printable ASCII, so printable text starting with them is TEXT and is
+  redacted. Consequence: an uncompressed PDF whose first 4 KiB are all printable and sent with no
+  label is redacted as text rather than forwarded untouched; a PDF with the usual binary comment line,
+  or any PDF labelled application/pdf, is unaffected.
+- **Limits stated plainly.** The 32 MiB default bounds ADMISSION, not stall time: the JSON walk
+  is synchronous at roughly 0.7 s per MiB on bodies made of many small strings, so a pathological
+  32 MiB body can block the event loop for tens of seconds, and `redactOnly` can repeat the walk.
+  Fixing that needs an asynchronous or worker-thread walk (follow-up). Likewise the in-flight cap bounds
+  admission, not memory: a streaming request stops counting once response headers arrive while its
+  buffers stay resident until the response ends.
+- **Follow-ups, not fixed here.** (1) asynchronous or worker-thread redaction walk. (2) Object KEYS
+  are never redacted (the S9 gap): a secret used as a key is forwarded. (3) `redactValue` in
+  `src/pipeline/redaction.ts` assigns `out[key] = next`; a `__proto__` key sets the prototype of `out`
+  and the member is silently dropped when a sibling is redacted (pre-existing).

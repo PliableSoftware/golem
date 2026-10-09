@@ -11065,3 +11065,11 @@ decoded bodies are forwarded identity-encoded (always accepted) instead of re-en
   their raw text redacted; BOM stripped only for parsing; the in-flight reservation is released when
   upstream headers arrive (no replay after the retry loop); size limit and cap also apply under
   `proxy.bypass_all` (memory guard only, nothing decoded or redacted).
+- Third review (2026-10-09): duplicate JSON keys are refused (400) instead of text-redacted, because
+  the raw text holds the secret JSON-escaped. The wide-text check covers UTF-32 at four alignments
+  and does not depend on NUL density (measured +2.5 s on a 32 MiB NUL-bearing text body). A magic
+  signature makes a body opaque only if it also looks binary (printable GIF8/ID3/BZh/%PDF/RIFF/OggS/
+  Rar!/ftyp text is redacted). The 32 MiB default bounds admission, not stall time: the synchronous
+  JSON walk runs about 0.7 s per MiB on many-small-strings bodies, so a pathological 32 MiB body can
+  stall the event loop for tens of seconds (follow-up: async or worker-thread walk). The in-flight cap
+  bounds admission, not memory (streaming buffers stay resident after headers).
