@@ -1000,8 +1000,12 @@ export const SECTION_NAMES = Object.keys(SETTINGS_LEAVES) as readonly SectionNam
 
 /** Look up the leaf schema for a `section.key` pair; undefined if unknown. */
 export function leafSchema(section: string, key: string): z.ZodTypeAny | undefined {
+  // Own properties only: `proxy.constructor` or `toString.x` must read as
+  // "unknown key", never resolve to something inherited from Object.prototype.
+  if (!Object.hasOwn(SETTINGS_LEAVES, section)) return undefined;
   const sectionLeaves = (SETTINGS_LEAVES as Record<string, Record<string, z.ZodTypeAny>>)[section];
-  return sectionLeaves?.[key];
+  if (sectionLeaves === undefined || !Object.hasOwn(sectionLeaves, key)) return undefined;
+  return sectionLeaves[key];
 }
 
 /** All leaf paths as dotted `section.key` strings (stable declaration order). */

@@ -173,11 +173,13 @@ export function closeKnowledgeWatchers(knowledge: KnowledgeBase | undefined): vo
 export async function readMcpServeSettings(
   projectDir: string,
   userDir?: string,
+  onWarning?: (warning: string) => void,
 ): Promise<GolemSettings> {
-  const { settings } = await loadEffectiveConfig({
+  const { settings, warnings } = await loadEffectiveConfig({
     projectDir,
     ...(userDir !== undefined && { userDir }),
   });
+  for (const warning of warnings) onWarning?.(warning);
   return settings;
 }
 
@@ -189,7 +191,9 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory (for the CCR store)", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
-        const settings = await readMcpServeSettings(opts.dir);
+        const settings = await readMcpServeSettings(opts.dir, undefined, (w) =>
+          process.stderr.write(`golem: ${w}\n`),
+        );
         let knowledge: KnowledgeBase | undefined;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled

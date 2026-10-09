@@ -125,9 +125,11 @@ Not matched by the grep because they hand the loader's result on or wrap it: `sr
 | `src/config/loader.ts:255` `readSettingsFile` | the loader's own file read | the loader; stays |
 | `src/config/write-setting.ts:77,139` | read-modify-write of ONE scope file for `golem config set/unset` | excluded: a writer must edit the raw local file, never the merged view |
 | `src/config/migrate-files.ts:314` | version migration sweep over the three local files | excluded: rewrites local files |
-| `src/portal/binding.ts:349` | reads the committed project `team` section to learn the binding | excluded: it is the INPUT to the team layer (the binding is local-only; `team.*` keys are on the remote deny floor) |
+| `src/portal/binding.ts:349` | reads the committed project `team` section to learn the binding | excluded: `golem team unlink` must report what the PROJECT FILE says, not the resolved value, so it can remove it (the binding is local-only; `team.*` keys are on the remote deny floor) |
 | `src/cli/persona-watcher.ts:75-76` | polls the two local files' mtimes for hot-reload | converted: also polls the team cache file, else a `golem team sync` is never seen by a running daemon |
-| `src/session/known-projects.ts:129`, `vscode-extension/extension.js:32`, `src/cli/init.ts:325,345,346,387,599`, `src/cli/status-render.ts:192` | existence / marker checks and init writers on `.golem/settings*.json` | excluded: no setting value is read |
+| `src/session/known-projects.ts:129`, `src/cli/init-hooks.ts:112`, `src/cli/init-vscode.ts:70,100`, `src/cli/claude-settings-target.ts:45-46`, `src/cli/status-render.ts:192` | existence check, a .gitignore line, other tools' files, a label string | excluded: no Golem setting value is read |
+| `src/cli/init.ts:325,345,346,387,599` | init/uninit read the RAW local/project files: `proxy.port` (explicit port, back-compat), `proxy.upstream_base_url` (idempotent-write check), and marker presence | excluded, precisely: they decide what to WRITE into those two files, so they must see only what the files hold; an effective read would persist env/team values into the local file. This is a real value read (the earlier claim "reads no setting value" was wrong) and is exempted per line in the guard test |
+| `src/config/control-surface-types.ts:113-116`, `src/config/ui-model.ts:337,695` | scope labels and prose | excluded: strings |
 | `vscode-extension/extension.js` (stats/status/config) | shells out to `golem status/stats --json` and `golem config set/unset` | no change needed: covered by the CLI conversion; the extension reads no settings file itself |
 | `src/config/control-surface-settings.ts` | control-surface (config UI) view | goes through `control-surface-runtime.ts` loads (section A) |
 
@@ -137,3 +139,11 @@ Not matched by the grep because they hand the loader's result on or wrap it: `sr
 - Counts: 84 section-A sites, 2 team-aware before, 82 converted; section B: 12 direct file readers, 1 converted (`persona-watcher`, now also polls `~/.golem/teams/`), 11 deliberately excluded with reasons above.
 - Hook latency (fresh measurement, in-process, 30 runs): unlinked +0 ms (raw 1.9 ms vs 1.25 ms, noise); linked with cache +4.4 ms per call (5.5 ms vs 1.1 ms); first linked call in a fresh process ~18 ms for the lazy `team-layer` import. No memo: the cache file is re-read per call, so staleness is zero beyond the last `golem team sync`.
 - Tests: `tests/unit/config/team-layer-everywhere.test.ts` (29: status, config get/list, TUI, MCP, two hook reads, dial reload, persona watcher) and `tests/unit/config/loader-entry-point.test.ts` (3, the bypass guard).
+
+### Review fixes (2026-10-09, independent review)
+
+- Interim stricter-only floor (P4): `plugins.enabled`, `plugins.load`, `telemetry.dashboard_lan`, `proxy.upstream_base_url` added to `REMOTE_DENIED_SETTINGS`; `security.write_lan` and `security.join_injection` may be set by a team to `false` only (`REMOTE_FALSE_ONLY_SETTINGS`, `src/config/loader.ts`). The per-key direction table stays in `team-security-stricter-only`.
+- `leafSchema` and the section check use `Object.hasOwn`; `translateTeamRows` drops a `__proto__` leaf; `loadEffectiveConfig` falls back to the local result with a warning if applying the layer throws anything.
+- Guard test is per LINE, covers single quotes, template literals, `files.local` style reads, and fails on stale exemptions.
+- `writeTeamLayerCache` uses `replaceViaTemp`.
+- `team.notice` for a linked team that is NOT applied (sync off, no cache, portal denial) is appended to `warnings` inside `loadEffectiveConfig`, so status, TUI, config (now printed on stderr and carried in `--json`), MCP (stderr) and the proxy all show it.

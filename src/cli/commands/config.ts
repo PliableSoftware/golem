@@ -121,6 +121,8 @@ export default function register(program: Command): void {
     .action(async (opts: { dir: string; json: boolean }) => {
       try {
         const report = await listConfig({ projectDir: opts.dir });
+        if (!opts.json)
+          for (const w of report.warnings ?? []) process.stderr.write(`golem: ${w}\n`);
         process.stdout.write(
           opts.json ? `${JSON.stringify(report, null, 2)}\n` : renderConfigList(report),
         );
@@ -138,6 +140,8 @@ export default function register(program: Command): void {
     .action(async (key: string, opts: { dir: string; json: boolean }) => {
       try {
         const report = await getConfig(key, { projectDir: opts.dir });
+        if (!opts.json)
+          for (const w of report.warnings ?? []) process.stderr.write(`golem: ${w}\n`);
         process.stdout.write(
           opts.json ? `${JSON.stringify(report, null, 2)}\n` : renderConfigGet(report),
         );

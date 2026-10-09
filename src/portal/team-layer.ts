@@ -55,9 +55,10 @@
  * the OS keychain behind `./tokens.ts`.
  */
 
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import { SECTION_NAMES } from "../config/schema.js";
 import { VERSION } from "../version.js";
 import {
@@ -202,6 +203,11 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
       continue;
     }
 
+    if (leaf === "__proto__") {
+      skipped.push({ key, reason: "it is not a setting name" });
+      continue;
+    }
+
     settings[section] ??= {};
     const bucket = settings[section];
     bucket[leaf] = row.value;
@@ -304,7 +310,9 @@ export async function readTeamLayerCache(
 export async function writeTeamLayerCache(userDir: string, cache: TeamLayerCache): Promise<string> {
   const file = teamCachePath(userDir, cache.org_id);
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
+  // Atomic: a hook or the proxy may be reading this file at the moment a sync
+  // rewrites it, and a torn read parses as "no cache", i.e. no team policy.
+  await replaceViaTemp(file, `${JSON.stringify(cache, null, 2)}\n`);
   return file;
 }
 

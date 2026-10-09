@@ -150,7 +150,35 @@ export const REMOTE_DENIED_SETTINGS: ReadonlySet<string> = new Set([
   "team.portal_url",
   "team.sync",
   "team.skills",
+  // Interim stricter-only floor (USER decision P4, 2026-10-09: a team may only
+  // TIGHTEN, never loosen). These four have no "stricter" direction a remote
+  // could apply, only a way to widen what a machine loads, exposes or talks to,
+  // so they are denied outright until `team-security-stricter-only` lands the
+  // per-key direction table. `plugins.*` also decides which code runs inside the
+  // process that does redaction.
+  "plugins.enabled",
+  "plugins.load",
+  "telemetry.dashboard_lan",
+  "proxy.upstream_base_url",
 ]);
+
+/**
+ * Boolean keys a remote origin may only set to `false`: turning them off is the
+ * stricter direction, turning them on exposes the machine (a LAN write surface,
+ * injected join text). A team may force them off, never on. Interim, like the
+ * four keys above; the full per-key table is `team-security-stricter-only`.
+ */
+export const REMOTE_FALSE_ONLY_SETTINGS: ReadonlySet<string> = new Set([
+  "security.write_lan",
+  "security.join_injection",
+]);
+
+/** Why a remote origin may not set `dotted` to `value`, or undefined when it may. */
+function remoteRefusal(dotted: string, value: unknown): "denied" | "loosening" | undefined {
+  if (REMOTE_DENIED_SETTINGS.has(dotted)) return "denied";
+  if (REMOTE_FALSE_ONLY_SETTINGS.has(dotted) && value !== false) return "loosening";
+  return undefined;
+}
 
 /** The `"!important"` declaration list, top-level and sibling to the sections. */
 const IMPORTANT_KEY = "!important";
@@ -576,7 +604,7 @@ function applyObjectLayer(
     if (sectionName === IMPORTANT_KEY) {
       continue; // the declaration list, already split out by buildObjectLayer
     }
-    if (!(sectionName in SETTINGS_LEAVES)) {
+    if (!Object.hasOwn(SETTINGS_LEAVES, sectionName)) {
       if (band === "normal") {
         warnings.push(`${label}: unknown settings section "${sectionName}" ignored`);
       }
@@ -594,8 +622,9 @@ function applyObjectLayer(
       // A declaration resolves in exactly one band; the other pass skips it
       // before doing any work, so nothing below can run or warn twice.
       if (important.has(dotted) !== (band === "important")) continue;
-      if (remote && REMOTE_DENIED_SETTINGS.has(dotted)) {
-        warnings.push(remoteRefusalWarning(label, dotted));
+      const refusal = remote ? remoteRefusal(dotted, value) : undefined;
+      if (refusal !== undefined) {
+        warnings.push(remoteRefusalWarning(label, dotted, refusal));
         continue;
       }
       let leaf = leafSchema(sectionName, key);
@@ -651,8 +680,10 @@ function applyObjectLayer(
         if (leaf === undefined) continue; // guarded by assertLeafRename's test
         // Checked again on the RESOLVED key: a rename must not be a way for a
         // remote to reach a denied leaf under its old, undenied spelling.
-        if (remote && REMOTE_DENIED_SETTINGS.has(`${targetSection}.${targetKey}`)) {
-          warnings.push(remoteRefusalWarning(label, `${targetSection}.${targetKey}`));
+        const resolved = `${targetSection}.${targetKey}`;
+        const resolvedRefusal = remote ? remoteRefusal(resolved, value) : undefined;
+        if (resolvedRefusal !== undefined) {
+          warnings.push(remoteRefusalWarning(label, resolved, resolvedRefusal));
           continue;
         }
       }
@@ -696,7 +727,17 @@ function applyObjectLayer(
  * The one wording for a refused remote key. Loud on purpose: a floor that
  * sanitises quietly leaves an admin believing they set something they did not.
  */
-function remoteRefusalWarning(label: string, dotted: string): string {
+function remoteRefusalWarning(
+  label: string,
+  dotted: string,
+  kind: "denied" | "loosening" = "denied",
+): string {
+  if (kind === "loosening") {
+    return (
+      `${label}: REFUSED "${dotted}" — a remote origin may only set it to false ` +
+      `(teams may tighten, never loosen). The value was DROPPED, not applied.`
+    );
+  }
   return (
     `${label}: REFUSED "${dotted}" — a remote origin may never set it, at any ` +
     `importance (ADR-0008 floor). The value was DROPPED, not applied.`

@@ -41,72 +41,181 @@ function codeLines(file: string): { line: number; text: string }[] {
 
 const rel = (f: string): string => path.relative(SRC, f).split(path.sep).join("/");
 
-/** The raw cascade. Only the loader, its single wrapper, and the barrel that re-exports it. */
-const RAW_LOADER_ALLOWED: Readonly<Record<string, string>> = {
-  "config/loader.ts": "defines it",
-  "config/effective.ts": "the one wrapper that adds the team layer",
-  "config/index.ts": "re-exports it for the cascade's own tests; this guard polices production use",
-};
+/** One exempted line: the file, a pattern the line must match, and why it is not a settings READ. */
+interface Exemption {
+  readonly file: string;
+  readonly line: RegExp;
+  readonly reason: string;
+}
 
-/** Files that may name a `.golem` settings file, and why none of them is a settings READER. */
-const SETTINGS_FILE_ALLOWED: Readonly<Record<string, string>> = {
-  "config/paths.ts": "defines the paths",
-  "config/loader.ts": "the cascade's own file read",
-  "config/index.ts": "re-exports settingsFilePaths",
-  "config/write-setting.ts":
-    "writer: edits ONE scope file for `golem config set/unset`, never the merged view",
-  "config/migrate-files.ts": "writer: version migration rewrites the local files",
-  "portal/binding.ts":
-    "reads the committed `team` binding, the INPUT to the team layer; team.* is on the remote deny floor",
-  "cli/persona-watcher.ts":
-    "polls mtimes of the local files (and the team cache) to trigger a reload; reads no value",
-  "cli/init.ts": "init writes/creates the files and checks the marker; reads no setting value",
-  "cli/init-hooks.ts": "a .gitignore line, not a read",
-  "cli/init-vscode.ts": ".vscode/settings.json, a different file",
-  "cli/claude-settings-target.ts": ".claude/settings*.json, Claude Code's file, not Golem's",
-  "session/known-projects.ts": "existence check of the marker file",
-};
+/** The raw cascade. Only the loader, its single wrapper, and the barrel that re-exports it. */
+const RAW_LOADER_EXEMPT: readonly Exemption[] = [
+  { file: "config/loader.ts", line: /\bloadConfig\b/, reason: "defines it" },
+  {
+    file: "config/effective.ts",
+    line: /\bloadConfig\b/,
+    reason: "the one wrapper that adds the team layer",
+  },
+  {
+    file: "config/index.ts",
+    line: /export \{ loadConfig,/,
+    reason: "re-exports it for the cascade's own tests; this guard polices production use",
+  },
+];
+
+/**
+ * Lines that name a `.golem` settings file or a resolved settings path. Per LINE, not per
+ * file: exempting a whole file would let a new read slip in beside an old exemption.
+ */
+const SETTINGS_FILE_EXEMPT: readonly Exemption[] = [
+  { file: "config/loader.ts", line: /./, reason: "the cascade's own file read" },
+  { file: "config/paths.ts", line: /./, reason: "defines the paths" },
+  {
+    file: "config/index.ts",
+    line: /^\s*(LOCAL_SETTINGS_FILE|SETTINGS_FILE|settingsFilePaths),$/,
+    reason: "re-exports",
+  },
+  {
+    file: "config/write-setting.ts",
+    line: /settingsFilePaths/,
+    reason: "writer: edits ONE scope file for `golem config set/unset`, never the merged view",
+  },
+  {
+    file: "config/migrate-files.ts",
+    line: /settingsFilePaths/,
+    reason: "writer: version migration rewrites the local files",
+  },
+  {
+    file: "portal/binding.ts",
+    line: /path\.join\(projectDir, "\.golem", "settings\.json"\)/,
+    reason:
+      "`golem team unlink` must report what the PROJECT FILE says (not the resolved value) so it can remove it",
+  },
+  {
+    file: "cli/persona-watcher.ts",
+    line: /path\.join\(projectDir, "\.golem", "settings(\.local)?\.json"\)/,
+    reason: "polls mtimes to trigger a reload (and the team cache dir); reads no value",
+  },
+  {
+    file: "cli/init.ts",
+    line: /path\.join\(projectDir, "\.golem", "settings(\.local)?\.json"\)/,
+    reason:
+      "init/uninit decide what to WRITE into those two files, so they must see only what the files hold: " +
+      "`proxy.port` (explicit port, back-compat) and `proxy.upstream_base_url` (idempotency check) are read " +
+      "RAW on purpose, because an effective read would persist env/team values into the local file. " +
+      "The marker-presence check (line `golemSettingsPresent`) reads no value",
+  },
+  {
+    file: "cli/init-hooks.ts",
+    line: /"!\.golem\/settings\.json"/,
+    reason: "a .gitignore line, not a read",
+  },
+  {
+    file: "cli/init-vscode.ts",
+    line: /"\.vscode", "settings\.json"/,
+    reason: ".vscode/settings.json, a different file",
+  },
+  {
+    file: "cli/claude-settings-target.ts",
+    line: /^\s*(local|project): "settings(\.local)?\.json",$/,
+    reason: "Claude Code's .claude/settings*.json names, not Golem's",
+  },
+  {
+    file: "session/known-projects.ts",
+    line: /settings\.json/,
+    reason: "existence check of the marker file; reads no value",
+  },
+  {
+    file: "cli/status-render.ts",
+    line: /\.golem\/settings\.json present/,
+    reason: "label text of the marker checkbox",
+  },
+  {
+    file: "config/control-surface-types.ts",
+    line: /settings(\.local)?\.json/,
+    reason: "scope description strings shown to the user",
+  },
+  {
+    file: "config/ui-model.ts",
+    line: /settings(\.local)?\.json/,
+    reason: "prose in setting descriptions",
+  },
+];
 
 const files = walk(SRC);
 
+/** Every non-comment code line matching `pattern` that no exemption covers. */
+function offenders(pattern: RegExp, exempt: readonly Exemption[]): string[] {
+  const out: string[] = [];
+  for (const file of files) {
+    const name = rel(file);
+    for (const { line, text } of codeLines(file)) {
+      if (!pattern.test(text)) continue;
+      if (exempt.some((e) => e.file === name && e.line.test(text))) continue;
+      out.push(`${name}:${line}: ${text.trim()}`);
+    }
+  }
+  return out;
+}
+
+/** An exemption that matches no line any more is stale and must go. */
+function staleExemptions(pattern: RegExp, exempt: readonly Exemption[]): string[] {
+  return exempt
+    .filter(
+      (e) =>
+        !files.some(
+          (f) =>
+            rel(f) === e.file &&
+            codeLines(f).some(({ text }) => pattern.test(text) && e.line.test(text)),
+        ),
+    )
+    .map((e) => `${e.file} ${e.line}`);
+}
+
+/**
+ * Any spelling of a settings file: double or single quotes, a template literal, a path
+ * constant, `settingsFilePaths`, or a resolved `files.user|project|local` handed to a reader
+ * (e.g. `readFile(config.files.local)`).
+ */
+const SETTINGS_FILE_PATTERN =
+  /settings(?:\.local)?\.json|\bSETTINGS_FILE\b|\bLOCAL_SETTINGS_FILE\b|\bsettingsFilePaths\b|\bfiles\.(?:user|project|local)\b|\bfiles\[\s*["'`]?(?:user|project|local)/;
+const RAW_LOADER_PATTERN = /\bloadConfig\b/;
+
 describe("one settings entry point (team-layer-everywhere)", () => {
   it("no production file outside the loader uses the raw `loadConfig`", () => {
-    const offenders: string[] = [];
-    for (const file of files) {
-      if (rel(file) in RAW_LOADER_ALLOWED) continue;
-      for (const { line, text } of codeLines(file)) {
-        if (/\bloadConfig\b/.test(text)) offenders.push(`${rel(file)}:${line}: ${text.trim()}`);
-      }
-    }
     expect(
-      offenders,
+      offenders(RAW_LOADER_PATTERN, RAW_LOADER_EXEMPT),
       "use loadEffectiveConfig (src/config/effective.ts): the raw loadConfig skips the team layer",
     ).toEqual([]);
   });
 
   it("no production file hand-rolls a read of the .golem settings files", () => {
-    const pattern =
-      /settings(?:\.local)?\.json"|\bSETTINGS_FILE\b|\bLOCAL_SETTINGS_FILE\b|\bsettingsFilePaths\b/;
-    const offenders: string[] = [];
-    for (const file of files) {
-      if (rel(file) in SETTINGS_FILE_ALLOWED) continue;
-      for (const { line, text } of codeLines(file)) {
-        if (pattern.test(text)) offenders.push(`${rel(file)}:${line}: ${text.trim()}`);
-      }
-    }
     expect(
-      offenders,
-      "read settings through loadEffectiveConfig, or add the file to SETTINGS_FILE_ALLOWED with a reason",
+      offenders(SETTINGS_FILE_PATTERN, SETTINGS_FILE_EXEMPT),
+      "read settings through loadEffectiveConfig, or add an exemption for that exact line with a reason",
     ).toEqual([]);
   });
 
-  it("every allow-list entry still exists and still matches (no stale exemptions)", () => {
-    const present = new Set(files.map(rel));
-    for (const name of [
-      ...Object.keys(RAW_LOADER_ALLOWED),
-      ...Object.keys(SETTINGS_FILE_ALLOWED),
-    ]) {
-      expect(present.has(name), `${name} is allow-listed but does not exist`).toBe(true);
-    }
+  it("every exemption still matches a line (no stale exemptions)", () => {
+    expect(staleExemptions(RAW_LOADER_PATTERN, RAW_LOADER_EXEMPT)).toEqual([]);
+    expect(staleExemptions(SETTINGS_FILE_PATTERN, SETTINGS_FILE_EXEMPT)).toEqual([]);
+  });
+
+  describe("the detector itself", () => {
+    const hits = (text: string): boolean => SETTINGS_FILE_PATTERN.test(text);
+    it.each([
+      `readFile(path.join(d, ".golem", "settings.json"))`,
+      `readFile(path.join(d, '.golem', 'settings.local.json'))`,
+      "readFile(`${d}/.golem/settings.json`)",
+      "await readFile(config.files.local, 'utf8')",
+      "const p = settingsFilePaths({ projectDir });",
+      "path.join(dir, LOCAL_SETTINGS_FILE)",
+      "readFileSync(files['project'])",
+    ])("flags %s", (text) => {
+      expect(hits(text)).toBe(true);
+    });
+    it("does not flag unrelated code", () => {
+      expect(hits("const settings = await loadEffectiveConfig({ projectDir });")).toBe(false);
+    });
   });
 });

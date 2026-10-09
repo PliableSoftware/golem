@@ -100,7 +100,7 @@ question from *whose policy is this*.
 
 `REMOTE_DENIED_SETTINGS` in `src/config/loader.ts` is compiled in, never fetched
 — a list the remote can edit is not a floor. It carries `proxy.bypass_all`, the
-three `portal.*` identity keys, and the four `team.*` keys. A denied key arriving
+three `portal.*` identity keys, the four `team.*` keys, and (interim stricter-only floor, USER decision P4) `plugins.enabled`, `plugins.load`, `telemetry.dashboard_lan` and `proxy.upstream_base_url`. `security.write_lan` and `security.join_injection` (`REMOTE_FALSE_ONLY_SETTINGS`) may be set by a team to `false` only: a team may tighten, never loosen. The full per-key direction table is the follow-up task `team-security-stricter-only`. A denied key arriving
 from the team origin is **DROPPED, not sanitised**, with a warning that names it:
 
 **Decided 2026-10-09 (P4, USER, revised the same day):** a team may set a `security.*` key

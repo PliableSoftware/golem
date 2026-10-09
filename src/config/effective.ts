@@ -96,8 +96,38 @@ export async function loadEffectiveConfig(
     };
   }
 
-  if (team.teamLayer === undefined) return { ...first, team };
+  if (team.teamLayer === undefined) {
+    // Linked, but nothing applies (sync off, no cache, or the portal denied the
+    // team). A machine silently running WITHOUT the policy someone believes is
+    // in force is the hazard the whole design is built around, so the reason
+    // travels with the warnings every surface already shows.
+    return {
+      ...first,
+      warnings: team.notice === undefined ? first.warnings : [...first.warnings, team.notice],
+      team,
+    };
+  }
 
-  const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
-  return { ...second, team };
+  try {
+    const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
+    return { ...second, team };
+  } catch (err) {
+    // The loader already skips a bad team layer with a warning. This catches
+    // anything else a team payload could provoke: nothing on the team path may
+    // stop a proxy, a hook or the MCP server (ADR-0008, DUSTSEC.14).
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      ...first,
+      warnings: [
+        ...first.warnings,
+        `team layer SKIPPED: applying it failed (${reason}). Using local configuration.`,
+      ],
+      team: {
+        fromCache: team.fromCache,
+        applied: [],
+        skipped: [],
+        ...(team.notice !== undefined && { notice: team.notice }),
+      },
+    };
+  }
 }
