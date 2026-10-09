@@ -9,11 +9,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  AUTONOMY_LEVELS,
-  setAutonomyGateEnabled,
-  writeAutonomyLevel,
-} from "../../../src/autonomy/index.js";
+import { AUTONOMY_LEVELS, writeAutonomyLevel } from "../../../src/autonomy/index.js";
 import { runPermissionRequestHook } from "../../../src/hooks/permission-request.js";
 import { runPreToolUseHook } from "../../../src/hooks/pre-tool-use.js";
 import { useTempDirs } from "../../helpers/tmp.js";
@@ -121,9 +117,26 @@ describe("runPermissionRequestHook", () => {
     expect(h.stdout.text).toBe("");
   });
 
-  it("DEFERS entirely when the autonomy gate is disabled", async () => {
-    await setAutonomyGateEnabled(dir, false);
-    const h = io(payload("Bash", { command: "rm -rf node_modules" }, dir));
+  // `permission_suggestions` are the dialog's "always allow" options. Echoing one
+  // back is how a hook grants a standing allow, so a payload carrying them must
+  // still produce nothing.
+  it("emits NOTHING when the payload carries permission_suggestions", async () => {
+    const raw = JSON.parse(payload("Bash", { command: "git push origin main" }, dir));
+    raw.permission_suggestions = [
+      {
+        type: "addRules",
+        rules: [{ toolName: "Bash", ruleContent: "git push:*" }],
+        behavior: "allow",
+        destination: "localSettings",
+      },
+    ];
+    const h = io(JSON.stringify(raw));
+    expect(await runPermissionRequestHook(h, { projectDir: dir })).toBe(0);
+    expect(h.stdout.text).toBe("");
+  });
+
+  it("emits NOTHING for a non-Bash outward tool (wiki_upsert)", async () => {
+    const h = io(payload("mcp__golem__wiki_upsert", { title: "x" }, dir));
     await runPermissionRequestHook(h, { projectDir: dir });
     expect(h.stdout.text).toBe("");
   });
@@ -209,5 +222,21 @@ describe("the PreToolUse layer is unchanged by DUSTSEC.10", () => {
         `${level} ${command}`,
       ).toBe("ask");
     }
+  });
+
+  // Non-Bash outward tool: the `ask` is the only Golem layer, so pin it per level.
+  it.each(
+    AUTONOMY_LEVELS,
+  )("emits `ask` for the outward wiki_upsert tool at level %s", async (level) => {
+    const h = io(
+      JSON.stringify({
+        tool_name: "mcp__golem__wiki_upsert",
+        tool_input: { title: "x" },
+        cwd: dir,
+        session_id: "s1",
+      }),
+    );
+    await runPreToolUseHook(h, { projectDir: dir, readLevel: () => Promise.resolve(level) });
+    expect(JSON.parse(h.stdout.text).hookSpecificOutput.permissionDecision).toBe("ask");
   });
 });

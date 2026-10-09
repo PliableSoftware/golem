@@ -63,7 +63,7 @@ export default function register(program: Command): void {
             `⚠ Golem is auto-approving some steps at level "${level}". Destructive/outward actions still require your approval (ADR-0002). Set 'manual' to disable.\n`,
           );
         process.stdout.write(
-          "the gate needs the PreToolUse + PermissionRequest hooks wired (`golem init` does this by default; `golem autonomy wire`/`unwire` toggle them together). Turn the gate off without unwiring: `golem autonomy disable`.\n",
+          "the gate is the PreToolUse hook (`golem init` wires it by default; `golem autonomy wire`/`unwire` toggle it, together with an inert PermissionRequest hook that emits no decision, so destructive/outward prompts reach the native dialog). Turn the gate off without unwiring: `golem autonomy disable`.\n",
         );
       } catch (err) {
         _fail(err);

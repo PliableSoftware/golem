@@ -245,7 +245,7 @@ control.
 | # | Capability | What it grants | Risk | Status |
 |---|---|---|---|---|
 | 1 | Observe | See project state, blocks, limits | Metadata disclosure | ADR-0006; R12.5 |
-| 2 | Authorize | Answer a permission prompt already open | Code execution | Carried first-party by Anthropic's channel relay (R12.7); class line needs R12.12; gate map item 3 |
+| 2 | Authorize | Answer a permission prompt already open | Code execution | Carried first-party by Anthropic's channel relay (R12.7); class line needs R12.12 *(superseded 2026-10-09: the R12.12 deny was removed, DUSTSEC.10; enforcement on the answer side is DUSTSEC.25)*; gate map item 3 |
 | 3 | **Author** | Send a message into an existing conversation | **Severe** — arbitrary instruction; the resulting tool calls are gated as any other | **This ADR, §3b/§3c.** Declined by Decision 59(g); permitted, unrestricted, by Revision 1 |
 | 4 | **Originate** | Start a new session in a project | **Severe** — as above, plus choosing *where* work happens | **This ADR, §3a.** New tier; gate map items 2 and 5 |
 
