@@ -39,13 +39,13 @@ function walk(dir: string, out: string[] = []): string[] {
  * markers inside strings are not comments, and `'` / `"` strings end at the line
  * break so one stray quote cannot swallow the rest of the file.
  */
-export function codeLines(file: string): { line: number; text: string }[] {
+function codeLines(file: string): { line: number; text: string }[] {
   return stripComments(readFileSync(file, "utf8"))
     .split("\n")
     .map((text, i) => ({ line: i + 1, text }));
 }
 
-export function stripComments(src: string): string {
+function stripComments(src: string): string {
   let out = "";
   let i = 0;
   let mode: "code" | "block" | "line" | "'" | '"' | "`" = "code";
@@ -272,6 +272,7 @@ describe("one settings entry point (team-layer-everywhere)", () => {
       expect(code("/**\n * loadConfig\n */\nconst x = 1;")).not.toContain("loadConfig");
     });
     it("does not treat // inside a string as a comment", () => {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the source under test is a template literal
       expect(code("const u = 'http://x'; readFile(`${d}/.golem/settings.json`);")).toContain(
         "settings.json",
       );
@@ -283,6 +284,7 @@ describe("one settings entry point (team-layer-everywhere)", () => {
     it.each([
       `readFile(path.join(d, ".golem", "settings.json"))`,
       `readFile(path.join(d, '.golem', 'settings.local.json'))`,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the source under test is a template literal
       "readFile(`${d}/.golem/settings.json`)",
       "await readFile(config.files.local, 'utf8')",
       "const p = settingsFilePaths({ projectDir });",
