@@ -43,6 +43,20 @@ import {
   keychainBackend,
 } from "./backends.js";
 
+/**
+ * Read-side COMPATIBILITY rule (R8.29). Builds before R8.29 stored a prompted key
+ * untrimmed and trimmed on every read, so a key with edge whitespace may already
+ * be on disk or in a keychain. Backends now return bytes exactly, so for GATEWAY
+ * accounts the store trims leading/trailing whitespace on read: a gateway API key
+ * never legitimately has any, and without this an upgrade would start sending
+ * those keys with the whitespace. Portal tokens (`portal-oauth`) and Buzz secrets
+ * (`buzz:` accounts) stay byte-exact. The kind is guessed from the name only for
+ * this trim: a gateway someone names `buzz:x` merely stays byte-exact.
+ */
+function forRead(account: string, secret: string): string {
+  return account === "portal-oauth" || account.startsWith("buzz:") ? secret : secret.trim();
+}
+
 /** A credential plus where it came from. `secret` must never be logged. */
 export interface ResolvedCredential {
   readonly secret: string;
@@ -143,8 +157,11 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
     const faults: CredentialFault[] = [];
     for (const backend of readChain) {
       try {
-        const secret = await backend.get(account);
-        if (secret !== null) return { hit: { secret, location: backend.describe() }, faults };
+        const raw = await backend.get(account);
+        const secret = raw === null ? null : forRead(account, raw);
+        if (secret !== null && secret !== "") {
+          return { hit: { secret, location: backend.describe() }, faults };
+        }
       } catch (err) {
         faults.push({
           backend: backend.id,
@@ -216,9 +233,10 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       const stillUnresolved: string[] = [];
       for (const account of unique) {
         const entry = batch.get(account);
-        if (entry?.secret !== undefined) {
+        const batched = entry?.secret === undefined ? "" : forRead(account, entry.secret);
+        if (batched !== "") {
           out.set(account, {
-            hit: { secret: entry.secret, location: keychainB.describe() },
+            hit: { secret: batched, location: keychainB.describe() },
             faults: [],
           });
           continue;
@@ -243,8 +261,9 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       let hit: ResolvedCredential | null = null;
       for (const backend of chain) {
         try {
-          const secret = await backend.get(account);
-          if (secret !== null) {
+          const raw = await backend.get(account);
+          const secret = raw === null ? null : forRead(account, raw);
+          if (secret !== null && secret !== "") {
             hit = { secret, location: backend.describe() };
             break;
           }

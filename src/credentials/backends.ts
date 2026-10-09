@@ -185,14 +185,36 @@ async function run(cmd: string, args: readonly string[], stdin?: string): Promis
     child.once("close", (code) => {
       resolve({ code, stdout, stderr, spawnFailed: false });
     });
+    // A helper that exits before it reads stdin (a locked keychain, a refused
+    // prompt) makes the write fail with EPIPE. With no listener that is an
+    // unhandled 'error' event and takes the whole process down; the exit code
+    // and stderr already say what went wrong, so the write error is dropped.
+    child.stdin?.on("error", () => {});
     // Always close stdin: a helper that reads to EOF would otherwise hang.
     child.stdin?.end(stdin ?? "", "utf8");
   });
 }
 
-/** Trim the one trailing newline a CLI helper adds, without touching the secret. */
+/**
+ * Strip exactly ONE trailing `\n` or `\r\n` — the terminator a CLI helper or
+ * our own file encoding adds — and nothing else. Leading whitespace, trailing
+ * spaces/tabs and interior whitespace are part of the secret (R8.29).
+ */
+export function stripOneNewline(s: string): string {
+  return s.replace(/\r?\n$/, "");
+}
+
+/**
+ * A read result as a secret: one newline stripped, and null when nothing but line
+ * breaks was stored (an empty or newline-only file is "absent", not a secret).
+ */
+function secretOrNull(raw: string): string | null {
+  return /^[\r\n]*$/.test(raw) ? null : stripOneNewline(raw);
+}
+
+/** Helper DIAGNOSTICS and non-secret blobs: whitespace is noise there, so trim it all. */
 function trimOutput(s: string): string {
-  return s.replace(/\r?\n$/, "").trim();
+  return s.trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +246,7 @@ function macKeychain(): CredentialBackend {
       ]);
       if (r.spawnFailed) throw new Error(`macOS keychain unavailable: ${r.stderr}`);
       if (r.code === 0) {
-        const v = trimOutput(r.stdout);
-        return v === "" ? null : v;
+        return secretOrNull(r.stdout);
       }
       // 44 = "The specified item could not be found in the keychain."
       if (r.code === 44 || /could not be found/i.test(r.stderr)) return null;
@@ -281,7 +302,7 @@ function linuxKeychain(): CredentialBackend {
       }
       if (r.code === 0) {
         // secret-tool prints the secret with NO trailing newline.
-        const v = r.stdout.trim();
+        const v = r.stdout;
         return v === "" ? null : v;
       }
       // Not found: exit 1 with nothing on stderr. A real failure (no D-Bus
@@ -322,7 +343,7 @@ function linuxKeychain(): CredentialBackend {
  */
 const DPAPI_ENCRYPT =
   "$ErrorActionPreference='Stop'; try { " +
-  "$s=[Console]::In.ReadToEnd().Trim(); if ($s.Length -eq 0) { exit 2 }; " +
+  "$s=[Console]::In.ReadToEnd(); if ($s.Length -eq 0) { exit 2 }; " +
   "ConvertTo-SecureString $s -AsPlainText -Force | ConvertFrom-SecureString; exit 0 " +
   "} catch { exit 1 }";
 
@@ -494,8 +515,7 @@ function windowsDpapi(userDir: string): CredentialBackend {
       if (blob === null) return null;
       const attempt = await tryDpapiHosts(DPAPI_DECRYPT, blob);
       if (attempt !== null && attempt.result.code === 0) {
-        const v = trimOutput(attempt.result.stdout);
-        return v === "" ? null : v;
+        return secretOrNull(attempt.result.stdout);
       }
       // The real attempt failed. NOW pay for the self-test, purely to say which of
       // the two failures this is — a diagnostic, not a precondition (R9.20).
@@ -549,7 +569,7 @@ function windowsDpapi(userDir: string): CredentialBackend {
           out.set(p.account, { fault: blobBoundElsewhere(p.account, attempt.result.code) });
           continue;
         }
-        const secret = Buffer.from(line.slice(1), "base64").toString("utf8").trim();
+        const secret = Buffer.from(line.slice(1), "base64").toString("utf8");
         out.set(p.account, secret === "" ? {} : { secret });
       }
       return out;
@@ -624,8 +644,7 @@ export function fileBackend(
     available: async () => true,
     get: async (account) => {
       try {
-        const v = (await readFile(keyPath(account), "utf8")).trim();
-        return v === "" ? null : v;
+        return secretOrNull(await readFile(keyPath(account), "utf8"));
       } catch {
         return null;
       }

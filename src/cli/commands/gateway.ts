@@ -4,6 +4,7 @@
 
 import { type Command, Option } from "commander";
 import { findProjectDir } from "../../config/index.js";
+import { MalformedSecretError, normalizePipedSecret } from "../../credentials/validate.js";
 import {
   isKeylessProvider,
   UPSTREAM_AUTH_SCHEMES,
@@ -245,9 +246,25 @@ export default function register(program: Command): void {
     });
 }
 
-/** A secret piped on stdin (`echo $KEY | golem gateway login <id>`), or "" on a TTY. */
+/**
+ * A secret piped on stdin (`echo $KEY | golem gateway login <id>`), or "" when
+ * there is nothing piped (a TTY, or stdin closed empty). Errors are InitErrors so
+ * every route exits 2 with "Nothing stored.".
+ */
 async function readPipedSecret(): Promise<string> {
-  return process.stdin.isTTY ? "" : (await readStdin()).trim();
+  if (process.stdin.isTTY) return "";
+  const raw = await readStdin();
+  if (raw === "") return "";
+  try {
+    const key = normalizePipedSecret(raw);
+    if (key === "") {
+      throw new InitError("no key was provided on stdin (it was only whitespace). Nothing stored.");
+    }
+    return key;
+  } catch (err) {
+    if (err instanceof MalformedSecretError) throw new InitError(`${err.message} Nothing stored.`);
+    throw err;
+  }
 }
 
 async function readStdin(): Promise<string> {

@@ -158,4 +158,17 @@ describe("probeCredential", () => {
     // Translating providers do not append `/v1/...`, so there is nothing to double.
     expect(r.configWarning).toBeUndefined();
   });
+  it("reports a key with a line break as malformed, never as unreachable, and never echoes it", async () => {
+    const key = `${GOOD}\n`;
+    const r = await probeCredential({
+      provider: "anthropic",
+      baseUrl,
+      authScheme: "x-api-key",
+      secret: key,
+    });
+    expect(r.verdict).toBe("rejected");
+    expect(r.detail).toMatch(/malformed/);
+    expect(r.detail).not.toMatch(/could not reach/);
+    expect(r.detail).not.toContain(GOOD);
+  });
 });

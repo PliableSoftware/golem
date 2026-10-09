@@ -223,10 +223,35 @@ export async function probeCredential(input: ProbeInput): Promise<ProbeResult> {
       detail: `unexpected probe response (HTTP ${status}) — cannot confirm or deny the key`,
     });
   } catch (err) {
+    if (isMalformedHeaderError(err)) {
+      // The key itself cannot be sent — not a network problem. Blocking the store
+      // is right: every upstream request would fail the same way.
+      return verdict({
+        verdict: "rejected",
+        detail:
+          "the key is malformed (it contains a character that is not valid in an HTTP header, " +
+          "such as a line break) — re-enter it",
+      });
+    }
     const message = err instanceof Error ? err.message : String(err);
     return verdict({
       verdict: "inconclusive",
       detail: `could not reach ${new URL(shownUrl).host}: ${message}${selfHostedHint(input.provider)}`,
     });
   }
+}
+
+/** undici's InvalidArgumentError for a bad header value, however fetch wraps it. */
+function isMalformedHeaderError(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e instanceof Error && depth < 4; depth++) {
+    const code = (e as { code?: unknown }).code;
+    if (
+      (e.name === "InvalidArgumentError" || code === "UND_ERR_INVALID_ARG") &&
+      /header/i.test(e.message)
+    ) {
+      return true;
+    }
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
 }

@@ -19,6 +19,7 @@ import {
 } from "../../credentials/index.js";
 import { probeCredential } from "../../credentials/probe.js";
 import { PromptCancelled, promptSecret } from "../../credentials/prompt.js";
+import { MalformedSecretError, normalizeGatewayKey } from "../../credentials/validate.js";
 import { accountsReferencedByTargets } from "../../providers/index.js";
 import { InitError } from "../init.js";
 import type { GatewayTarget } from "./registry.js";
@@ -138,7 +139,15 @@ export async function loginGateway(
       throw err;
     }
   }
-  if (secret.trim() === "") throw new InitError("empty key — nothing stored.");
+  try {
+    // Trims all surrounding whitespace and refuses control/non-Latin-1 characters,
+    // whichever route the key came by (piped, prompted, supplied).
+    secret = normalizeGatewayKey(secret);
+  } catch (err) {
+    if (err instanceof MalformedSecretError) throw new InitError(`${err.message} Nothing stored.`);
+    throw err;
+  }
+  if (secret === "") throw new InitError("empty key — nothing stored.");
 
   // 2. Probe it against the upstream before storing (unless disabled).
   let probeVerdict = "skipped";
