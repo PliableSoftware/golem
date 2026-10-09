@@ -43,7 +43,6 @@ import { rmTemp } from "../helpers/tmp.js";
 // `devices` + `snooze` (park-until-reset, proposal golem-snooze.md).
 const P0_TOOLS = ["expand", "stats", "devices", "snooze"] as const;
 const ALL_PROMPTS = [
-  "slider",
   "index",
   "search",
   "stats",
@@ -117,10 +116,18 @@ describe("golem MCP server (in-memory transport)", () => {
     }
   });
 
-  it("lists all 8 frozen prompts", async () => {
+  it("lists all 7 frozen prompts", async () => {
     const client = await connectInMemory(createStandaloneDeps());
     const { prompts } = await client.listPrompts();
     expect(prompts.map((p) => p.name).sort()).toStrictEqual([...ALL_PROMPTS].sort());
+    expect(prompts.map((p) => p.name)).not.toContain("slider");
+  });
+
+  // 2026-10-09 (M2): the `slider` prompt was removed with the contract amendment.
+  // BREAKING for any client that called it: it is now an unknown-prompt error.
+  it("rejects a call to the removed `slider` prompt as an unknown prompt", async () => {
+    const client = await connectInMemory(createStandaloneDeps());
+    await expect(client.getPrompt({ name: "slider" })).rejects.toThrow(/Prompt slider not found/);
   });
 
   describe("expand", () => {
@@ -363,24 +370,6 @@ describe("golem MCP server (in-memory transport)", () => {
   });
 
   describe("prompts", () => {
-    it("slider prompt embeds the requested level and points at the level tool", async () => {
-      const client = await connectInMemory(createStandaloneDeps());
-      const prompt = await client.getPrompt({ name: "slider", arguments: { level: "2" } });
-      const first = prompt.messages[0];
-      expect(first?.role).toBe("user");
-      const text = first?.content.type === "text" ? first.content.text : "";
-      expect(text).toContain("level tool");
-      expect(text).toContain("level 2");
-    });
-
-    it("slider prompt without args points at the stats tool instead", async () => {
-      const client = await connectInMemory(createStandaloneDeps());
-      const prompt = await client.getPrompt({ name: "slider", arguments: {} });
-      const first = prompt.messages[0];
-      const text = first?.content.type === "text" ? first.content.text : "";
-      expect(text).toContain("stats tool");
-    });
-
     it("expand prompt requires ref_id", async () => {
       const client = await connectInMemory(createStandaloneDeps());
       await expect(client.getPrompt({ name: "expand", arguments: {} })).rejects.toMatchObject({

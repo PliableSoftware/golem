@@ -1,5 +1,7 @@
 /**
- * All 8 Golem MCP prompt registrations. Extracted from server.ts (R8.28).
+ * All 7 Golem MCP prompt registrations. Extracted from server.ts (R8.28).
+ * The `slider` prompt was removed 2026-10-09 (USER decision M2, ADR-0004); a call to
+ * it is now an unknown-prompt error. Breaking for anything that listed or called it.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -10,34 +12,6 @@ const P1_TOOL_FALLBACK =
   "If that tool is not available in this session, tell the user this Golem capability is not enabled in this session (every Golem tool ships; some register only when configured), and suggest checking `golem status`.";
 
 export function registerPrompts(server: McpServer): void {
-  server.registerPrompt(
-    "slider",
-    {
-      title: "Golem slider",
-      description: "Show or set Golem's quality/savings slider (0–3)",
-      argsSchema: {
-        level: z
-          .string()
-          .optional()
-          .describe("New slider level 1–3 (0 is CLI-only); omit to show the current level"),
-      },
-    },
-    ({ level }) =>
-      promptMessages(
-        level === undefined || level === ""
-          ? "Call the stats tool and report the current Golem slider level, " +
-              "then briefly list what each level 0–3 enables " +
-              "(0 passthrough — full bypass, NO redaction; 1 lossless; 2 balanced; 3 aggressive)."
-          : `Set the Golem savings slider to level ${level} using the level ` +
-              "tool (it accepts integers 1–3; if the requested value is not a valid " +
-              "level, tell the user instead of guessing). Then confirm the new level " +
-              "and summarize in one sentence what changes at that level. Level 0 is a " +
-              "full bypass that turns redaction OFF and CANNOT be set from a tool " +
-              "call — if 0 was requested, do not attempt it: say that redaction would " +
-              "be off and that the user must run `golem slider 0` themselves.",
-      ),
-  );
-
   server.registerPrompt(
     "stats",
     {
