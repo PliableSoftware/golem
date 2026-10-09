@@ -522,11 +522,11 @@ export const SETTINGS_LEAVES = {
     enabled: z.boolean(),
     /**
      * DEPRECATED, no effect. No external vector-DB driver exists; the embedded
-     * store is always used. Still accepted (plain string, so an old malformed
-     * value cannot fail a load) and warned about once per load; see
+     * store is always used. Still accepted (any value, so an old malformed
+     * or non-string value cannot fail a load) and warned about once per load; see
      * `DEPRECATED_SETTINGS` in `./migrations.ts`.
      */
-    vector_db_url: z.string().optional(),
+    vector_db_url: z.unknown().optional(),
     /** Paths auto-ingested and watched for changes. */
     watch_paths: z.array(z.string()),
     /**

@@ -240,7 +240,7 @@ describe("inference.worker_targets is live, not retired", () => {
 describe("knowledge.vector_db_url is deprecated: accepted, ignored, warned once", () => {
   it("is in DEPRECATED_SETTINGS and still a live schema leaf (not retired)", () => {
     expect(DEPRECATED_SETTINGS.map((d) => d.path)).toContain("knowledge.vector_db_url");
-    expect(deprecationFor("knowledge.vector_db_url")?.since).toBeTruthy();
+    expect(deprecationFor("knowledge.vector_db_url")?.note).toBeTruthy();
     expect(retirementFor("knowledge.vector_db_url")).toBeUndefined();
   });
 
@@ -263,5 +263,60 @@ describe("knowledge.vector_db_url is deprecated: accepted, ignored, warned once"
   it("does not warn when the key is unset", async () => {
     const { warnings } = await loadConfig({ projectDir, userDir });
     expect(warnings.filter((w) => w.includes("vector_db_url"))).toEqual([]);
+  });
+
+  it("accepts a non-string value (42, null) without failing the load", async () => {
+    for (const value of [42, null]) {
+      await writeJson(projectFile(), { knowledge: { vector_db_url: value } });
+      const { warnings } = await loadConfig({ projectDir, userDir });
+      expect(warnings.filter((w) => w.includes("knowledge.vector_db_url"))).toHaveLength(1);
+    }
+  });
+
+  it("never echoes the value, even a URL with a password", async () => {
+    const secret = ["hunter", "2"].join("");
+    const url = `http://user:${secret}@localhost:6333`;
+    await writeJson(projectFile(), { knowledge: { vector_db_url: url } });
+    const { warnings } = await loadConfig({ projectDir, userDir });
+    expect(warnings.length).toBeGreaterThan(0);
+    for (const w of warnings) expect(w).not.toContain(secret);
+  });
+
+  it("warns for the GOLEM_KNOWLEDGE_VECTOR_DB_URL environment spelling too, without the value", async () => {
+    const secret = ["hunter", "2"].join("");
+    const { warnings } = await loadConfig({
+      projectDir,
+      userDir,
+      env: { GOLEM_KNOWLEDGE_VECTOR_DB_URL: `http://u:${secret}@localhost:6333` },
+    });
+    const hits = warnings.filter((w) => w.includes("knowledge.vector_db_url"));
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("GOLEM_KNOWLEDGE_VECTOR_DB_URL");
+    expect(hits[0]).toMatch(/deprecated/i);
+    for (const w of warnings) expect(w).not.toContain(secret);
+  });
+
+  it("the user-facing warning carries no internal task id", async () => {
+    await writeJson(projectFile(), { knowledge: { vector_db_url: "http://x" } });
+    const { warnings } = await loadConfig({ projectDir, userDir });
+    const w = warnings.find((x) => x.includes("vector_db_url")) ?? "";
+    expect(w).toContain("future release");
+    expect(w).not.toContain("dead-code");
+  });
+
+  it("a team layer carrying it is refused, with the value not shown", async () => {
+    const secret = ["hunter", "2"].join("");
+    const { warnings, refused, settings } = await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer: {
+        settings: { knowledge: { vector_db_url: `http://u:${secret}@evil:6333` } },
+        source: "acme",
+      },
+    });
+    expect(refused).toContain("knowledge.vector_db_url");
+    expect(settings.knowledge.vector_db_url).toBeUndefined();
+    for (const w of warnings) expect(w).not.toContain(secret);
   });
 });

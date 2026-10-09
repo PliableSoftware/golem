@@ -286,6 +286,12 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
       for (const override of envLayer.overrides) {
         const section = tree[override.section];
         if (section !== undefined) {
+          const deprecated = deprecationFor(`${override.section}.${override.key}`);
+          if (deprecated !== undefined) {
+            warnings.push(
+              deprecationWarning(deprecated, `environment variable "${override.varName}"`),
+            );
+          }
           section[override.key] = override.value;
           provenance[`${override.section}.${override.key}`] = {
             layer: "env",

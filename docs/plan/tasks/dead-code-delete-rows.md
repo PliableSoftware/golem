@@ -115,8 +115,8 @@ as bare identifiers, so string lookups (`"initProbe"`, `["vector_db_url"]`), env
 **Row 9, `knowledge.vector_db_url`: KEPT as accepted-and-ignored; the dead driver branch deleted.**
 - `grep -rn "vector_db_url\|vectorDbUrl\|VECTOR_DB_URL" ...`: readers of the value: only `selectDriver`
   (`knowledge/index.ts`), and no caller in `src` ever passed `vectorDbUrl` (`openKnowledgeBase(` call sites
-  checked: none set it; `tests/unit/knowledge/knowledge.test.ts:133` was the only caller). No env mapping
-  spelling, no vscode-extension, no scripts, no `.claude`, no README, no skill text hit.
+  checked: none set it; `tests/unit/knowledge/knowledge.test.ts:133` was the only caller). The env mapping is generic `GOLEM_<SECTION>_<KEY>` (`env.ts`), so
+  `GOLEM_KNOWLEDGE_VECTOR_DB_URL` reaches the key: the loader warns on that path too. No no vscode-extension, no scripts, no `.claude`, no README, no skill text hit.
 - Other hits: `schema.ts`, `ui-model.ts`, `team-policy.ts:98` (`D`) + `team-policy.test.ts:105` (KEPT, as
   `TEAM_POLICY` is total over the schema), `config-ui-model.test.ts:95` (`kindOf` line dropped: the leaf is
   now plain text), spec `:159,169` (reworded, they described the throw), wiki `Knowledge Base.md` (one line).
@@ -124,7 +124,7 @@ as bare identifiers, so string lookups (`"initProbe"`, `["vector_db_url"]`), env
 - Mechanism: new `DEPRECATED_SETTINGS` / `deprecationFor` / `deprecationWarning` in `config/migrations.ts`;
   `applyObjectLayer` pushes the warning after the value validates and any remote refusal passed, then applies
   the value as before. NOT `RETIRED_SETTINGS` (raises). Schema loosened `z.string().url().optional()` to
-  `z.string().optional()` so an old malformed value cannot fail a load. Warning is once per declaration per
+  `z.unknown().optional()` so no old value (malformed, 42, null) can fail a load. Warning is once per declaration per
   load, collected on `GolemConfig.warnings` (printed by `golem status` / `config list`), never an error.
 - Removal one release later: move the path to `RETIRED_SETTINGS` or drop it from the schema, and delete the
   `TEAM_POLICY` entry and its test line together.
