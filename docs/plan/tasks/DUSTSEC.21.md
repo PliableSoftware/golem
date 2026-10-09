@@ -1,7 +1,7 @@
 ---
 task: DUSTSEC.21
 title: "Request bodies that are encoded or not JSON bypass redaction, and the redaction walk has no size bound"
-state: queued
+state: done
 owner: agent
 size: M
 discipline: code
@@ -10,6 +10,7 @@ gate: "Failing-first tests: a gzip-encoded JSON body and a BOM-prefixed JSON bod
 depends_on: []
 touches: [src/proxy/server.ts, src/pipeline/pipeline.ts, tests]
 created: 2026-10-08
+updated: 2026-10-09T07:36:54.717Z
 ---
 
 ## What this is
@@ -130,3 +131,7 @@ a way past the limits. The `golem-bypass` skill text now says so.
   are never redacted (the S9 gap): a secret used as a key is forwarded. (3) `redactValue` in
   `src/pipeline/redaction.ts` assigns `out[key] = next`; a `__proto__` key sets the prototype of `out`
   and the member is silently dropped when a sibling is redacted (pre-existing).
+
+## Outcome
+
+shipped (PR 276); four independent review passes
