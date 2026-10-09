@@ -31,6 +31,8 @@ Related pages: [[Portal Install Contract]] · [[Team Layer]] · [[Dogfooding Gol
 | `release-prepare.yml` | manual, on `development` | bumps the version, pushes it, opens the release PR |
 | `release.yml` | push to `main` (i.e. the release PR merging) | calls `ci.yml`, tags, builds, publishes, notifies |
 
+**Runner images are pinned.** The gating jobs and every release job run on `ubuntu-24.04`, not `ubuntu-latest`, because GitHub moves `ubuntu-latest` to Ubuntu 26.04 over several weeks from 2026-10-19 (runner-images issue 14748) and that move would otherwise change what gates a merge and what builds a release (system libraries, glibc for the standalone binaries) with no edit in this repository. An advisory `test (advisory) / ubuntu-26.04` job (not in `CI gate`'s needs, like the macOS one) runs the suite on the new image so the breakage is seen first; when it has been green for a few runs the pin moves to `ubuntu-26.04` in one reviewed change. The action versions are the first majors that run on Node 24 (`checkout@v5`, `setup-node@v5`, `upload-artifact@v6`, `download-artifact@v7`), which ends the Node 20 deprecation annotation on every run. The `CI gate` message now says when a run was cancelled by a newer push rather than failed.
+
 `release.yml` **calls** `ci.yml` rather than repeating it. A second copy of the
 checks would drift, and the first anyone would know is a release that passed
 checks `development` would have failed.
