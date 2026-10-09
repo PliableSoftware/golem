@@ -170,3 +170,225 @@ describe("DUSTSEC.21 (1) content-encoded JSON bodies", () => {
     expect(r.body).not.toContain(SECRET);
   });
 });
+
+const jsonHeaders = { "content-type": "application/json" };
+const BOM = "﻿";
+
+describe("DUSTSEC.21 (2) a UTF-8 byte-order mark before the JSON", () => {
+  for (const path of routes) {
+    it(`BOM body to ${path} is redacted and forwarded without the BOM`, async () => {
+      const r = await send(await build(), path, {
+        headers: jsonHeaders,
+        body: Buffer.from(BOM + messagesBody()),
+      });
+      expectCleanForward(r);
+      expect(r.raw[0]).toBe(0x7b);
+    });
+  }
+
+  it("a BOM inside a gzip body is handled too", async () => {
+    const r = await send(await build(), "/v1/messages", {
+      headers: { ...jsonHeaders, "content-encoding": "gzip" },
+      body: gzipSync(Buffer.from(BOM + messagesBody())),
+    });
+    expectCleanForward(r);
+  });
+
+  it("the redactOnly fail-safe covers a BOM body", async () => {
+    const pipeline = await build({ policy: () => Promise.reject(new Error("policy boom")) });
+    for (const path of routes) {
+      const r = await send(pipeline, path, {
+        headers: jsonHeaders,
+        body: Buffer.from(BOM + messagesBody()),
+      });
+      expectCleanForward(r);
+    }
+  });
+
+  it("a UTF-16 body is refused (cannot be scanned), never forwarded", async () => {
+    const utf16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(messagesBody(), "utf16le"),
+    ]);
+    for (const path of routes) {
+      const r = await send(await build(), path, { headers: jsonHeaders, body: utf16 });
+      expectRefusedNothingForwarded(r, 502);
+    }
+  });
+});
+
+describe("DUSTSEC.21 (3) a JSON array or scalar", () => {
+  const shapes: Record<string, () => string> = {
+    array: () => JSON.stringify(messages()),
+    "nested array": () => JSON.stringify([[{ a: SECRET }]]),
+    "bare string": () => JSON.stringify(`key ${SECRET}`),
+  };
+  for (const [name, make] of Object.entries(shapes)) {
+    for (const path of routes) {
+      it(`${name} to ${path} is redacted`, async () => {
+        const r = await send(await build(), path, { headers: jsonHeaders, body: make() });
+        expect(r.status).toBe(200);
+        expect(r.hits).toBe(1);
+        expect(r.body).not.toContain(SECRET);
+        expect(r.body).toContain(PLACEHOLDER);
+        expect(r.headers["content-length"]).toBe(String(r.raw.length));
+      });
+    }
+  }
+
+  it("non-secret scalars and arrays pass through unchanged", async () => {
+    for (const body of ["42", "true", "null", '["hello"]']) {
+      const r = await send(await build(), "/v1/messages", { headers: jsonHeaders, body });
+      expect(r.body).toBe(body);
+    }
+  });
+
+  it("the redactOnly fail-safe covers an array and a scalar on the messages route", async () => {
+    const pipeline = await build({ policy: () => Promise.reject(new Error("policy boom")) });
+    for (const body of [JSON.stringify(messages()), JSON.stringify(`k ${SECRET}`)]) {
+      const r = await send(pipeline, "/v1/messages", { headers: jsonHeaders, body });
+      expect(r.status).toBe(200);
+      expect(r.body).not.toContain(SECRET);
+      expect(r.body).toContain(PLACEHOLDER);
+    }
+  });
+});
+
+describe("DUSTSEC.21 (4) bodies that are not JSON", () => {
+  const textBody = `plain text ${SECRET} {not json`;
+
+  for (const path of routes) {
+    it(`text/plain to ${path} is redacted`, async () => {
+      const r = await send(await build(), path, {
+        headers: { "content-type": "text/plain; charset=utf-8" },
+        body: textBody,
+      });
+      expect(r.status).toBe(200);
+      expect(r.body).not.toContain(SECRET);
+      expect(r.body).toContain(PLACEHOLDER);
+      expect(r.body).toContain("plain text");
+      expect(r.headers["content-length"]).toBe(String(r.raw.length));
+    });
+  }
+
+  it("a body labelled application/json that is malformed is redacted as text", async () => {
+    const r = await send(await build(), "/v1/messages", {
+      headers: jsonHeaders,
+      body: `{"a": "${SECRET}", `,
+    });
+    expect(r.body).not.toContain(SECRET);
+    expect(r.body).toContain(PLACEHOLDER);
+  });
+
+  it("a body with no content-type that is text is redacted", async () => {
+    const r = await send(await build(), "/v1/other", { body: textBody });
+    expect(r.body).not.toContain(SECRET);
+  });
+
+  it("text that is not valid UTF-8 is still redacted and its other bytes are preserved", async () => {
+    const body = Buffer.concat([
+      Buffer.from("head "),
+      Buffer.from([0xff, 0xfe, 0x80]),
+      Buffer.from(` ${SECRET} tail`),
+    ]);
+    const r = await send(await build(), "/v1/other", {
+      headers: { "content-type": "text/plain" },
+      body,
+    });
+    expect(r.raw.includes(Buffer.from(SECRET))).toBe(false);
+    expect(r.raw.includes(Buffer.from([0xff, 0xfe, 0x80]))).toBe(true);
+    expect(r.body).toContain(PLACEHOLDER);
+  });
+
+  it("a form-urlencoded body is redacted, including a percent-encoded secret", async () => {
+    const encoded = SECRET.split("")
+      .map((c) => `%${c.charCodeAt(0).toString(16)}`)
+      .join("");
+    for (const [value, expected] of [
+      [SECRET, PLACEHOLDER],
+      [encoded, encodeURIComponent(PLACEHOLDER)],
+    ] as const) {
+      const r = await send(await build(), "/v1/other", {
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: `a=1&key=${value}&b=two+words`,
+      });
+      expect(r.body).not.toContain(SECRET);
+      expect(r.body).not.toContain(encoded);
+      expect(r.body).toContain("a=1&");
+      expect(r.body).toContain("b=two+words");
+      expect(r.body).toContain(expected);
+    }
+  });
+
+  it("a multipart body is forwarded unchanged (opaque, not scanned)", async () => {
+    const body = Buffer.concat([
+      Buffer.from(`--XB\r\ncontent-disposition: form-data; name="file"\r\n\r\n`),
+      Buffer.from([0x00, 0x01, 0x02, 0xff]),
+      Buffer.from(` ${SECRET}\r\n--XB--\r\n`),
+    ]);
+    const r = await send(await build(), "/v1/files", {
+      headers: { "content-type": "multipart/form-data; boundary=XB" },
+      body,
+    });
+    expect(r.hits).toBe(1);
+    expect(r.raw.equals(body)).toBe(true);
+  });
+
+  it("an octet-stream body is forwarded unchanged", async () => {
+    const body = Buffer.from([0x00, 0x9f, 0x92, 0x96, 0xff]);
+    const r = await send(await build(), "/v1/files", {
+      headers: { "content-type": "application/octet-stream" },
+      body,
+    });
+    expect(r.raw.equals(body)).toBe(true);
+  });
+
+  it("the redactOnly fail-safe covers a text body", async () => {
+    const pipeline = await build({ policy: () => Promise.reject(new Error("policy boom")) });
+    for (const path of routes) {
+      const r = await send(pipeline, path, {
+        headers: { "content-type": "text/plain" },
+        body: textBody,
+      });
+      expect(r.status).toBe(200);
+      expect(r.body).not.toContain(SECRET);
+    }
+  });
+});
+
+describe("DUSTSEC.21 pipeline-level (no proxy in front)", () => {
+  const req = (body: Buffer, headers: Record<string, string> = {}, url = "/v1/messages") => ({
+    method: "POST",
+    url,
+    headers,
+    body,
+  });
+
+  it("process and redactOnly strip a BOM and redact, on the messages route", async () => {
+    const p = await build();
+    const r = req(Buffer.from(BOM + messagesBody()));
+    for (const out of [await p.process(r), p.redactOnly?.(r)]) {
+      const text = out?.body?.toString("utf8") ?? "";
+      expect(text.startsWith("{")).toBe(true);
+      expect(text).not.toContain(SECRET);
+    }
+  });
+
+  it("process and redactOnly redact an array and a scalar on the messages route", async () => {
+    const p = await build();
+    for (const body of [JSON.stringify(messages()), JSON.stringify(`k ${SECRET}`)]) {
+      const r = req(Buffer.from(body));
+      for (const out of [await p.process(r), p.redactOnly?.(r)]) {
+        expect(out?.body?.toString("utf8")).not.toContain(SECRET);
+        expect(out?.body?.toString("utf8")).toContain(PLACEHOLDER);
+      }
+    }
+  });
+
+  it("a UTF-16 body makes BOTH process and redactOnly throw (so the proxy fails closed)", async () => {
+    const p = await build();
+    const wide = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(messagesBody(), "utf16le")]);
+    await expect(p.process(req(wide))).rejects.toThrow();
+    expect(() => p.redactOnly?.(req(wide))).toThrow();
+  });
+});

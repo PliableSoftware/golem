@@ -48,6 +48,7 @@ import { buildContextLedger, type ContextLedgerCore } from "../proxy/context-led
 import type { ProxyRequest, RequestPipeline } from "../proxy/types.js";
 import { isRecord } from "../shared/json.js";
 import { proxyLog } from "../shared/proxy-log.js";
+import { parseJsonBody, redactAnyBody, withoutBom } from "./body-redaction.js";
 import { applyBrevity } from "./brevity.js";
 import { applyJoinMessages, canInject } from "./join-injection.js";
 import { eligibleLocalAnswerText, synthesizeLocalAnswerResponse } from "./local-answer-response.js";
@@ -317,30 +318,6 @@ function isMessagesRequest(request: ProxyRequest): boolean {
 }
 
 /**
- * DUSTSEC.19 — redaction ONLY, over every other JSON body. The messages gate
- * above is deliberately narrow (the full pipeline understands one body shape),
- * but redaction does not need a shape: `redactRequestBody` walks every string
- * value of any JSON document. So `/v1/messages/count_tokens`, `/v1/messages/batches`
- * and any other JSON request carrying conversation text get the SAME rules in
- * the same order and nothing else: no compression, policy, observers or stages.
- * Returns the original request object when nothing was found. A body that is
- * absent, empty or not JSON cannot be walked and is returned as-is.
- */
-function redactJsonBody(request: ProxyRequest): ProxyRequest {
-  if (request.body === null || request.body.length === 0) return request;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(request.body.toString("utf8"));
-  } catch {
-    return request;
-  }
-  if (typeof parsed !== "object" || parsed === null) return request;
-  const redacted = redactRequestBody(parsed);
-  if (redacted.count === 0) return request;
-  return { ...request, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
-}
-
-/**
  * Build the Golem request pipeline. The returned object is the value passed as
  * `pipeline` to {@link GolemProxy}; the proxy recomputes content-length from
  * the returned body.
@@ -404,43 +381,47 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
     // rules in the same order, plugin rules included. Deliberately has no other
     // stage and no policy lookup, so nothing that can throw in `process` can
     // throw here except redaction itself.
-    redactOnly(request: ProxyRequest): ProxyRequest {
-      if (request.body === null) return request;
-      if (!isMessagesRequest(request)) return redactJsonBody(request);
+    redactOnly(input: ProxyRequest): ProxyRequest {
+      if (input.body === null) return input;
+      const request = withoutBom(input);
+      if (!isMessagesRequest(request)) return redactAnyBody(request);
       let parsed: unknown;
       try {
-        parsed = JSON.parse(request.body.toString("utf8"));
+        parsed = parseJsonBody(request.body as Buffer);
       } catch {
-        // Same verdict as `process`: not JSON we can rewrite.
-        return request;
+        // DUSTSEC.21: not JSON is no longer "forward raw": text bodies are redacted.
+        return redactAnyBody(request);
       }
-      if (!isRecord(parsed)) return request;
+      // An array or bare scalar is not a Messages body, but it is still scanned.
+      if (!isRecord(parsed)) return redactAnyBody(request);
       const redacted = redactRequestBody(parsed);
       if (redacted.count === 0 || !isRecord(redacted.value)) return request;
       return { ...request, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
     },
-    async process(request: ProxyRequest): Promise<ProxyRequest> {
+    async process(input: ProxyRequest): Promise<ProxyRequest> {
       // R10.23 — every stage below runs BEFORE the request is forwarded, so
       // whatever they cost, the user is watching the client say "waiting for
       // API" for exactly that long, with nothing in the log to say Golem is the
       // one holding it. Time the stages and, past the threshold, say so.
       const startedAt = performance.now();
       const stageMs: Record<string, number> = {};
-      if (request.body === null) return request;
+      if (input.body === null) return input;
+      const request = withoutBom(input);
       if (!isMessagesRequest(request)) {
         // DUSTSEC.19 — redaction only, honouring the same policy flag as stage 1.
-        return (await options.policy()).stages.redaction ? redactJsonBody(request) : request;
+        return (await options.policy()).stages.redaction ? redactAnyBody(request) : request;
       }
 
       let parsed: unknown;
       try {
-        parsed = JSON.parse(request.body.toString("utf8"));
+        parsed = parseJsonBody(request.body as Buffer);
       } catch {
-        // Not JSON we can safely rewrite — forward untouched.
-        return request;
+        // DUSTSEC.21: not JSON — redact it as text (or forward it if opaque).
+        return redactAnyBody(request);
       }
       if (!isRecord(parsed)) {
-        return request;
+        // DUSTSEC.21: an array or bare scalar to the messages route: redaction only.
+        return redactAnyBody(request);
       }
 
       // R8.S3 — observe for session tree (fire-and-forget, never affects the request).
