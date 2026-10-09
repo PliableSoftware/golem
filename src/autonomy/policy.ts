@@ -10,9 +10,10 @@
  * level (`manual`), never the least — default-deny by construction.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 
 /** Autonomy levels, least→most permissive. There is deliberately no "full auto". */
 export const AUTONOMY_LEVELS = ["manual", "assisted", "outcome"] as const;
@@ -97,10 +98,8 @@ async function writeAutonomyState(
 ): Promise<void> {
   const file = autonomyStatePath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
   const body = { level: state.level, enabled: state.enabled, ts: nowIso };
-  await writeFile(tmp, `${JSON.stringify(body, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(body, null, 2)}\n`);
 }
 
 /** Persist a level, preserving the current gate-enabled flag. */
