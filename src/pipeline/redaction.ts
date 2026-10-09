@@ -127,7 +127,9 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
   let count = 0;
   let result = "";
   let cursor = 0;
-  for (const m of text.matchAll(re)) {
+  // DUSTSEC.24: a rule may bound the part of the text it can match in (see `scanEnd`).
+  const haystack = rule.scanEnd === undefined ? text : text.slice(0, rule.scanEnd(text));
+  for (const m of haystack.matchAll(re)) {
     const whole = m[0];
     const matchStart = m.index ?? 0;
     let redactStart = matchStart;
@@ -149,6 +151,9 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
     }
     if (rule.validate !== undefined && !rule.validate(target)) {
       continue; // failed the extra check (e.g. Luhn) → not a secret, leave it
+    }
+    if (rule.validateAt !== undefined && !rule.validateAt(text, redactStart, redactEnd)) {
+      continue; // fails a check that needs the surrounding text → leave it
     }
 
     result += text.slice(cursor, redactStart);
