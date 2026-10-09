@@ -20,11 +20,12 @@
  */
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createServer, get as httpsGet, type Server } from "node:https";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import { recordLoopbackHit } from "./loopback-reach.js";
 
 /** `.golem/state/loopback-serve.json` — how the hook finds a running endpoint. */
@@ -59,9 +60,7 @@ export async function readLoopbackServeState(
 async function writeState(projectDir: string, state: LoopbackServeState): Promise<void> {
   const file = loopbackServeStatePath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /** Length-safe constant-time compare (timingSafeEqual throws on length mismatch). */

@@ -45,8 +45,9 @@
  * reader can see. All writes stay best-effort and never throw into a hook.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { replaceViaTemp } from "../config/file-io.js";
 import { isRecord } from "../shared/json.js";
 
 /**
@@ -350,9 +351,7 @@ export async function writePendingToolCall(
 
 async function writeAtomic(file: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 /** Everything a block carries beyond "blocked, at this time, in this session". */

@@ -54,8 +54,9 @@
  * must not have. Separate file, separate lifetime.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { replaceViaTemp } from "../config/file-io.js";
 import { withFileLock } from "./state-lock.js";
 
 /** One dispatched subagent, and whether its output has been reviewed. */
@@ -125,9 +126,7 @@ export async function writeDelegationLedger(
 ): Promise<void> {
   const file = delegationLedgerPath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(ledger, null, 2)}\n`);
 }
 
 /**
