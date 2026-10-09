@@ -1,7 +1,7 @@
 ---
 task: adr-p3-p4-amendments
 title: "Record the P3 and P4 decisions in the spec and the ADRs: Decision 61 reaches hosted sessions; teams may set security settings only toward stricter values (USER decisions)"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: write
@@ -10,6 +10,7 @@ gate: "Dated amendment notes (never a rewrite of the decision text) record: Deci
 depends_on: []
 touches: [docs/golem-spec.md, docs/decisions, docs/wiki/concepts, docs/plan/tasks/R13.9.md]
 created: 2026-10-09
+updated: 2026-10-09T12:54:05.840Z
 ---
 
 ## What this is
@@ -20,3 +21,7 @@ Two security decisions recorded in the documents that carry them. The P4 rule ne
 
 - Building R13.9.
 - Reopening either decision.
+
+## Outcome
+
+shipped (PR merged with CI gate green; not independently reviewed, not a hard-rule change)

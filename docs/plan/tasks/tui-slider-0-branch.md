@@ -1,7 +1,7 @@
 ---
 task: tui-slider-0-branch
 title: "Remove the dead slider-0 needsConfirm branch in the TUI and rewrite the four tests that pin it"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "The slider-0 branch of needsConfirm in src/tui/state.ts is deleted; the f
 depends_on: []
 touches: [src/tui, tests/unit]
 created: 2026-10-09
+updated: 2026-10-09T12:54:07.934Z
 ---
 
 ## What this is
@@ -19,3 +20,7 @@ The last slider-era behaviour in the TUI. The audit says the branch is unreachab
 ## Out of scope
 
 - Other TUI cleanups.
+
+## Outcome
+
+shipped (PR merged with CI gate green; not independently reviewed, not a hard-rule change)
