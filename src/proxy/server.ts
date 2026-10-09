@@ -205,9 +205,8 @@ export class GolemProxy {
     // nothing after, so a request that died mid-stream left no trace: the
     // investigation of a live "Connection lost mid-response" had to be run from
     // the client's transcript and the process table. Most terminal paths below
-    // report what became of the request; the upstream body-read and gunzip
-    // failures destroy the response without reporting. Metadata only — never
-    // bodies.
+    // report what became of the request, including the translating path's
+    // upstream body-read and gunzip failures. Metadata only — never bodies.
     const startedAt = Date.now();
     const method = req.method ?? "GET";
     // Query stripped: a query string can carry identifiers, and the path is
@@ -577,6 +576,12 @@ export class GolemProxy {
           raw = Buffer.from(await upstream.body.arrayBuffer());
         } catch {
           res.destroy();
+          report(abort.signal.aborted ? "client_gone" : "upstream_error", {
+            status: upstream.statusCode,
+            detail: abort.signal.aborted
+              ? "the client hung up while the upstream error body was being read"
+              : "the upstream error body could not be read to the end",
+          });
           return;
         }
         res.writeHead(upstream.statusCode, forwardableResponseHeaders(upstream.headers));
@@ -616,6 +621,7 @@ export class GolemProxy {
 
       // b1: non-streaming — buffer, translate, write the Anthropic JSON body.
       let raw: Buffer;
+      let stage: "read" | "gunzip" = "read";
       try {
         raw = Buffer.from(await upstream.body.arrayBuffer());
         // The Anthropic passthrough relays bytes verbatim, but the translating
@@ -623,10 +629,18 @@ export class GolemProxy {
         // auto-decompress; some OpenAI-schema upstreams, e.g. Moonshot, gzip).
         const enc = this.header(upstream.headers, "content-encoding");
         if (enc?.toLowerCase().includes("gzip")) {
+          stage = "gunzip";
           raw = gunzipSync(raw);
         }
       } catch {
         res.destroy();
+        report(abort.signal.aborted ? "client_gone" : "upstream_error", {
+          detail: abort.signal.aborted
+            ? "the client hung up while the upstream body was being read"
+            : stage === "gunzip"
+              ? "the upstream body claimed gzip but could not be gunzipped"
+              : "the upstream body could not be read to the end",
+        });
         return;
       }
       let translated: Buffer;
