@@ -12,9 +12,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 
 /** ── Data model ─────────────────────────────────────────────────────── */
 
@@ -269,9 +270,7 @@ export function sessionTreePath(projectDir: string): string {
 export async function writeSessionTree(projectDir: string, tree: SessionTree): Promise<void> {
   const file = sessionTreePath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(tree, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(tree, null, 2)}\n`);
 }
 
 export async function readSessionTree(projectDir: string): Promise<SessionTree | null> {

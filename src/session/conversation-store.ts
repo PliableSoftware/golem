@@ -45,9 +45,10 @@
  * `.golem/conversations` a main-checkout reader would see.
  */
 
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import type {
   ConversationRecord,
   ConversationStore,
@@ -178,12 +179,7 @@ export class LocalConversationStore implements ConversationStore {
   async #writeRecord(record: ConversationRecord): Promise<void> {
     const file = this.#fileFor(record.conversationId);
     await mkdir(this.#dir, { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await rename(tmp, file);
+    await replaceViaTemp(file, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   }
 
   /**
