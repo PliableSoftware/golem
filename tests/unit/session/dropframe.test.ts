@@ -21,7 +21,7 @@ beforeEach(() => resetLedgers());
 
 function connect(
   session: TransportSession,
-  opts: { writeOk: boolean; lastEventId?: string },
+  opts: { writeOk: boolean; lastEventId?: string | undefined },
 ): { chunks: string[] } {
   const chunks: string[] = [];
   const res = {
@@ -41,7 +41,7 @@ function connect(
     req as unknown as IncomingMessage,
     res,
     new URL("http://x/session/s/stream"),
-    { heartbeatMs: 3_600_000 },
+    { lookup: () => session, heartbeatMs: 3_600_000 },
   );
   return { chunks };
 }
