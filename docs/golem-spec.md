@@ -271,7 +271,7 @@ dial (Decision 52's other half, which survives): it appends a directive to
 | `/golem-devices` | Show local capability/status *(MCP prompt only; LAN workers are DUST2.25)* |
 | `/golem-coder <task>` | Route a subtask to a local model explicitly (renamed from `delegate`, Decision 35) *(MCP prompt only)* |
 
-The rows marked *prompt only* (and `/golem-search`) exist as MCP prompts (`src/mcp/prompts.ts`: `slider`, `stats`, `expand`, `bypass`, `index`, `search`, `devices`, `coder`), not as `/golem-*` skills; `/golem-note` exists in neither form (the surface is `golem note`). Whether the `slider` prompt, a leftover of the slider that ADR-0004 retired, stays is OPEN, left for the user (§10, M2; the prompt set is a frozen contract). Installed skills (`src/cli/skills.ts`): `adversarial-review`, `bypass`, `cache-health`, `checkpoint`, `compression`, `context-hygiene`, `debrief`, `develop`, `expand`, `first-pancake`, `fresh-eyes`, `park`, `plan`, `promote`, `research`, `ship`, `stats`, `step`, `triage`, `upstream`, `verify`, `wiki-ingest`, plus `vibe`.
+The rows marked *prompt only* (and `/golem-search`) exist as MCP prompts (`src/mcp/prompts.ts`: `stats`, `expand`, `bypass`, `index`, `search`, `devices`, `coder`), not as `/golem-*` skills; `/golem-note` exists in neither form (the surface is `golem note`). **Amendment 2026-10-09 (USER decision M2, ADR-0004):** the prompt set is a frozen contract of seven prompts. The `slider` prompt, a leftover of the retired slider, was removed from it. This is BREAKING for any client that lists or calls it: it is gone from `prompts/list`, and `prompts/get` for `slider` is an unknown-prompt error (`Prompt slider not found`, -32602). Use `golem compression <off|1|2|3>` or `/golem-compression`. The contract is pinned by `ALL_PROMPTS` in `tests/integration/mcp-server.test.ts` (there is no `src/interfaces/` file for it). Installed skills (`src/cli/skills.ts`): `adversarial-review`, `bypass`, `cache-health`, `checkpoint`, `compression`, `context-hygiene`, `debrief`, `develop`, `expand`, `first-pancake`, `fresh-eyes`, `park`, `plan`, `promote`, `research`, `ship`, `stats`, `step`, `triage`, `upstream`, `verify`, `wiki-ingest`, plus `vibe`.
 
 Method skills are not command surfaces and are not in the table; `/golem-dust` runs the audit, rebaseline and refactor shake-out for docs that have drifted from the code (**Note 2026-10-08, DUST4.3:** see the wiki page `Dust Method`, `docs/wiki/concepts/Dust Method.md`).
 
@@ -615,7 +615,6 @@ Not decided in this rebaseline, per `docs/plan/audit/dust-1/DECISIONS.md` (secur
 | id | question | where it bites |
 |---|---|---|
 | G3 | Where must *enforced* team policy apply? `golem status` loads the team layer; `golem config`, the panel, VS Code, hooks, MCP and the hot-reload do not. | Decision 62 note |
-| M2 | Keep the frozen `slider` MCP prompt and rewrite it, or remove it? | §5.1 |
 | H2 | Is `blocked` a task state (code, README) or metadata (D55(d), wiki)? | Decision 55 note |
 | P3 | Does Decision 61 reach hosted sessions, given Decision 60(d)? | Decisions 59, 61 notes |
 | P4/S17 | Does `security.*` belong on `REMOTE_DENIED_SETTINGS`? | Decision 59 note |

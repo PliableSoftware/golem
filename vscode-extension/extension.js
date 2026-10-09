@@ -446,7 +446,7 @@ function activate(context) {
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.text = "⬢ Golem";
-  statusBar.command = "golem.menu"; // click → actions menu (toggle proxy, slider, panel)
+  statusBar.command = "golem.menu"; // click → actions menu (toggle proxy, compression dial, panel)
   // Visibility is driven by refresh(): shown only in a Golem project, hidden
   // elsewhere (the extension is installed globally). Don't show() unconditionally.
   context.subscriptions.push(statusBar);
