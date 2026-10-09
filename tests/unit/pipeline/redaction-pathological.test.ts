@@ -523,7 +523,7 @@ describe("DUSTSEC.24 credit-card boundary: a digit run inside a hex token is not
   });
 
   it("many planted runs in a 10 MB hex dump: untouched and fast", () => {
-    const unit = `${hexDump("big", 120)}${CARD16}${hexDump("big2", 120)}`;
+    const unit = `${hexDump("big", 120)}a${CARD16}f${hexDump("big2", 120)}`;
     const text = unit.repeat(Math.ceil((10 * MB) / unit.length));
     const t0 = performance.now();
     expect(redactIdentifierText(text) === text).toBe(true);
