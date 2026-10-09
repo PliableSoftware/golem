@@ -11073,3 +11073,25 @@ decoded bodies are forwarded identity-encoded (always accepted) instead of re-en
   JSON walk runs about 0.7 s per MiB on many-small-strings bodies, so a pathological 32 MiB body can
   stall the event loop for tens of seconds (follow-up: async or worker-thread walk). The in-flight cap
   bounds admission, not memory (streaming buffers stay resident after headers).
+
+## DUSTSEC.22 - named-prefix secrets inside unbroken runs over 128 characters (2026-10-09)
+
+**Finding (reproduced):** a documented-shape API id (33 chars) followed with no separator by a
+named-prefix key (105 chars) is one 138-char run. The entropy sweep only matches runs of 32 to 128
+chars, and the named rule's leading `\b` fails after a word character, so the key reached the
+upstream whole. A plain random 200-char run also passes through.
+
+**Legitimate long runs (must not be rewritten):** base64 image/document `data` (tens of KB to MB),
+thinking `signature` (std base64, hundreds of chars to several KB), long hex digests (sha512 hex is
+exactly 128, longer ones occur), long base64url blobs. The `tests/helpers/recorded-conversations.ts`
+fixtures hold only tiny ones (`c2lnbmF0dXJl`, `iVBORw0KGgo=`), so the measurement is by shape, not by
+fixture: nothing recorded exceeds the ceiling, and the level<=1 recorded-shape suite is untouched.
+
+**Decision:** scan INSIDE over-length runs for the named rules' prefix shapes and redact only the
+matched span; never the whole run. Long or tightly constrained prefixes match anywhere; short ones
+(`sk-`, `ghp_`, `xoxb-`, `AIza`) match only at the run's start or end, because by chance they occur
+in about 1 in 1e6 positions of random base64url. Design and residuals in
+`docs/plan/tasks/DUSTSEC.22.md`.
+
+**Residual (deliberate):** an over-length run with NO named prefix is indistinguishable from base64
+data and stays unredacted; closing it needs field-aware redaction (skip `source.data`, `signature`).

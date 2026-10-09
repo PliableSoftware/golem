@@ -33,8 +33,10 @@ import {
   activeRedactionRules,
   ENTROPY_CANDIDATE_RE,
   ENTROPY_RULE_ID,
+  findEmbeddedSecrets,
   isApiObjectId,
   isHighEntropyToken,
+  OVERLENGTH_RUN_RE,
   type RedactionRule,
 } from "./redaction-rules.js";
 
@@ -129,9 +131,35 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
   return [result, count];
 }
 
-function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
+/**
+ * DUSTSEC.22 — redact named-prefix secrets glued inside runs longer than the
+ * sweep's ceiling. Only the matched span is replaced; the rest of the run is
+ * returned untouched, so base64 data holding no such secret is byte-identical.
+ * Runs BEFORE the sweep so the fragments it leaves are swept in the same pass,
+ * which keeps redaction idempotent.
+ */
+function applyOverlengthRuns(text: string, table: PlaceholderTable): [string, number] {
   let count = 0;
-  const out = text.replace(ENTROPY_CANDIDATE_RE, (match: string): string => {
+  const out = text.replace(OVERLENGTH_RUN_RE, (run: string): string => {
+    const spans = findEmbeddedSecrets(run);
+    if (spans.length === 0) return run;
+    let result = "";
+    let cursor = 0;
+    for (const span of spans) {
+      result += run.slice(cursor, span.start);
+      result += table.placeholderFor(span.id, run.slice(span.start, span.end));
+      cursor = span.end;
+      count += 1;
+    }
+    return result + run.slice(cursor);
+  });
+  return [out, count];
+}
+
+function applyEntropy(text: string, table: PlaceholderTable): [string, number] {
+  const [scanned, embeddedCount] = applyOverlengthRuns(text, table);
+  let count = embeddedCount;
+  const out = scanned.replace(ENTROPY_CANDIDATE_RE, (match: string): string => {
     if (isApiObjectId(match) || !isHighEntropyToken(match)) {
       return match;
     }

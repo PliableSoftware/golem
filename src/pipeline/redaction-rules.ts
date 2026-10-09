@@ -316,6 +316,119 @@ export function isApiObjectId(token: string): boolean {
 }
 
 /**
+ * DUSTSEC.22 — secrets glued inside an OVER-LENGTH unbroken run.
+ *
+ * The sweep ignores a run longer than {@link ENTROPY_MAX_CANDIDATE_CHARS} (it is
+ * data: base64 images, thinking signatures), and a named rule's leading `\b`
+ * fails when its prefix is glued onto a preceding word character. So an API id
+ * followed with no separator by a real key, 141+ characters in all, used to
+ * reach the upstream whole.
+ *
+ * The fix scans INSIDE such a run for the named rules' prefix shapes and
+ * redacts only the matched span. It never redacts a whole run, so a signature,
+ * an image or a digest holding no named-prefix secret is byte-identical.
+ *
+ * Two classes, chosen by how likely the prefix is to occur by chance in random
+ * base64 (a 1 MB image holds ~1e6 positions):
+ * - {@link EMBEDDED_ANYWHERE}: long or tightly constrained prefixes (`sk-ant-`,
+ *   `github_pat_`, `sk_live_`, `AKIA`+16 uppercase, `nsec1`+58 bech32,
+ *   `AccountKey=`). Chance occurrence is below ~1e-10 per position, so they match
+ *   at any position.
+ * - {@link EMBEDDED_AT_EDGE}: short prefixes (`sk-`, `ghp_`, `xoxb-`, `AIza`)
+ *   that occur by chance in a megabyte of base64url. They match only when the
+ *   shape runs from the run's START or to the run's END, which is where a glued
+ *   secret sits (nothing in a blob lines up with an edge by accident).
+ *
+ * Linear by construction: the anywhere patterns have a literal prefix and bounded
+ * or consuming tails, and the edge patterns run on a window of at most
+ * {@link EDGE_WINDOW_CHARS} characters at each end, never on the middle.
+ *
+ * KNOWN RESIDUAL: an over-length run with NO named prefix (a plain random key)
+ * is indistinguishable from base64 data and is left alone, as is a short-prefix
+ * secret with junk glued on BOTH sides, and a JWT (its dots end the run).
+ */
+export const OVERLENGTH_RUN_RE = new RegExp(
+  `(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{${ENTROPY_MAX_CANDIDATE_CHARS + 1},}`,
+  "g",
+);
+
+/** One in-run pattern: the placeholder kind it reports, and its pattern. */
+export interface EmbeddedRule {
+  readonly id: string;
+  readonly pattern: RegExp;
+}
+
+/** The nostr rule's own pattern minus its leading `\b`, so the bech32 class cannot drift. */
+function nostrEmbeddedPattern(): RegExp {
+  const nostr = BUILT_IN_RULES.find((r) => r.id === "nostr-secret-key");
+  return new RegExp((nostr?.pattern.source ?? "nsec1(?!)").replace(/^\\b/, ""), "gi");
+}
+
+export const EMBEDDED_ANYWHERE: readonly EmbeddedRule[] = Object.freeze([
+  { id: "anthropic-key", pattern: /sk-ant-[A-Za-z0-9_-]{16,}/g },
+  { id: "github-token", pattern: /github_pat_[A-Za-z0-9_]{22,255}/g },
+  { id: "stripe-key", pattern: /sk_live_[A-Za-z0-9]{24,99}/g },
+  { id: "aws-key", pattern: /(?:AKIA|ASIA|ABIA|ACCA|A3T[A-Z0-9])[A-Z0-9]{16}/g },
+  { id: "nostr-secret-key", pattern: nostrEmbeddedPattern() },
+  { id: "azure-account-key", pattern: /(?<=AccountKey=)[A-Za-z0-9+/]{20,100}={0,2}/g },
+]);
+
+const EDGE_BODY =
+  "gh[pousr]_[A-Za-z0-9]{36,255}|xox[baprse]-[A-Za-z0-9-]{10,255}|AIza[0-9A-Za-z_-]{35}|sk-(?!ant-)[A-Za-z0-9_-]{32,256}";
+
+/** Longest edge shape (`sk-` + 256) plus slack; the window the edge patterns run on. */
+export const EDGE_WINDOW_CHARS = 300;
+
+/** Edge patterns: `kind` is taken from the matched prefix, see {@link edgeKind}. */
+export const EMBEDDED_AT_EDGE = Object.freeze({
+  start: new RegExp(`^(?:${EDGE_BODY})`),
+  end: new RegExp(`(?:${EDGE_BODY})$`),
+});
+
+/** Placeholder kind for an edge match, by its prefix. */
+export function edgeKind(match: string): string {
+  if (match.startsWith("gh")) return "github-token";
+  if (match.startsWith("xox")) return "slack-token";
+  if (match.startsWith("AIza")) return "google-api-key";
+  return "openai-key";
+}
+
+/** A span of an over-length run to redact. */
+export interface EmbeddedSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly id: string;
+}
+
+/**
+ * Every named-prefix secret span inside one over-length `run`, sorted and
+ * non-overlapping (an earlier span wins, a later overlapping one extends it).
+ */
+export function findEmbeddedSecrets(run: string): EmbeddedSpan[] {
+  const found: EmbeddedSpan[] = [];
+  for (const rule of EMBEDDED_ANYWHERE) {
+    for (const m of run.matchAll(rule.pattern)) {
+      if (m[0] !== "") found.push({ start: m.index, end: m.index + m[0].length, id: rule.id });
+    }
+  }
+  const head = EMBEDDED_AT_EDGE.start.exec(run.slice(0, EDGE_WINDOW_CHARS));
+  if (head !== null) found.push({ start: 0, end: head[0].length, id: edgeKind(head[0]) });
+  const base = Math.max(0, run.length - EDGE_WINDOW_CHARS);
+  const tail = EMBEDDED_AT_EDGE.end.exec(run.slice(base));
+  if (tail !== null) {
+    found.push({ start: base + tail.index, end: run.length, id: edgeKind(tail[0]) });
+  }
+  found.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: EmbeddedSpan[] = [];
+  for (const span of found) {
+    const last = merged[merged.length - 1];
+    if (last === undefined || span.start > last.end) merged.push(span);
+    else if (span.end > last.end) merged[merged.length - 1] = { ...last, end: span.end };
+  }
+  return merged;
+}
+
+/**
  * Shannon-entropy threshold in bits/char. Random 32+ char base62 material
  * measures ~4.5-5.0 on its own sample; camelCase identifiers and English
  * words sit near 3.5-4.0.
