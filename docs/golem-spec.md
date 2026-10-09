@@ -265,7 +265,7 @@ dial (Decision 52's other half, which survives): it appends a directive to
 | `/golem-compression <off\|1\|2\|3>` | Set the compression level (ADR-0004; takes effect within a second, no restart) |
 | `/golem-index <path>` | Ingest a directory/file into the knowledge base *(MCP prompt `/mcp__golem__index` only — no `/golem-index` skill ships)* |
 | `/golem-search <query>` | Explicit search (knowledge, plus memory when the sidecar is on) |
-| `/golem-stats` | Tokens saved, cache hits, per-stage attribution |
+| `/golem-stats` | Tokens saved (estimated, about 4 characters per token), cache hits, per-stage attribution |
 | `/golem-expand <ref>` | Retrieve an original from the CCR store |
 | `/golem-bypass` | Explains that the per-request header was removed and points to `proxy.bypass_all` (CLI-only, persisted; DUSTSEC.2/3). A PreToolUse hook denies agent Bash that would switch the bypass on (DUSTSEC.3, R4); the skill says exactly that and nothing more |
 | `/golem-devices` | Show local capability/status *(MCP prompt only; LAN workers are DUST2.25)* |
