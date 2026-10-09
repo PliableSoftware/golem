@@ -210,7 +210,7 @@ export function compressionEffectNote(value: string): string {
       return "lossless and prefix-stable dedup/compaction. Meaning is preserved exactly.";
     case "2":
       return (
-        "balanced — adds lossy semantic compression (stale-turn drop) and a semantic cache. " +
+        "balanced — adds lossy semantic compression (stale-turn drop). " +
         "Off on a prompt-caching upstream (Decision 31), where it behaves as lossless."
       );
     default:

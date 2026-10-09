@@ -10,6 +10,12 @@
  * `brevity.level` are set directly, because a preset over two dials meant two
  * controls described one thing and every surface had to render both or mislead.
  * The `auto` state and the preset table went with it.
+ *
+ * AMENDMENT 2026-10-09 (dead-code-delete-rows 7 and 8): removed
+ * `StageConfig.semanticCache` and the `SemanticCache` type (written per level,
+ * read nowhere in src), and the `"low_relevance"` member of
+ * `SemanticCompression` (no level produced it). Contract tests updated in
+ * tests/contract/policy.contract.test.ts. Redaction rows are unchanged.
  */
 
 /**
@@ -17,8 +23,8 @@
  *
  * - `off` — redaction ONLY. Nothing else touches the request.
  * - `1` — + lossless dedup/compaction/cache-align. Lossless and prefix-stable.
- * - `2` — + lossy semantic compression (stale-turn drop) + semantic cache.
- * - `3` — + max semantic compression + loose semantic cache.
+ * - `2` — + lossy semantic compression (stale-turn drop).
+ * - `3` — + max semantic compression (aggressive).
  *
  * **There is deliberately no level that disables redaction** (ADR-0004). The old
  * scale's level 0 was a full bypass, redaction included, so one integer in a
@@ -114,10 +120,7 @@ export const BREVITY_LEVELS: readonly BrevityLevel[] = Object.freeze([
 ] as const);
 
 /** How aggressively local models summarize context (compression level 3). */
-export type SemanticCompression = "off" | "stale_turns" | "low_relevance" | "aggressive";
-
-/** Semantic query-cache threshold mode. Never applies to tool-use requests (spec §8). */
-export type SemanticCache = "off" | "strict" | "normal" | "loose";
+export type SemanticCompression = "off" | "stale_turns" | "aggressive";
 
 /**
  * Per-stage switches derived from a compression level.
@@ -132,7 +135,6 @@ export interface StageConfig {
   readonly losslessCompression: boolean;
   readonly toolResultCache: boolean;
   readonly semanticCompression: SemanticCompression;
-  readonly semanticCache: SemanticCache;
 }
 
 const LEVEL_TABLE: Readonly<Record<string, StageConfig>> = Object.freeze({
@@ -144,7 +146,6 @@ const LEVEL_TABLE: Readonly<Record<string, StageConfig>> = Object.freeze({
     losslessCompression: false,
     toolResultCache: false,
     semanticCompression: "off",
-    semanticCache: "off",
   } as const),
   // 1 "lossless": redaction + lossless, prefix-stable compression.
   1: Object.freeze({
@@ -152,17 +153,15 @@ const LEVEL_TABLE: Readonly<Record<string, StageConfig>> = Object.freeze({
     losslessCompression: true,
     toolResultCache: false,
     semanticCompression: "off",
-    semanticCache: "off",
   } as const),
-  // 2 "balanced": + lossy semantic compression (stale-turn drop) + semantic cache.
+  // 2 "balanced": + lossy semantic compression (stale-turn drop).
   2: Object.freeze({
     redaction: true,
     losslessCompression: true,
     toolResultCache: true,
     semanticCompression: "stale_turns",
-    semanticCache: "strict",
   } as const),
-  // 3 "aggressive": + max semantic compression + loose semantic cache. Purely a
+  // 3 "aggressive": + max semantic compression. Purely a
   // Headroom-aggressiveness dial (Decision 31) — the local model is invoked only
   // via the explicit `coder` MCP tool, never auto-triggered by a dial.
   3: Object.freeze({
@@ -170,7 +169,6 @@ const LEVEL_TABLE: Readonly<Record<string, StageConfig>> = Object.freeze({
     losslessCompression: true,
     toolResultCache: true,
     semanticCompression: "aggressive",
-    semanticCache: "loose",
   } as const),
 });
 
@@ -203,7 +201,7 @@ export function stagesForCompression(level: CompressionLevel): StageConfig {
  * to trust. `compression` is now the only one.
  *
  * `overrides` carries per-capability overrides from settings (snake_case keys,
- * e.g. `{"semantic_cache": "off"}`); interpretation belongs to the consuming
+ * e.g. `{"some_capability": "off"}`); interpretation belongs to the consuming
  * stage, not this contract. The dials are deliberately NOT overrides: they are
  * first-class, typed, and every stage/display must see them.
  */

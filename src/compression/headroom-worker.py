@@ -241,7 +241,6 @@ def _install_router_pipeline(router_applied: dict) -> "tuple[bool, list]":
 # previously impossible without editing this file.
 _MODE_PRESETS = {
     "aggressive": {"compress_user_messages": True, "protect_recent": 1},
-    "low_relevance": {"compress_user_messages": True, "protect_recent": 2},
     # "stale_turns" (level 2) and anything else: safe defaults — system-side text
     # + read_lifecycle + structural; user content untouched.
     "stale_turns": {"protect_recent": 4},

@@ -132,6 +132,25 @@ as bare identifiers, so string lookups (`"initProbe"`, `["vector_db_url"]`), env
   `deprecated` flag to set: the control's label now reads "External vector DB (deprecated)", the repo's
   existing convention (`proxy.model`). Regenerated at release; no committed copy to update.
 
+### Row 7 and 8 notes: grep proof (2026-10-09, branch `chore/dead-interfaces`)
+
+Pattern `semanticCache|SemanticCache|semantic_cache|low_relevance` over the whole tree excluding
+`node_modules`, `.git`, `dist` (covers `src`, `tests`, `docs`, `.claude`, `vscode-extension`,
+`scripts`, `package.json`; there is no `skills/` dir). Also `semanticCompression` readers and
+dynamic or string lookups (`semantic_cache` as an `overrides` key).
+
+- Code consumers of `semanticCache`/`SemanticCache`: only `src/interfaces/policy.ts`,
+  `src/interfaces/index.ts:51`, `tests/contract/policy.contract.test.ts:56,70,76`. None in
+  `vscode-extension`, `scripts`, `.claude`. No dynamic import or string lookup. The
+  `"semantic_cache"` string was only an example in a `PipelinePolicy.overrides` doc comment (reworded).
+- `low_relevance`: only `policy.ts` and the preset in `src/compression/headroom-worker.py`.
+  `tests/fixtures/headroom-worker-selftest.py` does not use it.
+- Doc mentions reworded: `docs/golem-spec.md` (195, 225, 226, 311, 685), `docs/marketing/CLAIMS.md` B-19.
+  Left as dated history: `docs/plan/audit/**`, `docs/plan/tasks/DUST3.2.md`, the PHASE3 index,
+  `docs/wiki/**`.
+- Phrases were searched too (`semantic cache`, `semantic caching`, `semantic response cache`, `low-relevance`, case-insensitive, excluding dated audit/debrief/synthesis/source history). Live mentions fixed: `src/cli/dials.ts:213`, `docs/wiki/concepts/Compression.md:30`. `docs/golem-spec.md:633` is a historical record line and stays. No hits in README or `vscode-extension`.
+- Redaction: not touched; every `LEVEL_TABLE` row keeps `redaction: true`.
+
 ### Rows LEFT
 
 | # | row | disposition | reason |

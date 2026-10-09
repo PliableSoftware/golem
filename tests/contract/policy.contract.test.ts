@@ -47,13 +47,22 @@ describe("PipelinePolicy level table", () => {
     }
   });
 
+  it("no level carries a semanticCache key, and no level uses low_relevance (2026-10-09 amendment)", () => {
+    // tsc cannot catch a key re-added to a frozen literal row, so assert at runtime.
+    // SemanticCompression has no runtime list, so check the values the table emits.
+    for (const level of ALL_LEVELS) {
+      const stages = policyFor(level).stages;
+      expect("semanticCache" in stages).toBe(false);
+      expect(["off", "stale_turns", "aggressive"]).toContain(stages.semanticCompression);
+    }
+  });
+
   it("`off` is redaction ONLY — nothing else runs", () => {
     const stages = policyFor(CompressionLevel.Off).stages;
     expect(stages.redaction).toBe(true);
     expect(stages.losslessCompression).toBe(false);
     expect(stages.toolResultCache).toBe(false);
     expect(stages.semanticCompression).toBe("off");
-    expect(stages.semanticCache).toBe("off");
   });
 
   it("level 1 is lossless only (byte-faithful)", () => {
@@ -63,17 +72,15 @@ describe("PipelinePolicy level table", () => {
     expect(stages.semanticCompression).toBe("off");
   });
 
-  it("level 2 (balanced) adds stale-turn semantic compression + strict semantic cache", () => {
+  it("level 2 (balanced) adds stale-turn semantic compression", () => {
     const stages = policyFor(CompressionLevel.Balanced).stages;
     expect(stages.losslessCompression).toBe(true);
     expect(stages.semanticCompression).toBe("stale_turns");
-    expect(stages.semanticCache).toBe("strict");
   });
 
   it("level 3 (aggressive) enables max semantic compression (no local drafts — Decision 31)", () => {
     const stages = policyFor(CompressionLevel.Aggressive).stages;
     expect(stages.semanticCompression).toBe("aggressive");
-    expect(stages.semanticCache).toBe("loose");
     // A pure compression dial — no local-model fields exist.
     expect("localDrafts" in stages).toBe(false);
     expect("localOnlyAnswers" in stages).toBe(false);

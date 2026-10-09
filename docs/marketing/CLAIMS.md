@@ -110,7 +110,7 @@ Each item is banned in every wording, with the reason. A draft that needs one of
 | B-16 | A canary mode or a quality-delta view. | Not built, no task. |
 | B-17 | `golem replay-eval`, or any eval harness that scores quality per compression level. | Not built, no task. R2.6 is a cost A/B only. |
 | B-18 | Cache hit rate or cost shown on the dashboard. | They live on `golem stats --cache` and `golem bench cost` (DUST2.18). |
-| B-19 | An SDK; an exact or semantic response cache; Whisper or OCR media pre-processing; local test running with a failure digest; git-aware context; Batch-API queueing; a cross-encoder reranker; a shared cross-project knowledge collection; Qdrant server mode; tree-sitter chunking as a default. | Each is in the "Not started" register (§12) or an opt-in add-on. The `StageConfig.semanticCache` field has no reader. |
+| B-19 | An SDK; an exact or semantic response cache; Whisper or OCR media pre-processing; local test running with a failure digest; git-aware context; Batch-API queueing; a cross-encoder reranker; a shared cross-project knowledge collection; Qdrant server mode; tree-sitter chunking as a default. | Each is in the "Not started" register (§12) or an opt-in add-on. The dead `StageConfig.semanticCache` field was removed 2026-10-09. |
 | B-37 | Remote steering, relay or self-hosted remote access, multi-device continuity, or "start a session from your phone" as working features. | §12 rows 1.10/r006, 1.11/r037, 1.11/r043: not started or partial (R13.8, R13.10, R12.13 to R12.15). |
 
 ### 2d. Retired or false wording
