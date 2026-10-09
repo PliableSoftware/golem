@@ -33,7 +33,13 @@
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { replaceViaTemp } from "../config/file-io.js";
-import { planMetaSchema, TASK_STATES, type Task, taskSchema } from "./types.js";
+import {
+  LEGACY_BLOCKED_STATE,
+  planMetaSchema,
+  TASK_STATES,
+  type Task,
+  taskSchema,
+} from "./types.js";
 
 /** `docs/plan/tasks/` for a project. */
 export function planTasksDir(projectDir: string): string {
@@ -87,7 +93,11 @@ export function parsePlanTask(raw: string): Task {
   if (typeof id !== "string" || id === "") {
     throw new Error('plan task frontmatter is missing "task" (the stable id, e.g. R8.5)');
   }
-  const state = typeof values.state === "string" ? values.state : "queued";
+  const rawState = typeof values.state === "string" ? values.state : "queued";
+  // Read compatibility (H2): `blocked` is metadata, not a state. An old doc that says
+  // `state: blocked` is a queued task whose `blocked:` line (or a placeholder) is the reason.
+  const legacyBlocked = rawState === LEGACY_BLOCKED_STATE;
+  const state = legacyBlocked ? "queued" : rawState;
   if (!(TASK_STATES as readonly string[]).includes(state)) {
     throw new Error(`plan task "${id}" has an unknown state "${state}"`);
   }
@@ -107,7 +117,9 @@ export function parsePlanTask(raw: string): Task {
     ...(typeof values.gate === "string" && values.gate !== "" ? { gate: values.gate } : {}),
     ...(typeof values.blocked === "string" && values.blocked !== ""
       ? { blocked: values.blocked }
-      : {}),
+      : legacyBlocked
+        ? { blocked: "blocked (legacy `state: blocked`, no reason recorded)" }
+        : {}),
     dependsOn: Array.isArray(values.depends_on) ? values.depends_on : [],
     touches: Array.isArray(values.touches) ? values.touches : [],
   });
