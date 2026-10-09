@@ -76,6 +76,17 @@ describe("renderWatchFrame", () => {
     expect(frame).toContain("REDACTION OFF");
   });
 
+  it("renders an unknown compression level once, without a doubled label or NaN", () => {
+    const frame = renderWatchFrame(
+      report({ compression: { level: "unknown", name: "unknown", redaction_off: false } }),
+      { color: false },
+    );
+    expect(frame).toContain("compression unknown ");
+    expect(frame).not.toContain("unknown unknown");
+    expect(frame).not.toContain("NaN");
+    expect(frame).not.toContain("REDACTION OFF");
+  });
+
   it("shows a waiting line with the reason", () => {
     const frame = renderWatchFrame(
       report({ blocked: { waiting: true, status: "waiting", reason: "permission prompt" } }),
