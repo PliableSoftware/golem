@@ -20,3 +20,113 @@ The user decided team policy must apply everywhere, so a member cannot bypass it
 
 - Deciding which keys a team may set (see the P4 decision: teams may set `security.*`; the floor stays as it is).
 - The portal sync itself.
+
+## Inventory of settings readers (written before any code change, 2026-10-09)
+
+Method: `grep -rnE "loadConfig|loadConfigWithTeamLayer|settingsFilePaths|settings(\.local)?\.json" src vscode-extension`, comments and tests dropped. "Team-aware today" = the call passes through `loadConfigWithTeamLayer` (cache only, no network). The raw `loadConfig` is not.
+
+Surface counts (84 `loadConfig`-family call sites outside the loader, the team-layer module and tests): status 3 (1 team-aware: `status-collect.ts:145`), proxy start 1 team-aware (`commands/proxy.ts:210`, listed under cli), config 7, hooks 2, mcp 1, tui 1, hot-reload 3, cli 67. Only 2 of 84 are team-aware today.
+
+### A. Readers that build effective settings (every one gets converted)
+
+| Site | Surface | Team-aware today |
+|---|---|---|
+| `src/plugins/redaction-init.ts:29` | cli | NO |
+| `src/config/control-surface.ts:95` | config | NO |
+| `src/config/control-surface-runtime.ts:24` | config | NO |
+| `src/config/control-surface-runtime.ts:158` | config | NO |
+| `src/config/control-surface-runtime.ts:175` | config | NO |
+| `src/tui/index.ts:85` | tui | NO |
+| `src/cli/distill.ts:65` | cli | NO |
+| `src/cli/distill-note.ts:63` | cli | NO |
+| `src/cli/task-grounding.ts:42` | cli | NO |
+| `src/cli/devices.ts:63` | cli | NO |
+| `src/cli/local-config.ts:131` | cli | NO |
+| `src/cli/local-config.ts:201` | cli | NO |
+| `src/cli/persona-sync.ts:54` | hot-reload | NO |
+| `src/cli/persona-sync.ts:56` | hot-reload | NO |
+| `src/cli/build-knowledge.ts:91` | cli | NO |
+| `src/cli/targets.ts:118` | cli | NO |
+| `src/cli/targets.ts:232` | cli | NO |
+| `src/cli/targets.ts:292` | cli | NO |
+| `src/cli/commands/init-uninit.ts:41` | cli | NO |
+| `src/cli/commands/init-uninit.ts:146` | cli | NO |
+| `src/cli/commands/init-uninit.ts:204` | cli | NO |
+| `src/cli/commands/tasks.ts:59` | cli | NO |
+| `src/cli/commands/team.ts:74` | cli | NO |
+| `src/cli/commands/team.ts:429` | cli | NO |
+| `src/cli/commands/team.ts:512` | cli | NO |
+| `src/cli/commands/team.ts:703` | cli | NO |
+| `src/cli/commands/prompt-guidance.ts:53` | cli | NO |
+| `src/cli/commands/prompt-guidance.ts:321` | cli | NO |
+| `src/cli/commands/prompt-guidance.ts:328` | cli | NO |
+| `src/cli/commands/prompt-guidance.ts:336` | cli | NO |
+| `src/cli/commands/prompt-guidance.ts:355` | cli | NO |
+| `src/cli/commands/ps.ts:800` | cli | NO |
+| `src/cli/commands/proxy.ts:77` | cli | NO |
+| `src/cli/commands/proxy.ts:210` | cli | yes |
+| `src/cli/commands/proxy.ts:486` | cli | NO |
+| `src/cli/commands/proxy.ts:516` | cli | NO |
+| `src/cli/commands/session-host.ts:89` | cli | NO |
+| `src/cli/commands/session-host.ts:213` | cli | NO |
+| `src/cli/commands/mcp-serve.ts:176` | mcp | NO |
+| `src/cli/commands/select-target.ts:35` | cli | NO |
+| `src/cli/commands/bench.ts:170` | cli | NO |
+| `src/cli/commands/bench.ts:237` | cli | NO |
+| `src/cli/commands/bench.ts:313` | cli | NO |
+| `src/cli/commands/config.ts:59` | config | NO |
+| `src/cli/commands/pkg-models.ts:104` | cli | NO |
+| `src/cli/commands/pkg-models.ts:128` | cli | NO |
+| `src/cli/commands/local-ollama.ts:180` | cli | NO |
+| `src/cli/commands/wiki.ts:70` | cli | NO |
+| `src/cli/commands/wiki.ts:91` | cli | NO |
+| `src/cli/commands/wiki.ts:186` | cli | NO |
+| `src/cli/commands/dials-stats.ts:147` | cli | NO |
+| `src/cli/commands/device.ts:179` | cli | NO |
+| `src/cli/commands/device.ts:211` | cli | NO |
+| `src/cli/commands/device.ts:284` | cli | NO |
+| `src/cli/commands/session.ts:76` | cli | NO |
+| `src/cli/commands/note-dashboard-watch.ts:99` | cli | NO |
+| `src/cli/pkg.ts:35` | cli | NO |
+| `src/cli/statusline.ts:682` | status | NO |
+| `src/cli/dials.ts:77` | cli | NO |
+| `src/cli/gateways/credentials.ts:41` | cli | NO |
+| `src/cli/gateways/credentials.ts:240` | cli | NO |
+| `src/cli/gateways/registry.ts:125` | cli | NO |
+| `src/cli/config.ts:60` | config | NO |
+| `src/cli/config.ts:89` | config | NO |
+| `src/cli/proxy-runtime.ts:218` | hot-reload | NO |
+| `src/cli/claude-settings-target.ts:89` | cli | NO |
+| `src/cli/fast-path.ts:299` | cli | NO |
+| `src/cli/status-collect.ts:145` | status | yes |
+| `src/cli/status-collect.ts:504` | status | NO |
+| `src/cli/init.ts:530` | cli | NO |
+| `src/cli/personas.ts:70` | cli | NO |
+| `src/cli/personas.ts:236` | cli | NO |
+| `src/cli/gateways.ts:81` | cli | NO |
+| `src/cli/gateways.ts:189` | cli | NO |
+| `src/cli/gateways.ts:284` | cli | NO |
+| `src/cli/synthesize.ts:57` | cli | NO |
+| `src/cli/plugin.ts:40` | cli | NO |
+| `src/cli/ollama.ts:59` | cli | NO |
+| `src/cli/ollama.ts:154` | cli | NO |
+| `src/hooks/pre-tool-use.ts:71` | hooks | NO |
+| `src/hooks/pre-tool-use.ts:93` | hooks | NO |
+| `src/buzz/acp-turn.ts:143` | cli | NO |
+| `src/buzz/acp-turn.ts:238` | cli | NO |
+| `src/buzz/provision.ts:173` | cli | NO |
+
+Not matched by the grep because they hand the loader's result on or wrap it: `src/portal/team-layer.ts:600,614` (the existing two-pass wrapper, `loadConfigWithTeamLayer`, which becomes the single entry point), and the `typeof loadConfig` type positions in `persona-sync.ts` and `buzz/acp-turn.ts`.
+
+### B. Direct readers of the settings FILES (not through `loadConfig`)
+
+| Site | What it does | Decision |
+|---|---|---|
+| `src/config/loader.ts:255` `readSettingsFile` | the loader's own file read | the loader; stays |
+| `src/config/write-setting.ts:77,139` | read-modify-write of ONE scope file for `golem config set/unset` | excluded: a writer must edit the raw local file, never the merged view |
+| `src/config/migrate-files.ts:314` | version migration sweep over the three local files | excluded: rewrites local files |
+| `src/portal/binding.ts:349` | reads the committed project `team` section to learn the binding | excluded: it is the INPUT to the team layer (the binding is local-only; `team.*` keys are on the remote deny floor) |
+| `src/cli/persona-watcher.ts:75-76` | polls the two local files' mtimes for hot-reload | converted: also polls the team cache file, else a `golem team sync` is never seen by a running daemon |
+| `src/session/known-projects.ts:129`, `vscode-extension/extension.js:32`, `src/cli/init.ts:325,345,346,387,599`, `src/cli/status-render.ts:192` | existence / marker checks and init writers on `.golem/settings*.json` | excluded: no setting value is read |
+| `vscode-extension/extension.js` (stats/status/config) | shells out to `golem status/stats --json` and `golem config set/unset` | no change needed: covered by the CLI conversion; the extension reads no settings file itself |
+| `src/config/control-surface-settings.ts` | control-surface (config UI) view | goes through `control-surface-runtime.ts` loads (section A) |
