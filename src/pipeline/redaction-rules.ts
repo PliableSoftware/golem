@@ -132,12 +132,18 @@ const isHexChar = (c: number): boolean =>
  * Hashes, hex-encoded blobs and memory dumps hold Luhn-valid digit runs by chance
  * (about 1 in 10 per run), and rewriting them corrupts the value.
  *
- * Everything else is unchanged: a number standing alone, or touching punctuation,
+ * Only a separator-free run is exempt; one with spaces or dashes inside is always
+ * redacted. Everything else is unchanged: a number standing alone, or touching punctuation,
  * whitespace, `_`, a non-hex letter ("Visa4111...", "4111...USD") or a mixed token,
  * is still redacted. A side that fills the whole window and is all hex counts as
  * a long hex token.
  */
 export function isOutsideHexToken(text: string, start: number, end: number): boolean {
+  // A run with a space or dash inside is not a hex token, whatever touches it.
+  for (let i = start; i < end; i += 1) {
+    const c = text.charCodeAt(i);
+    if (c === 32 || c === 45) return true;
+  }
   let left = start;
   while (
     left > 0 &&
@@ -165,22 +171,28 @@ export function isOutsideHexToken(text: string, start: number, end: number): boo
 }
 
 /**
- * `scanEnd` for the private-key rule: just past the last `-----END <class>` line
- * header that could close a block. A block's END header is `-----END ` + a
- * `[A-Z0-9 ]*` run + `PRIVATE KEY` + optional ` BLOCK` + `-----`, and the run
- * (which holds the key name) ends the header at most five characters later, so
- * the slack below always covers it. No END text at all means nothing can match.
+ * `scanEnd` for the private-key rule: the end of the last COMPLETE END line, i.e.
+ * the last place the rule's own END pattern (`-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----`)
+ * matches. Every match of the rule ends at one, so nothing past it can match. The
+ * original rule redacted nothing for a BEGIN with no END after it, and this keeps
+ * that: no complete END at all means a bound of 0.
+ *
+ * Bounding at the last complete END (not at the last `-----END ` text) matters: a
+ * trailing `-----END CERTIFICATE-----`, or an END line cut short, would leave every
+ * BEGIN before it scanning to the end of the text. Each candidate is tried with a
+ * sticky match at its own `-----END ` occurrence, so the cost is one bounded run of
+ * `[A-Z0-9 ]` per occurrence.
  */
+const PRIVATE_KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/y;
+
 function privateKeyScanEnd(text: string): number {
-  const at = text.lastIndexOf("-----END ");
-  if (at < 0) return 0;
-  let i = at + "-----END ".length;
-  while (i < text.length) {
-    const c = text.charCodeAt(i);
-    if (!((c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 32)) break;
-    i += 1;
+  let end = 0;
+  for (let at = text.indexOf("-----END "); at >= 0; at = text.indexOf("-----END ", at + 1)) {
+    PRIVATE_KEY_END.lastIndex = at;
+    const m = PRIVATE_KEY_END.exec(text);
+    if (m !== null) end = Math.max(end, at + m[0].length);
   }
-  return Math.min(text.length, i + 16);
+  return end;
 }
 
 /**
@@ -284,18 +296,21 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "Credentials embedded in connection-string URLs " +
       "(scheme://user:password@host). Only the password is redacted so the " +
       "scheme, user, and host stay legible to the model.",
-    // DUSTSEC.24: the scheme is bounded to 128 characters. Unbounded, every start in a
-    // long `a.a.a.` run (a legal scheme alphabet) rescans the run looking for `://`:
-    // quadratic. Only the password is redacted, so a start inside a longer scheme
-    // changes nothing; the bound matters only to a scheme of 129+ letters and digits
-    // with no `.`, `+` or `-` in it.
+    // DUSTSEC.24: the scheme is bounded to 128 characters and has NO leading `\b`.
+    // Unbounded, every start in a long `a.a.a.` run (a legal scheme alphabet) rescans
+    // the run looking for `://`: quadratic. A `\b` would make a scheme glued onto other
+    // word characters, or longer than the bound, impossible to start (the password
+    // would leak where the original rule redacted it), so a start is any letter within
+    // the 128 characters before `://`. Only the password is redacted, so where the
+    // match starts changes nothing; every `scheme://user:password@` the original
+    // matched is still matched with the same password span, and a few more are.
     // The lookahead skips a group that is EXACTLY one connection-password
     // placeholder, so a second pass over already-redacted text cannot re-match
     // (and renumber) it (S10). It names that ONE kind and anchors on `]@`: a
     // password shaped like any other placeholder (attacker-chosen kind text, or
     // another rule's placeholder) is still redacted, as before.
     pattern:
-      /\b[a-zA-Z][a-zA-Z0-9+.-]{0,127}:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
+      /[a-zA-Z][a-zA-Z0-9+.-]{0,127}:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
     group: 1,
   },
   {
@@ -325,10 +340,14 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
   {
     id: "email",
     description: "Email addresses (PII).",
-    // DUSTSEC.24: the local part is bounded. Unbounded, every start position in a long
-    // run with no `@` after it rescans the whole run (quadratic on `a.a.a.`). RFC 5321
-    // caps a local part at 64 octets; 128 leaves twice that room.
-    pattern: /\b[A-Za-z0-9._%+-]{1,128}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    // DUSTSEC.24: the local part is bounded to 128 characters (RFC 5321 caps it at 64).
+    // Unbounded, every start in a long run with no `@` after it rescans the whole run
+    // (quadratic on `a.a.a.`). The start is a word character, with no `\b`, so the
+    // match always begins within the 128 characters before the `@`: a longer local
+    // part has its last 128 characters and the whole domain redacted, and only the
+    // head beyond that stays. For an address that fits, the match is the original's
+    // (the first word character after any leading `.%+-`, which is where `\b` fell).
+    pattern: /[A-Za-z0-9_][A-Za-z0-9._%+-]{0,127}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
   },
   {
     id: "nostr-secret-key",

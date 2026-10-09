@@ -114,6 +114,15 @@ export function setRedactionPassBoundForTest(bound: number): () => void {
   };
 }
 
+/**
+ * A rule's `scanEnd` is trusted code, but a wrong answer must fail toward MORE
+ * redaction, never less: anything that is not an integer in `[0, length]` (NaN,
+ * negative, fractional, past the end, not a number) scans the whole text.
+ */
+export function clampScanEnd(raw: number, length: number): number {
+  return Number.isInteger(raw) && raw >= 0 && raw <= length ? raw : length;
+}
+
 function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): [string, number] {
   // Redact by the EXACT matched span (whole match, or the captured group at its
   // real index) — never by first-substring replace, which can hit the wrong
@@ -128,7 +137,10 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
   let result = "";
   let cursor = 0;
   // DUSTSEC.24: a rule may bound the part of the text it can match in (see `scanEnd`).
-  const haystack = rule.scanEnd === undefined ? text : text.slice(0, rule.scanEnd(text));
+  const haystack =
+    rule.scanEnd === undefined
+      ? text
+      : text.slice(0, clampScanEnd(rule.scanEnd(text), text.length));
   for (const m of haystack.matchAll(re)) {
     const whole = m[0];
     const matchStart = m.index ?? 0;
