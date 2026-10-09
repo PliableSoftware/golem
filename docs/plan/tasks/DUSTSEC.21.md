@@ -25,7 +25,7 @@ Three remaining ways a secret can reach the upstream, or a request can freeze th
 
 Written before behaviour changed; reviewed by an independent reader before merge.
 
-**Encoded bodies.** The proxy decodes `content-encoding` gzip, x-gzip, deflate and br (stacked
+**Encoded bodies.** The proxy decodes `content-encoding` gzip, x-gzip, deflate (zlib-wrapped, falling back to raw deflate) and br (stacked
 codings in reverse order) right after reading the body, and forwards the decoded body
 **identity-encoded**: `content-encoding` removed, `content-length` recomputed. Chosen over
 re-encoding because it needs no compressor, and because the upstream then receives exactly the bytes
@@ -47,14 +47,15 @@ walker as other routes: redaction only.
   UTF-8; invalid UTF-8 is redacted as latin1 so every other byte survives and invalid bytes cannot be
   used to dodge the scan. `application/x-www-form-urlencoded` also gets percent-encoded names/values
   decoded, redacted and re-encoded.
-- Opaque (multipart/*, octet-stream, image/audio/video/font, PDF and archive types, protobuf/grpc,
-  or an unlabelled body with NUL bytes): forwarded UNCHANGED. **Opaque binary bodies are not
+- JSON under ANY label (octet-stream, image/*, multipart/*, PDF...) is walked as JSON first; only a body that does not parse as JSON reaches the opaque rule (review finding 1).
+- Opaque (when not JSON: multipart/*, octet-stream, image/audio/video/font, PDF and archive types, protobuf/grpc,
+  or an unlabelled body with NUL bytes that is not UTF-16/32 shaped): forwarded UNCHANGED. UTF-16/32 without a BOM is detected by NUL parity/proportion in the first 4 KiB and refused (review finding 2). **Opaque binary bodies are not
   redacted**: a secret can sit inside compressed or encoded data, and rewriting would corrupt the
   file. This includes text fields inside a multipart upload. Case (f) of
   `pipeline-redact-json-bodies.test.ts` now pins text redaction, and (f2) pins multipart unchanged.
 
-**Size limit.** `proxy.max_request_body_bytes`, default 64 MiB, positive integer (no unlimited
+**Size limit.** `proxy.max_request_body_bytes`, default 32 MiB (the Messages API request limit), positive integer with a 256 MiB ceiling in the schema (no unlimited
 value), enforced on the declared `content-length` before reading, while streaming a chunked body,
 and on decompressed output. 413, nothing forwarded. The redaction walk itself stays synchronous:
-measured 803 ms for a 3.9 MB body with 35,000 secrets and 109 ms for 5 MB of text, so the limit
-bounds the worst stall rather than removing it. A streamed or worker-thread walk is not done here.
+measured 803 ms for a 3.9 MB body with 35,000 secrets, 109 ms for 5 MB of text, and (review) 4.7 s for 49 MiB of JSON with 425k secrets, so the limit
+bounds the worst stall rather than removing it. The walk is still synchronous. On the messages path a failed `process` re-walks in `redactOnly`; that double walk was NOT removed, because skipping it safely would need proof that redaction had completed before the failure, and fail-closed matters more than the stall. Total buffered request bytes across concurrent requests are capped (ProxyServerOptions.maxInFlightBodyBytes, default max(256 MiB, 2x the body limit), wire plus decoded form): over it, 503 with Retry-After and nothing forwarded. A streamed or worker-thread walk is not done here.

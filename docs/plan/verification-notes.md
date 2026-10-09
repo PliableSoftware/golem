@@ -11051,10 +11051,11 @@ decoded bodies are forwarded identity-encoded (always accepted) instead of re-en
 
 - Decode gzip/x-gzip/deflate/br (stacked codings undone in reverse), forward identity with
   `content-encoding` removed; `content-length` is recomputed by the proxy. zstd and others: 415.
-- Undecodable body: 400. Over `proxy.max_request_body_bytes` (default 64 MiB) on the wire or after
+- Undecodable body: 400. Over `proxy.max_request_body_bytes` (default 32 MiB, schema ceiling 256 MiB) on the wire or after
   decompression: 413. Nothing is forwarded in any of these cases.
 - Walk cost measured 2026-10-09 (Linux, node 22): a 3.9 MB Messages body with 35,000 secrets
   walked in 803 ms; 5 MB of plain text through the text redactor in 109 ms. Linear, as DUSTSEC.21
-  predicted, so the 64 MiB default bounds one request at roughly 10-15 s worst case.
-- NOT redacted by design: opaque bodies (multipart, octet-stream, image/audio/video, PDF, archives,
+  predicted, 49 MiB of JSON with 425k secrets took 4.7 s (review), so the 32 MiB default bounds one request at a few seconds; the walk stays synchronous and the cap bounds the stall, it does not remove it. Total in-flight buffered bytes are capped (503 + Retry-After).
+- JSON is parsed under any content label first; NUL-bearing UTF-16/32 without a BOM is refused.
+- NOT redacted by design: non-JSON opaque bodies (multipart, octet-stream, image/audio/video, PDF, archives,
   unlabelled bodies containing NUL bytes), including the text fields inside a multipart upload.
