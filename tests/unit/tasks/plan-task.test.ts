@@ -42,6 +42,19 @@ Build the map.
 const newTempDir = useTempDirs("golem-plan-tasks-");
 
 describe("parsePlanTask", () => {
+  it("decodes quoted scalars: delimiters and escaped quotes do not reach the title", () => {
+    const task = parsePlanTask(
+      "---\ntask: Q1\ntitle: \"Say \\\"hi\\\" \\\\ there\"\ngate: 'it''s'\n---\n\nbody\n",
+    );
+    expect(task.title).toBe('Say "hi" \\ there');
+    expect(task.plan?.gate).toBe("it's");
+  });
+
+  it("round-trips a title that starts with a quote", () => {
+    const task = parsePlanTask('---\ntask: Q2\ntitle: "\\"x\\" is odd"\n---\n\nbody\n');
+    expect(parsePlanTask(serializePlanTask(task)).title).toBe('"x" is odd');
+  });
+
   it("maps frontmatter onto a Task and the body onto the prompt", () => {
     const task = parsePlanTask(DOC);
     expect(task.id).toBe("R8.5");
