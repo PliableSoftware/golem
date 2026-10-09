@@ -4,6 +4,7 @@
 
 import { type Command, Option } from "commander";
 import { findProjectDir } from "../../config/index.js";
+import { stripOneNewline } from "../../credentials/backends.js";
 import {
   isKeylessProvider,
   UPSTREAM_AUTH_SCHEMES,
@@ -247,7 +248,7 @@ export default function register(program: Command): void {
 
 /** A secret piped on stdin (`echo $KEY | golem gateway login <id>`), or "" on a TTY. */
 async function readPipedSecret(): Promise<string> {
-  return process.stdin.isTTY ? "" : (await readStdin()).trim();
+  return process.stdin.isTTY ? "" : stripOneNewline(await readStdin());
 }
 
 async function readStdin(): Promise<string> {

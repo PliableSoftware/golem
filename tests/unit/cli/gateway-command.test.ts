@@ -85,4 +85,15 @@ describe("golem gateway", () => {
     expect(loginGateway).toHaveBeenCalledTimes(1);
     expect(loginGateway.mock.calls[0]?.[3]).toMatchObject({ secret: PIPED });
   });
+
+  it.each([
+    ["LF", "\n"],
+    ["CRLF", "\r\n"],
+  ])("login keeps a piped secret's own whitespace, dropping only one %s", async (_n, eol) => {
+    const secret = `  ${PIPED} mid ${PIPED}\t `;
+    pipeStdin(`${secret}${eol}`);
+    const program = await build();
+    await program.parseAsync(["node", "golem", "gateway", "login", "g"]);
+    expect(loginGateway.mock.calls[0]?.[3]).toMatchObject({ secret });
+  });
 });
