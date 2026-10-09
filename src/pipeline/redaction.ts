@@ -87,6 +87,32 @@ class PlaceholderTable {
 
 /** Hard bound on the DUSTSEC.22 re-scan loop in {@link redactText}. */
 const MAX_REDACTION_PASSES = 16;
+let passBound = MAX_REDACTION_PASSES;
+
+/**
+ * Thrown when the in-run scan still finds something on the final pass: the text
+ * may still hold a secret, so redaction FAILS CLOSED rather than return it. The
+ * proxy answers a throw from the pipeline, and from `redactOnly`, with a 502 and
+ * forwards nothing.
+ */
+export class RedactionBoundExceeded extends Error {
+  constructor(passes: number) {
+    super(
+      `redaction did not converge in ${passes} passes over an over-length run; ` +
+        "refusing to return text that may still hold a secret (fail closed)",
+    );
+    this.name = "RedactionBoundExceeded";
+  }
+}
+
+/** TEST ONLY: lower the pass bound; returns a function that restores it. */
+export function setRedactionPassBoundForTest(bound: number): () => void {
+  const previous = passBound;
+  passBound = bound;
+  return () => {
+    passBound = previous;
+  };
+}
 
 function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): [string, number] {
   // Redact by the EXACT matched span (whole match, or the captured group at its
@@ -193,8 +219,8 @@ export function redactText(text: string, table: PlaceholderTable): RedactionResu
   // are tokens of their own (a boundary, a short run). Re-run the whole stage on
   // the result while the in-run scan keeps finding something, so a second
   // redaction pass is a no-op. Each extra pass strictly shortens the text that
-  // can still hold a secret; the bound only guards a pathological chain.
-  for (let pass = 0; pass < MAX_REDACTION_PASSES; pass += 1) {
+  // can still hold a secret. Reaching the bound is an error, never a silent stop.
+  for (let pass = 0; pass < passBound; pass += 1) {
     for (const rule of activeRedactionRules()) {
       const [next, count] = applyRule(current, rule, table);
       current = next;
@@ -203,9 +229,9 @@ export function redactText(text: string, table: PlaceholderTable): RedactionResu
     const [afterEntropy, entropyCount, embeddedCount] = applyEntropy(current, table);
     current = afterEntropy;
     total += entropyCount;
-    if (embeddedCount === 0) break;
+    if (embeddedCount === 0) return { text: current, count: total };
   }
-  return { text: current, count: total };
+  throw new RedactionBoundExceeded(passBound);
 }
 
 /**

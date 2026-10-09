@@ -19,6 +19,10 @@ import {
   redactRequestBody,
   redactStandaloneText,
 } from "../../../src/pipeline/index.js";
+import {
+  RedactionBoundExceeded,
+  setRedactionPassBoundForTest,
+} from "../../../src/pipeline/redaction.js";
 import type { ProxyRequest } from "../../../src/proxy/types.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
@@ -191,10 +195,23 @@ describe("DUSTSEC.22 named-prefix secrets glued inside an over-length run are re
     expect(out).not.toContain(base62("t-a", 40));
   });
 
-  it("an anthropic key with junk glued before and after", async () => {
+  it("an anthropic key with junk glued on BOTH sides: the key goes, and so does the junk after it", async () => {
+    // The anthropic tail is greedy over the key charset (bounded at 512), so the
+    // junk glued after the key is consumed with it. Junk before the key that is
+    // left as a fragment of 128 chars or fewer is swept as high-entropy; a
+    // fragment over 128 is data with no named prefix and is left alone (residual).
     const key = `${ANT}${base62("mid-ant", 60)}`;
-    const run = `${base62("l2", 90)}${key}`;
-    await expectLeakRedacted(run, key);
+    const after = base62("r2", 90);
+    const short = base62("l2", 90);
+    await expectLeakRedacted(`${short}${key}${after}`, key);
+    const out = redactStandaloneText(`${short}${key}${after}`);
+    expect(out).not.toContain(after);
+    expect(out).not.toContain(short);
+    const long = base62("l3", 200);
+    const outLong = redactStandaloneText(`${long}${key}${after}`);
+    expect(outLong).toContain(long);
+    expect(outLong).not.toContain(key);
+    expect(outLong).not.toContain(after);
   });
 
   it("a start-anchored key followed by glued junk in a run over 128", async () => {
@@ -234,6 +251,79 @@ describe("DUSTSEC.22 named-prefix secrets glued inside an over-length run are re
     const r = redactRequestBody({ a: [{ b: `${API_ID}${secret}` }] });
     expect(JSON.stringify(r.value)).not.toContain(secret);
     expect(r.count).toBeGreaterThan(0);
+  });
+});
+
+/** A glued-shape matrix: the key built at runtime, with the run placement. */
+const GLUED_SHAPES: readonly (readonly [string, string])[] = [
+  ["sk-ant", `${ANT}${base62("t-ant", 100)}`],
+  ["github_pat", `${"github"}_pat_${chars(`${BASE62}_`, "t-pat", 82)}`],
+  ["sk_live", `${"sk"}_live_${base62("t-live", 40)}`],
+  ["nsec1", `${"nsec"}1${chars(BECH32, "t-nsec", 58)}`],
+  ["xoxb", `${"xoxb"}-${chars(`${BASE62}-`, "t-xox", 50)}`],
+  ["sk-proj", `${"sk"}-proj-${chars(`${BASE62}_-`, "t-proj", 100)}`],
+  ["sk-svcacct", `${"sk"}-svcacct-${chars(`${BASE62}_-`, "t-svc", 100)}`],
+  ["AKIA", `${"AKIA"}${chars(UPPER_ALNUM, "t-aws", 16)}`],
+  ["ghp_", `${"ghp"}_${base62("t-ghp", 36)}`],
+  ["gho_", `${"gho"}_${base62("t-gho", 36)}`],
+  ["sk- + 48", `${"sk"}-${base62("t-48", 48)}`],
+];
+
+describe("DUSTSEC.22 the glued-shape matrix: key at the end and at the start", () => {
+  for (const [name, key] of GLUED_SHAPES) {
+    it(`${name}: id + key at the end, key + id at the start`, async () => {
+      await expectLeakRedacted(`${base62("pad-e", 100)}${API_ID}${key}`, key);
+      await expectLeakRedacted(`${key}${API_ID}${base62("pad-s", 100)}`, key);
+    });
+  }
+});
+
+// Every test below is a KNOWN RESIDUAL, NOT A FEATURE: it pins a leak that
+// scanning would only close by corrupting data. They assert the secret is still
+// present so a change to the behaviour is a decision, not an accident.
+describe("DUSTSEC.22 known residuals (known residual, not a feature)", () => {
+  const leaks = (run: string, secret: string) =>
+    expect(redactStandaloneText(run)).toContain(secret);
+
+  it("known residual, not a feature: an id plus an sk-None- style key", () => {
+    const key = `${"sk"}-None-${chars(`${BASE62}_-`, "none", 100)}`;
+    leaks(`${API_ID}${key}`, key);
+  });
+
+  it("known residual, not a feature: an id plus an sk- key that is not 48 characters", () => {
+    const key = `${"sk"}-${base62("sk51", 100)}`;
+    leaks(`${API_ID}${key}`, key);
+  });
+
+  it("known residual, not a feature: an id plus a ghp_ key with junk glued after", () => {
+    const key = `${"ghp"}_${base62("ghp-after", 36)}`;
+    leaks(`${API_ID}${key}${base62("junk-after", 80)}`, key);
+  });
+
+  it("known residual, not a feature: an id, a ghp_ key and junk in the middle of a run", () => {
+    const key = `${"ghp"}_${base62("ghp-mid", 36)}`;
+    leaks(`${base62("l", 70)}${API_ID}${key}${base62("r", 70)}`, key);
+  });
+
+  it("known residual, not a feature: an AIza key in the middle of a run", () => {
+    const key = `${"AIza"}${chars(`${BASE62}_-`, "aiza-mid", 35)}`;
+    leaks(`${base62("l", 80)}${key}${base62("r", 80)}`, key);
+  });
+
+  // Uppercase base32 is skipped for the AWS edge check only when EVERY character
+  // is uppercase alphanumeric. One '-' or one lowercase character in a 512-char
+  // run turns the check back on, so an AWS-shaped edge there is redacted: a
+  // false positive on data. Measured over 2M random 512-char base32 runs with one
+  // such character mid-run: '-' 6.95e-5 per run, one lowercase 7.55e-5 per run.
+  // `sk-` + 48 alphanumerics at the edge of random base64url: about
+  // 2 x 64^-3 x (62/64)^48 = 1.7e-6 per 300-char run (derived).
+  it("known residual, not a feature: a base32 run with one '-' or one lowercase char can lose an AWS-shaped edge", () => {
+    const aws = `${"AKIA"}${chars(UPPER_ALNUM, "b32-aws", 16)}`;
+    const tail = chars(range("A", "Z") + range("2", "7"), "b32-tail", 480);
+    for (const odd of ["-", "q"]) {
+      const out = redactStandaloneText(`${aws}${tail}${odd}${tail.slice(0, 20)}`);
+      expect(out).not.toContain(aws);
+    }
   });
 });
 
@@ -445,6 +535,35 @@ describe("DUSTSEC.22 redaction is idempotent over long runs", () => {
         `walker ${i}`,
       ).toBe(true);
     }
+  });
+
+  it("normal inputs never reach the pass bound (1200 mixtures at a bound of 3)", () => {
+    const restore = setRedactionPassBoundForTest(3);
+    try {
+      for (let i = 0; i < 1200; i++) redactStandaloneText(mixture(i));
+    } finally {
+      restore();
+    }
+  });
+
+  it("fails closed when the bound is reached: throws, and nothing is forwarded", async () => {
+    const glued = `${base62("lead", 90)}${ANT}${base62("bound", 60)}`;
+    const p = await pipeline();
+    const request = req("/v1/messages", bodies(glued)[0]?.body);
+    const restore = setRedactionPassBoundForTest(1);
+    try {
+      expect(() => redactStandaloneText(glued)).toThrow(RedactionBoundExceeded);
+      expect(() => redactRequestBody({ t: glued })).toThrow(RedactionBoundExceeded);
+      expect(() => (p.redactOnly as (r: ProxyRequest) => ProxyRequest)(request)).toThrow(
+        RedactionBoundExceeded,
+      );
+      await expect(p.process(request)).rejects.toThrow(RedactionBoundExceeded);
+      // Text with nothing to find needs no second pass, so it is not refused.
+      expect(redactStandaloneText("plain text")).toBe("plain text");
+    } finally {
+      restore();
+    }
+    expect(redactStandaloneText(glued)).not.toContain(base62("bound", 60));
   });
 
   it("1200 random mixtures through the redactOnly fail-safe are idempotent", async () => {
