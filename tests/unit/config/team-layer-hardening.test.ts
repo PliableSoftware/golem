@@ -199,6 +199,10 @@ describe("the team cache is written atomically", () => {
     let torn = 0;
     while (!done) {
       if ((await readTeamLayerCache(userDir, ORG)) === null) torn += 1;
+      // Pace the reader: on Windows a rename over a file that is open for reading
+      // fails with EPERM, so a reader that never yields can starve the writer past
+      // the rename retry budget. A real reader opens the cache once per call.
+      await new Promise((resolve) => setTimeout(resolve, 2));
     }
     await writer;
     expect(torn).toBe(0);
