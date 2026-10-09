@@ -18,7 +18,7 @@
  *   de-registering a gateway never leaves its key behind in the OS store.
  */
 
-import { defaultUserDir, loadConfig, writeSetting } from "../config/index.js";
+import { defaultUserDir, loadEffectiveConfig, writeSetting } from "../config/index.js";
 import { type CredentialStore, createCredentialStore } from "../credentials/index.js";
 import {
   doubledVersionSegment,
@@ -78,7 +78,7 @@ export async function useGateway(
   } = {},
 ): Promise<{ readonly active: string | null }> {
   const env = opts.env ?? process.env;
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
 
   // Resolve the target: null / the default id both mean "clear inference.model
   // and revert to the top-level config". Any other id must be a known gateway OR
@@ -186,7 +186,7 @@ export async function addGateway(
   input: NewGateway,
   nowIso: string,
 ): Promise<{ readonly account: string }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const p = settings.proxy;
   const gateways = [...(p.gateways ?? [])];
 
@@ -281,7 +281,7 @@ export async function removeGateway(
   /** Backends the credential was deleted from; empty when none held one or `keepCredential`. */
   readonly credential_removed: readonly string[];
 }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const p = settings.proxy;
   const inf = settings.inference;
   const gateways = p.gateways ?? [];

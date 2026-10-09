@@ -7,7 +7,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   activeDeviceCount,
   cancelEnrolment,
@@ -176,7 +176,7 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (passcode: string, opts: { dir: string }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const window = await unlock(opts.dir, passcode, {
           windowMinutes: settings.security.unlock_window_minutes,
         });
@@ -208,7 +208,7 @@ export default function register(program: Command): void {
     .option("--lan", "bind every interface so a paired phone can reach it")
     .action(async (opts: { dir: string; port?: string; lan?: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const port = opts.port === undefined ? settings.security.write_port : Number(opts.port);
         if (!Number.isInteger(port) || port < 0 || port > 65535) {
           throw new InitError(`invalid port "${opts.port}"`);
@@ -281,7 +281,7 @@ export default function register(program: Command): void {
     .option("--json", "machine-readable output", false)
     .action(async (opts: { dir: string; json: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const [ca, active, total, factor, pending, passcodeSet] = await Promise.all([
           readDeviceCa(opts.dir),
           activeDeviceCount(opts.dir),

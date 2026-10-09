@@ -10,7 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { ConfigError } from "../config/errors.js";
-import { loadConfig, type SettingsScope, writeSetting } from "../config/index.js";
+import { loadEffectiveConfig, type SettingsScope, writeSetting } from "../config/index.js";
 import { migrationFrom, type SettingMigration } from "../config/migrations.js";
 import { allLeafPaths, leafSchema } from "../config/schema.js";
 import { unwrapSchema } from "../config/ui-model.js";
@@ -57,7 +57,7 @@ export interface ConfigWriteResult {
 
 /** List every known setting with its effective value and provenance. */
 export async function listConfig(options: ConfigReadOptions): Promise<ConfigListReport> {
-  const { settings, provenance } = await loadConfig({
+  const { settings, provenance } = await loadEffectiveConfig({
     projectDir: options.projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),
@@ -86,7 +86,7 @@ export async function getConfig(
 ): Promise<ConfigGetReport> {
   const key = resolveSettingKey(requestedKey).key;
   validateKnownKey(key);
-  const { settings, provenance } = await loadConfig({
+  const { settings, provenance } = await loadEffectiveConfig({
     projectDir: options.projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),

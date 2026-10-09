@@ -58,8 +58,6 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { type GolemConfig, type LoadConfigOptions, loadConfig } from "../config/loader.js";
-import { defaultUserDir } from "../config/paths.js";
 import { SECTION_NAMES } from "../config/schema.js";
 import { VERSION } from "../version.js";
 import {
@@ -561,58 +559,6 @@ export async function resolveTeamLayerForProject(
     userDir: options.userDir,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
-}
-
-export interface LoadConfigWithTeamOptions extends LoadConfigOptions {
-  readonly now?: () => number;
-}
-
-export interface ConfigWithTeam extends GolemConfig {
-  /** How the team layer resolved. Always present; usually "nothing applies". */
-  readonly team: TeamLayerResolution;
-}
-
-/**
- * `loadConfig`, with the `team` origin actually populated.
- *
- * Two passes, and the second one is not optional: the `team` section itself
- * lives in the settings being loaded, so the binding cannot be known until a
- * first load has resolved it. The first pass is the ordinary six-origin load;
- * the second re-runs it with `teamLayer` supplied.
- *
- * **For an unlinked project the second pass never happens** — the common case
- * costs exactly one load and one pure function call, which is what keeps
- * Decision 64(a) ("free and complete") true of the code and not just the
- * pricing page. `resolveTeamLayerForProject` reads at most one already-written
- * file, so even a linked project pays no network here; refreshing that file is
- * {@link syncTeamLayer}, which runs from `golem init` and `golem team sync`.
- *
- * The resolver is untouched. `LoadConfigOptions.teamLayer` already marks the
- * origin REMOTE, so `REMOTE_DENIED_SETTINGS` applies to whatever this hands
- * over and a denied key is dropped with the loader's loud `REFUSED` warning.
- * That is the floor being armed in production: not new code, but a real payload
- * finally arriving at the check that was built for it.
- */
-export async function loadConfigWithTeamLayer(
-  options: LoadConfigWithTeamOptions = {},
-): Promise<ConfigWithTeam> {
-  const { now, ...loadOptions } = options;
-  const first = await loadConfig(loadOptions);
-
-  // An explicitly supplied layer is the caller's business, not ours — do not
-  // second-guess a test or a caller that resolved one already.
-  if (loadOptions.teamLayer !== undefined) return { ...first, team: NO_TEAM_LAYER };
-
-  const team = await resolveTeamLayerForProject({
-    team: first.settings.team,
-    userDir: loadOptions.userDir ?? defaultUserDir(),
-    ...(now === undefined ? {} : { now }),
-  });
-
-  if (team.teamLayer === undefined) return { ...first, team };
-
-  const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
-  return { ...second, team };
 }
 
 // ---------------------------------------------------------------------------

@@ -295,8 +295,8 @@ export function fastPostToolUseOptions(
     ...(maxInlineChars !== undefined ? { maxInlineChars } : {}),
     skeletonEnabled: async (projectDir: string) => {
       try {
-        const { loadConfig } = await import("../config/index.js");
-        return (await loadConfig({ projectDir })).settings.knowledge.read_skeleton_enabled;
+        const { loadEffectiveConfig } = await import("../config/index.js");
+        return (await loadEffectiveConfig({ projectDir })).settings.knowledge.read_skeleton_enabled;
       } catch {
         return true;
       }

@@ -35,7 +35,7 @@
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { loadConfig, removeVersionStamp, writeSetting } from "../config/index.js";
+import { loadEffectiveConfig, removeVersionStamp, writeSetting } from "../config/index.js";
 import { defaultUserDir } from "../config/paths.js";
 import { createCredentialStore } from "../credentials/index.js";
 import type { CompressionLevel } from "../interfaces/index.js";
@@ -527,7 +527,7 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
   // which is Decision 64's invariant. That is why the probe is injected: the
   // default is only constructed as an arrow function, so an unlinked project
   // never even builds a credential store.
-  const { settings: effective } = await loadConfig({ projectDir });
+  const { settings: effective } = await loadEffectiveConfig({ projectDir });
   const team = await teamInitStep({
     dryRun,
     team: effective.team,

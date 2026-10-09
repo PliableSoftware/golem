@@ -3,7 +3,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig, migrateOnVersionChange } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig, migrateOnVersionChange } from "../../config/index.js";
 import { VERSION } from "../../index.js";
 import { createProbeRunner, detectCapability, embedModelFor } from "../../inference/index.js";
 import { loopbackCaPath } from "../../proxy/loopback-cert.js";
@@ -38,7 +38,7 @@ async function commandExists(cmd: string): Promise<boolean> {
 
 async function ollamaEmbedReady(dir: string): Promise<boolean> {
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const facts = await detectCapability(createProbeRunner());
     const model = embedModelFor(facts.tier, "text");
     return await ollamaHasModel(settings.inference.ollama_base_url, model);
@@ -143,7 +143,7 @@ export default function register(program: Command): void {
             process.stdout.write(`  config   ${line}\n`);
           }
           // R9.23: always start the proxy daemon after wiring
-          const { settings } = await loadConfig({ projectDir: opts.dir });
+          const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
           const pid = await startDetached(
             opts.dir,
             settings.proxy.port,
@@ -201,7 +201,7 @@ export default function register(program: Command): void {
     .option("--dry-run", "show what would change without writing", false)
     .action(async (opts: { dir: string; dryRun: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const report = await golemUninit({
           projectDir: opts.dir,
           dryRun: opts.dryRun,

@@ -23,7 +23,7 @@ import path from "node:path";
 // §103. Dependency-free pure module, so the per-prompt surface pays nothing to
 // predict the compression gate (verification-notes §86).
 import { resolveEffectiveCompression } from "../compression/effective-level.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 // `../hooks/session-state.js`, not the `../hooks/index.js` barrel (~446ms — it
 // pulls every hook handler) for one function.
 import { type BlockKind, readSessionState, resolveBlock } from "../hooks/session-state.js";
@@ -679,7 +679,7 @@ export async function collectGolemState(
   let effectiveLevel: CompressionLevel | undefined;
   let proxyPort: number | undefined;
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     compression = coerceCompressionLevel(settings.compression.level);
     bypassAll = settings.proxy.bypass_all;
     proxyPort = settings.proxy.port;

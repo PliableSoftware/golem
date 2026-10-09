@@ -9,7 +9,7 @@
 
 import path from "node:path";
 import readline from "node:readline/promises";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import {
   chatModelFor,
   createOllamaBootstrapDeps,
@@ -50,13 +50,13 @@ export interface OllamaStatusReport {
 export interface OllamaStatusOptions {
   readonly projectDir: string;
   readonly deps?: OllamaBootstrapDeps;
-  /** Test injection (forwarded to loadConfig). */
+  /** Test injection (forwarded to loadEffectiveConfig). */
   readonly userDir?: string;
 }
 
 export async function collectOllamaStatus(opts: OllamaStatusOptions): Promise<OllamaStatusReport> {
   const projectDir = path.resolve(opts.projectDir);
-  const { settings } = await loadConfig({
+  const { settings } = await loadEffectiveConfig({
     projectDir,
     ...(opts.userDir !== undefined && { userDir: opts.userDir }),
   });
@@ -124,7 +124,7 @@ export interface SetupOptions {
   readonly confirm?: (question: string) => Promise<boolean>;
   readonly deps?: OllamaBootstrapDeps;
   readonly onLine?: (line: string) => void;
-  /** Test injection (forwarded to loadConfig). */
+  /** Test injection (forwarded to loadEffectiveConfig). */
   readonly userDir?: string;
   /** Test injection (forwarded to pullRoleModels) — default is a real 30s poll window. */
   readonly reachableTimeoutMs?: number;
@@ -151,7 +151,7 @@ async function defaultConfirm(question: string): Promise<boolean> {
 
 export async function runOllamaSetup(opts: SetupOptions): Promise<SetupResult> {
   const projectDir = path.resolve(opts.projectDir);
-  const { settings } = await loadConfig({
+  const { settings } = await loadEffectiveConfig({
     projectDir,
     ...(opts.userDir !== undefined && { userDir: opts.userDir }),
   });

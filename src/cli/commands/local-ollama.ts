@@ -4,7 +4,7 @@
 
 import type { Command } from "commander";
 import { InvalidArgumentError } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import type { SettingsScope } from "../../config/write-setting.js";
 import {
   embedderSignatureForModel,
@@ -177,7 +177,7 @@ export default function register(program: Command): void {
           // work starts — it is the expensive, quality-affecting part.
           if (notice !== undefined && !opts.json) process.stdout.write(`golem index: ${notice}\n`);
           if (pathArg === undefined && !opts.watch) {
-            const { settings } = await loadConfig({ projectDir: opts.dir });
+            const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
             const result = await ensureProjectIndexed({
               projectDir: opts.dir,
               projectId: opts.dir,

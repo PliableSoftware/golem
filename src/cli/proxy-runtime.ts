@@ -15,7 +15,7 @@
 
 import type { HeadroomSidecar } from "../compression/headroom-adapter.js";
 import { NativeLosslessCompression } from "../compression/index.js";
-import { type GolemSettings, loadConfig, policyFromSettings } from "../config/index.js";
+import { type GolemSettings, loadEffectiveConfig, policyFromSettings } from "../config/index.js";
 import type { InferenceService } from "../interfaces/inference.js";
 import { CompressionLevel, type PipelinePolicy, policyFor } from "../interfaces/policy.js";
 import { contentHashIndex } from "../knowledge/web-cache.js";
@@ -215,7 +215,7 @@ export function buildProxyFromSettings(
     }
     let policy: PipelinePolicy;
     try {
-      const fresh = await loadConfig({ projectDir: dir });
+      const fresh = await loadEffectiveConfig({ projectDir: dir });
       policy = policyFromSettings(fresh.settings);
     } catch {
       // Fail-safe: keep the policy we were built with rather than dropping to a

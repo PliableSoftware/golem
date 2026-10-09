@@ -6,7 +6,12 @@ import type { Command } from "commander";
 import { InvalidArgumentError } from "commander";
 import type { ControlSurface } from "../../config/control-surface.js";
 import { collectControlSurface } from "../../config/control-surface.js";
-import { findProjectDir, loadConfig, renderSweep, sweepSettingsFiles } from "../../config/index.js";
+import {
+  findProjectDir,
+  loadEffectiveConfig,
+  renderSweep,
+  sweepSettingsFiles,
+} from "../../config/index.js";
 import type { SettingsScope } from "../../config/write-setting.js";
 import { VERSION } from "../../index.js";
 import {
@@ -56,7 +61,7 @@ function isModelAffectingKey(key: string): boolean {
 async function restartProxyIfApplicable(dir: string, key: string, restart: boolean): Promise<void> {
   if (!restart || !isModelAffectingKey(key)) return;
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const status = await proxyStatus(dir, settings.proxy.port);
     if (!status.running || status.shim === true) return;
     const result = await restartProxyDetached(dir);

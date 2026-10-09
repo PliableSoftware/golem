@@ -368,7 +368,7 @@ export interface StatusOptions {
   readonly probeTimeoutMs?: number;
   /** R9.16: VS Code extensions dir; null means "no VS Code". Tests inject. */
   readonly vscodeExtensionsDir?: string | null;
-  /** Test injection (forwarded to loadConfig). */
+  /** Test injection (forwarded to loadEffectiveConfig). */
   readonly userDir?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Test injection for the local-model probe (avoids real network in tests). */

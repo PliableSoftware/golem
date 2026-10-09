@@ -4,7 +4,7 @@
 
 import type { Command } from "commander";
 import { resolveEffectiveCompression } from "../../compression/effective-level.js";
-import { findProjectDir, type GolemSettings, loadConfig } from "../../config/index.js";
+import { findProjectDir, type GolemSettings, loadEffectiveConfig } from "../../config/index.js";
 import { DEFAULT_KEY_ENV } from "../../credentials/backends.js";
 import { createClaudeCliDrafter } from "../../inference/claude-cli.js";
 import { coderRouteConflict, resolveCoderRoute } from "../../inference/coder-route.js";
@@ -173,7 +173,7 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory (for the CCR store)", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         let knowledge: KnowledgeBase | undefined;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled

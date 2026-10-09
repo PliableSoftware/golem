@@ -22,7 +22,7 @@
 
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { defaultUserDir, loadConfig, writeSetting } from "../config/index.js";
+import { defaultUserDir, loadEffectiveConfig, writeSetting } from "../config/index.js";
 import type { ProxySettings } from "../config/schema.js";
 import {
   type CredentialFault,
@@ -115,7 +115,7 @@ export async function collectTargets(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<TargetsReport> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const proxy = settings.proxy;
   const targets = listTargets(proxy);
   // R9.23: model moved to inference; `withDefaultTarget` folds it onto the
@@ -229,7 +229,7 @@ export async function addTarget(
   input: NewTarget,
   nowIso: string,
 ): Promise<{ readonly target: string; readonly overrides_gateway: boolean }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const proxy: ProxySettings = settings.proxy;
   const targets = [...(proxy.targets ?? [])];
 
@@ -289,7 +289,7 @@ export async function testTarget(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<TargetTestResult> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const lookup = resolveTarget(settings.proxy, id);
   if (!lookup.ok) throw new InitError(lookup.reason);
   const target = lookup.target;

@@ -25,8 +25,8 @@ function warn(message: string): void {
 
 async function load(projectDir: string): Promise<void> {
   try {
-    const { loadConfig } = await import("../config/index.js");
-    const { settings } = await loadConfig({ projectDir });
+    const { loadEffectiveConfig } = await import("../config/index.js");
+    const { settings } = await loadEffectiveConfig({ projectDir });
     // Nothing configured: no loader import, no table change. The common case.
     if (settings.plugins.load.length === 0) return;
     const { initPlugins } = await import("./init.js");

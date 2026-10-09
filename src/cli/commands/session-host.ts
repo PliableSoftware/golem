@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import type { Command } from "commander";
 import { classifyAction } from "../../autonomy/index.js";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   appendHostLog,
   findHostSession,
@@ -86,7 +86,7 @@ export default function register(session: Command): void {
           throw new InitError('give the first turn: `golem session host start "your message"`');
         }
         const text = message.join(" ");
-        const { settings } = await loadConfig({ projectDir: dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: dir });
         const port = settings.proxy.port ?? defaultProjectPort(dir);
         const baseUrl = proxyBaseUrl(port);
         const id = randomUUID();
@@ -210,7 +210,7 @@ export default function register(session: Command): void {
     .action(async (message: string[], opts: { dir: string; lan?: boolean }, command: Command) => {
       try {
         const dir = resolveDir(command, opts.dir);
-        const { settings } = await loadConfig({ projectDir: dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: dir });
         const { readDeviceCa, startWriteServer } = await import("../../security/index.js");
         const deviceCa = await readDeviceCa(dir);
         if (deviceCa === null) {

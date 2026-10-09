@@ -20,7 +20,7 @@ import {
   readAutonomyGateEnabled,
   readAutonomyLevel,
 } from "../autonomy/index.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 // `../proxy/limit-prediction.js`, not the `../proxy/index.js` barrel: the barrel
 // reaches server.ts, which imports `undici` (~270ms). This hook runs on EVERY
 // Claude Code tool call and only reads a JSON file. See verification-notes §86.
@@ -68,7 +68,7 @@ import { toolArgument } from "./tool-argument.js";
  */
 async function readSnoozeEnforced(projectDir: string): Promise<boolean> {
   try {
-    const { settings } = await loadConfig({ projectDir });
+    const { settings } = await loadEffectiveConfig({ projectDir });
     return settings.snooze.enforce;
   } catch {
     return false;
@@ -90,7 +90,7 @@ export interface SpawnGateSettings {
  */
 async function readSpawnGateSettings(projectDir: string): Promise<SpawnGateSettings> {
   try {
-    const { settings } = await loadConfig({ projectDir });
+    const { settings } = await loadEffectiveConfig({ projectDir });
     return {
       enabled: settings.snooze.spawn_gate,
       costFraction: settings.snooze.spawn_cost_fraction,

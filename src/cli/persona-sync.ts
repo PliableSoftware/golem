@@ -12,7 +12,7 @@
  * credential store, the skills table, team-init, and every other `golem init`
  * step, just to regenerate two files. `init-personas.ts` is also the wrong
  * home — its own header establishes it as "given a desired list, write/prune",
- * with no config knowledge; adding `loadConfig` there would invert that
+ * with no config knowledge; adding `loadEffectiveConfig` there would invert that
  * boundary. So this module sits between the two: it owns the config read and
  * the `DesiredAgent` resolution, and calls straight through to
  * `installPersonaAgents` / `installPersonaPreferenceRule` to do the writing.
@@ -23,7 +23,7 @@
  */
 
 import path from "node:path";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import { resolveCoderPrompt } from "../inference/coder-prompt.js";
 import { resolvePersonaLane } from "../inference/persona-lane.js";
 import { effectivePersonas, resolvePersonaPrompt } from "../inference/personas.js";
@@ -42,7 +42,7 @@ import { installPersonaPreferenceRule } from "./persona-preference-rule.js";
  * config must not abort the caller either: reported as one `conflict` at the
  * agents directory, with an empty `desired` list, rather than thrown.
  *
- * `userDir` is an escape hatch for tests only — omitted, `loadConfig` resolves
+ * `userDir` is an escape hatch for tests only — omitted, `loadEffectiveConfig` resolves
  * the REAL `~/.golem` (correct for every real caller: `golem init`, every
  * session start, and the daemon watcher all mean to read the actual user
  * layer). Passing it is how a test proves it isn't ALSO reading the real one.
@@ -51,9 +51,12 @@ export async function resolveDesiredAgents(
   projectDir: string,
   userDir?: string,
 ): Promise<{ desired: DesiredAgent[]; problems: InitAction[] }> {
-  let settings: Awaited<ReturnType<typeof loadConfig>>["settings"];
+  let settings: Awaited<ReturnType<typeof loadEffectiveConfig>>["settings"];
   try {
-    ({ settings } = await loadConfig({ projectDir, ...(userDir !== undefined && { userDir }) }));
+    ({ settings } = await loadEffectiveConfig({
+      projectDir,
+      ...(userDir !== undefined && { userDir }),
+    }));
   } catch (err) {
     // Config itself is unreadable — nothing can be resolved, so report once at
     // the directory. Init still wires everything else: refusing to repair a

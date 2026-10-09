@@ -17,7 +17,7 @@
 import { stat } from "node:fs/promises";
 import readline from "node:readline/promises";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { defaultUserDir } from "../../config/paths.js";
 import { createCredentialStore } from "../../credentials/index.js";
 import {
@@ -71,7 +71,7 @@ async function portalContext(
   dir: string,
   flags: { readonly portalUrl?: string; readonly issuer?: string } = {},
 ) {
-  const loaded = await loadConfig({ projectDir: dir });
+  const loaded = await loadEffectiveConfig({ projectDir: dir });
   const { settings } = loaded;
   const applied = applyLinkOverrides(settings.portal, loaded.provenance, flags);
   const provenance = applied.provenance;
@@ -426,7 +426,7 @@ export default function register(program: Command): void {
         // setup as though it were the answer to "is this repo on a team?". The
         // answer is knowable with no portal at all, so a read-only status
         // command states it and exits 0.
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const project = await describeProjectBinding(settings.team);
         if (!portalIsConfigured(settings.portal)) {
           if (opts.json) {
@@ -509,7 +509,7 @@ export default function register(program: Command): void {
         // Read the binding BEFORE resolving the portal: `resolvePortalConfig`
         // throws when no portal is configured, which is every solo user, and
         // the unlinked answer needs no portal at all (same order as `status`).
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const state = readTeamBinding(settings.team);
 
         // Decision 64(c). No team named means no portal request, no cache read
@@ -700,7 +700,7 @@ export default function register(program: Command): void {
     .option("--json", "machine-readable output", false)
     .action(async (opts: { dir: string; dryRun: boolean; json: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const state = readTeamBinding(settings.team);
 
         // Decision 64, at the earliest point it can be applied: an unlinked

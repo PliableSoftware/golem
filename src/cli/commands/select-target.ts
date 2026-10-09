@@ -14,7 +14,7 @@
  * of its models). The writer accepts either.
  */
 
-import { loadConfig } from "../../config/index.js";
+import { loadEffectiveConfig } from "../../config/index.js";
 import { resolveUpstreamDisplay } from "../../providers/index.js";
 import { collectGateways, useGateway } from "../gateways.js";
 import { InitError } from "../init.js";
@@ -32,7 +32,7 @@ export async function resolvePort(
   dir: string,
   portOpt?: string,
 ): Promise<{ port: number; upstream: string; compression: string }> {
-  const { settings } = await loadConfig({ projectDir: dir });
+  const { settings } = await loadEffectiveConfig({ projectDir: dir });
   const port = portOpt === undefined ? settings.proxy.port : Number(portOpt);
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new InitError(`invalid port "${portOpt}"`);

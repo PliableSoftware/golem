@@ -22,7 +22,7 @@
  */
 
 import { credentialEnvForProxy } from "../cli/gateways.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import { DEFAULT_KEY_ENV } from "../credentials/backends.js";
 import { readSnoozeNudgeState } from "../hooks/snooze-nudge.js";
 import { resolveCoderPrompt } from "../inference/coder-prompt.js";
@@ -140,7 +140,7 @@ function resolveTargetCredential(
 }
 
 function buildDispatcher(
-  settings: Awaited<ReturnType<typeof loadConfig>>["settings"],
+  settings: Awaited<ReturnType<typeof loadEffectiveConfig>>["settings"],
   projectDir: string,
   deps: RunAcpTurnDeps | undefined,
 ): TargetDispatcher {
@@ -235,7 +235,7 @@ async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
   // DUSTSEC.17 / R6: this process redacts and dispatches prompts to remote
   // targets, so it needs the project's plugin rules. Never throws; built-ins stay.
   await ensurePluginRedactionRules(input.projectDir);
-  const { settings } = await loadConfig({
+  const { settings } = await loadEffectiveConfig({
     projectDir: input.projectDir,
     ...(input.deps?.userDir !== undefined ? { userDir: input.deps.userDir } : {}),
   });

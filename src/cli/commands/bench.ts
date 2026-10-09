@@ -5,7 +5,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   createProbeRunner,
   detectCapability,
@@ -167,7 +167,7 @@ export default function register(program: Command): void {
             throw new InitError(`invalid --role "${opts.role}" (expected ${roles.join(" | ")})`);
           let inference: OllamaInferenceService | undefined;
           if (opts.score) {
-            const { settings } = await loadConfig({ projectDir: opts.dir });
+            const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
             const client = new OllamaClient({
               baseUrl: settings.inference.ollama_base_url,
               requestTimeoutMs: settings.inference.request_timeout_ms,
@@ -234,7 +234,7 @@ export default function register(program: Command): void {
             throw new InitError(
               `invalid --format "${opts.format}" (expected search-replace | udiff | whole)`,
             );
-          const { settings } = await loadConfig({ projectDir: opts.dir });
+          const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
           const client = new OllamaClient({
             baseUrl: settings.inference.ollama_base_url,
             requestTimeoutMs: settings.inference.request_timeout_ms,
@@ -310,7 +310,7 @@ export default function register(program: Command): void {
             throw new InitError(
               `invalid --repeats "${opts.repeats}" (expected a positive integer)`,
             );
-          const { settings } = await loadConfig({ projectDir: opts.dir });
+          const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
           const client = new OllamaClient({
             baseUrl: settings.inference.ollama_base_url,
             requestTimeoutMs: settings.inference.request_timeout_ms,

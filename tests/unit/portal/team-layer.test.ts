@@ -20,11 +20,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { loadConfig, REMOTE_DENIED_SETTINGS } from "../../../src/config/index.js";
+import {
+  loadConfig,
+  loadEffectiveConfig,
+  REMOTE_DENIED_SETTINGS,
+} from "../../../src/config/index.js";
 import {
   fetchTeamSettings,
   listTeamLayerCaches,
-  loadConfigWithTeamLayer,
   type PortalClient,
   readTeamLayerCache,
   resolveTeamLayer,
@@ -653,7 +656,7 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     expect(provenance["security.join_injection"]?.layer).toBe("team");
   });
 
-  it("loadConfigWithTeamLayer populates the slot from the cache, end to end", async () => {
+  it("loadEffectiveConfig populates the slot from the cache, end to end", async () => {
     const userDir = await newTempDir();
     const projectDir = await newTempDir();
     await mkdir(path.join(projectDir, ".golem"), { recursive: true });
@@ -666,7 +669,7 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     const { client } = fakeClient(() => jsonResponse(WIRE_PAYLOAD));
     await syncTeamLayer({ binding: binding(), userDir, client });
 
-    const config = await loadConfigWithTeamLayer({ projectDir, userDir, env: {} });
+    const config = await loadEffectiveConfig({ projectDir, userDir, env: {} });
     expect(config.team.teamLayer).toBeDefined();
     expect(config.team.fromCache).toBe(true);
     expect(config.settings.telemetry.enabled).toBe(false);
@@ -819,7 +822,7 @@ describe("Decision 64 — no link, no team code path", () => {
       settings: [{ key: "telemetry.enabled", value: false, enforced: true }],
     });
 
-    const config = await loadConfigWithTeamLayer({ projectDir, userDir, env: {} });
+    const config = await loadEffectiveConfig({ projectDir, userDir, env: {} });
 
     expect(config.team.teamLayer).toBeUndefined();
     expect(config.provenance["telemetry.enabled"]?.layer).toBe("default");
@@ -838,7 +841,7 @@ describe("Decision 64 — no link, no team code path", () => {
       settings: [{ key: "telemetry.enabled", value: false, enforced: false }],
     });
 
-    const withTeam = await loadConfigWithTeamLayer({ projectDir, userDir, env: {} });
+    const withTeam = await loadEffectiveConfig({ projectDir, userDir, env: {} });
     const plain = await loadConfig({ projectDir, userDir, env: {} });
 
     expect(withTeam.settings).toEqual(plain.settings);

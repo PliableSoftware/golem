@@ -13,7 +13,7 @@
  * one cannot, which is exactly why they were kept separate (Decision 53(g)).
  */
 
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import { loadPlugins } from "../plugins/index.js";
 import type { LoadedPlugins } from "../plugins/types.js";
 
@@ -37,7 +37,7 @@ export async function collectPlugins(
   projectDir: string,
   golemVersion: string,
 ): Promise<PluginReport> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const loaded = await loadPlugins({
     specifiers: settings.plugins.load,
     enabled: settings.plugins.enabled,
