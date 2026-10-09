@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CapabilityFacts } from "../../../src/inference/capability.js";
 import { chatModelFor } from "../../../src/inference/catalog.js";
 import { OllamaClient } from "../../../src/inference/ollama-client.js";
-import { HaikuFallbackRequired, OllamaInferenceService } from "../../../src/inference/service.js";
+import { OllamaInferenceService } from "../../../src/inference/service.js";
 import { CapabilityUnavailableError, HardwareTier } from "../../../src/interfaces/inference.js";
 import { describeInferenceServiceContract } from "../../contract/inference-contract.js";
 
@@ -100,7 +100,7 @@ describe("OllamaInferenceService routing", () => {
     const client = new OllamaClient({ baseUrl });
     try {
       const svc = new OllamaInferenceService(client, facts(HardwareTier.PMin), {
-        fallback: { stepDownTier: true, allowHaiku: false },
+        fallback: { stepDownTier: true },
       });
       await expect(svc.chat("drafter", [{ role: "user", content: "hi" }])).rejects.toBeInstanceOf(
         CapabilityUnavailableError,
@@ -115,26 +115,11 @@ describe("OllamaInferenceService routing", () => {
     const client = new OllamaClient({ baseUrl });
     try {
       const svc = new OllamaInferenceService(client, facts(HardwareTier.PMin), {
-        fallback: { stepDownTier: true, allowHaiku: false },
+        fallback: { stepDownTier: true },
       });
       await expect(svc.chat("drafter", [{ role: "user", content: "hi" }])).rejects.toMatchObject({
         cause: expect.objectContaining({ name: "ModelNotAvailableError" }),
       });
-    } finally {
-      await client.close();
-    }
-  });
-
-  it("signals HaikuFallbackRequired when local fails and Haiku is allowed", async () => {
-    await start(new Set());
-    const client = new OllamaClient({ baseUrl });
-    try {
-      const svc = new OllamaInferenceService(client, facts(HardwareTier.PMin), {
-        fallback: { allowHaiku: true },
-      });
-      await expect(svc.chat("drafter", [{ role: "user", content: "hi" }])).rejects.toBeInstanceOf(
-        HaikuFallbackRequired,
-      );
     } finally {
       await client.close();
     }
