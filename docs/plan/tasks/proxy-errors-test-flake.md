@@ -1,7 +1,7 @@
 ---
 task: proxy-errors-test-flake
 title: "tests/integration/proxy-errors.test.ts timed out once on Ubuntu (silent upstream and connection refusal): find whether it is a flake or a regression"
-state: queued
+state: done
 owner: agent
 size: S
 discipline: code
@@ -10,6 +10,7 @@ gate: "Either a root cause is found and fixed (for example a reservation or sock
 depends_on: []
 touches: [tests/integration/proxy-errors.test.ts, src/proxy]
 created: 2026-10-09
+updated: 2026-10-09T14:17:33.260Z
 ---
 
 ## What this is
@@ -19,3 +20,7 @@ A one-off timeout that could be a real regression. Check first whether the 'sile
 ## Out of scope
 
 - Windows flakes (separate tasks).
+
+## Outcome
+
+shipped; see SHIPPED.md and the 2026-10-09 dead-code-and-flakes debrief

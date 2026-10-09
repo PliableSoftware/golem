@@ -11189,3 +11189,15 @@ Checked live on 2026-10-09. Every run carried 37 annotations that `actions/check
 ## 2026-10-09 — DUSTSEC.10 resolved by USER decision: the PermissionRequest deny is removed
 
 Follow-up to the 2026-10-08 entry above (no relay-connected signal). The user chose to restore asking the human rather than keep the unconditional R12.12 deny. `src/hooks/permission-request.ts` now emits no decision for any class at any level, so destructive/outward reach Claude Code's native dialog; `allow` is never emitted. Not verified live: whether a connected permission-relay channel is now notified when that dialog opens (R12.13, `owner: user`, still unconfirmed). Recorded in ADR-0002 (2026-10-09 amendment).
+
+## 2026-10-09 proxy-errors.test.ts timeout (CI run 37909601065, ubuntu / node 22 / shard 10): not reproducible, no in-repo cause found
+
+Task `proxy-errors-test-flake`. The CI failure: 'maps upstream connection refusal to 502' and 'with a silent upstream' both hit the 20000 ms test timeout once; the re-run passed; no other failure of this file in the last 60 runs.
+
+**Code reading.** Neither test can inherit state from another. Every test starts its own `GolemProxy`, and the only request each proxy serves is the one the test sends, so a held request or an unreleased DUSTSEC.21 reservation has nothing to leak into: `releaseHold` runs on the response `close` and on the headers-arrived path in `src/proxy/server.ts`. The in-flight cap is per proxy instance (`#bodyBudget`). The 'silent upstream' proxy is created in `beforeAll` and used by exactly one test.
+
+**Measured, 4-core Linux box, vitest 3.2.6.** CPU burners were `while :; do :; done` shell loops, 4 times oversubscribed (16 on 4 cores), then the file was run alone, 50 times in a row: 50 passed, 0 failed (5m44s). An earlier batch with 12 burners: 20 of 20 passed. The slowest 'silent upstream' test in the 50 runs took 985 ms (the proxy's headers timeout is 150 ms), nowhere near 20 s. Added to the two tests: an assertion that `bodyBytesInFlight` returns to 0 after the 502 and the 504 (guards the DUSTSEC.21 reservation; it passed in the 50 runs too).
+
+**Port reuse.** `closedPort()` binds port 0 and closes it, so the refusal test's target is a released ephemeral port. Measured 20000 consecutive bind/close cycles: the same port came back immediately 5 times (0.025%), 6542 distinct ports. That is only reachable by something else binding in the window; a sibling test file in another worker that grabs that port with a server that accepts and never answers would make the proxy wait (the default headers timeout is far above 20 s) and fit the failure. Not observed, not provable from one CI log, and it does not explain why the next test failed too.
+
+**Conclusion.** No regression found; best explanation is a stalled worker on a loaded CI VM (two consecutive 20 s stalls and two later failures in the file point at the whole worker, not one test). Recorded as environmental. UNVERIFIED: the port-reuse race. If this file fails again, check the CI log for the other files running in that shard and the time between the first and second timeout.
