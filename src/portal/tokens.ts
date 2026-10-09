@@ -29,11 +29,7 @@
  */
 
 import { z } from "zod";
-import {
-  type CredentialLocation,
-  type CredentialStore,
-  MalformedCredentialError,
-} from "../credentials/index.js";
+import type { CredentialLocation, CredentialStore } from "../credentials/index.js";
 import { PortalAuthError } from "./errors.js";
 
 /**
@@ -174,10 +170,7 @@ export interface TokenBinding {
 export async function portalTokenPresent(credentials: CredentialStore): Promise<boolean> {
   try {
     return (await credentials.resolve(PORTAL_ACCOUNT)) !== null;
-  } catch (err) {
-    // A stored-but-malformed token IS present; the read below surfaces why it is
-    // unusable rather than letting it pass as "not linked".
-    if (err instanceof MalformedCredentialError) return true;
+  } catch {
     // No usable keychain on this machine is "no token", not a failure — and on
     // a Linux box with no `secret-tool` it is the normal answer.
     return false;

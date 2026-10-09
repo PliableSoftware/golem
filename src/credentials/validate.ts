@@ -1,29 +1,21 @@
 /**
- * R8.29 — ingestion and read-time validation for gateway API keys.
+ * R8.29 — ingestion validation for gateway API keys.
  *
- * The backends store and return a secret byte-exact, so they cannot tell a key
- * with a legitimate leading space from one with stray terminal junk. That
- * judgement lives here, at the two edges: when a key ENTERS (piped stdin,
- * interactive prompt, `add --login`) and when a stored key is READ for use.
- * Messages never echo the value.
+ * Backends store and return a secret byte-exact, so the judgement about what a
+ * gateway key may contain lives here, where a key ENTERS (piped stdin,
+ * interactive prompt, `add --login`). Messages never echo the value.
  *
- * Decisions, in one place:
- * - INGESTION trims ALL leading/trailing whitespace (spaces, tabs, NBSP, Unicode
- *   spaces, BOM, any number of newlines): an API key never has any, and this makes
- *   cmd's `echo KEY |` (trailing space) and `key\n\n` harmless. Interior spaces
- *   are kept. It then REFUSES a key with a control character (CR/LF/TAB/DEL/C1),
- *   U+FEFF, or any code point above U+00FF (zero-width space, curly quotes: undici
- *   rejects those one request at a time, even with --no-probe).
- * - READ-SIDE (store.ts) treats a stored gateway key with any of those, or with
- *   leading/trailing whitespace, as malformed. Portal tokens and Buzz secrets get
- *   only the control-character/BOM check (they are JSON / hex by construction).
- * - Backends themselves stay byte-exact; a malformed value is never "absent".
+ * - Ingestion trims ALL leading/trailing whitespace (spaces, tabs, NBSP, Unicode
+ *   spaces, BOM, any number of newlines): an API key never has any, which makes
+ *   cmd's `echo KEY |` and `key\n\n` harmless. Interior spaces are kept.
+ * - It then REFUSES a key with a control character (CR/LF/TAB/DEL/C1), U+FEFF, or a
+ *   code point above U+00FF (zero-width space, curly quotes: undici rejects those
+ *   one request at a time, even with --no-probe).
+ * - Read-side compatibility trimming (older builds stored untrimmed) lives in store.ts.
  * - Known gap, no behaviour change: a stored secret that genuinely ends in `\r`
- *   comes back WITHOUT it from the file and macOS backends (the stored form
- *   `key\r\n` loses its whole `\r\n` terminator) but WITH it from single-key
- *   DPAPI (PowerShell adds its own `\r\n`, so one `\r\n` strip leaves `key\r`).
- *   A CR is a control character, refused at ingestion and on read, so this only
- *   concerns a hand-edited store, which is reported as malformed.
+ *   comes back WITHOUT it from the file and macOS backends (`key\r\n` loses its whole
+ *   terminator) but WITH it from single-key DPAPI. A CR is refused at ingestion, so
+ *   only a hand-edited store is affected.
  */
 
 /** C0 controls (incl. TAB, CR, LF), DEL, C1 controls, and U+FEFF. */
@@ -64,11 +56,6 @@ export function hasNonLatin1(secret: string): boolean {
     if (secret.charCodeAt(i) > 0xff) return true;
   }
   return false;
-}
-
-/** True when the key starts or ends with whitespace of any kind (incl. NBSP, Unicode spaces, BOM). */
-export function hasEdgeWhitespace(secret: string): boolean {
-  return secret !== secret.trim();
 }
 
 /**

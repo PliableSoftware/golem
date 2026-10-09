@@ -15,7 +15,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addGateway,
   collectGateways,
@@ -601,20 +601,5 @@ describe("loginGateway key validation (R8.29)", () => {
   ])("refuses a key with %s and stores nothing", async (_n, secret) => {
     await expect(login(secret)).rejects.toThrow(/Nothing stored/);
     expect(await store.resolve("work")).toBeNull();
-  });
-
-  it("proxy start skips a malformed stored key WITH a warning naming the account and fix", async () => {
-    await store.store("work", `${BODY}${String.fromCharCode(0x200b)}`, "file");
-    await useGateway(dir, "work", "2026-07-23T00:00:00.000Z", {
-      store_backend: store,
-      assumeYes: true,
-    });
-    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const env = await credentialEnvForProxy(dir, {}, { store_backend: store });
-    const text = err.mock.calls.map((c) => String(c[0])).join("");
-    vi.restoreAllMocks();
-    expect(Object.values(env)).not.toContain(`${BODY}${String.fromCharCode(0x200b)}`);
-    expect(text).not.toContain(BODY);
-    expect(text).toMatch(/credential "work" not loaded.*golem gateway login work/);
   });
 });

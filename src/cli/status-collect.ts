@@ -41,7 +41,6 @@ import { readServedModel, servedModelFor } from "../proxy/served-model.js";
 import { readCachedUpdateCheck, semverGt } from "../update/index.js";
 import { blockedView } from "./blocked-view.js";
 import { getDialInfo } from "./dials.js";
-import { resolveProxyCredentials } from "./gateways/credentials.js";
 import { golemInitStatus } from "./init.js";
 import {
   type LocalModelInfo,
@@ -296,14 +295,6 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
   // absence is the honest signal that the feature is unused here.
   const devices = await collectDeviceStatus(projectDir);
   // Decision 63(c) — one row per cached team, each with its OWN age.
-  // R8.29: a stored-but-malformed gateway key is otherwise only discovered one failed
-  // request at a time. Status must never fail on a credential problem, so any error
-  // reading the store reads as "nothing to report".
-  const credentialFaults = await resolveProxyCredentials(projectDir, options.env ?? process.env, {
-    ...(options.credentialStore !== undefined && { store_backend: options.credentialStore }),
-  })
-    .then((r) => r.malformed)
-    .catch(() => []);
   const teams = await listTeamLayerCaches(options.userDir ?? defaultUserDir());
   const limits =
     baseLimits === undefined
@@ -429,7 +420,6 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
     // held by `resolveTeamLayerForProject`. Reading a directory of settings
     // opens no socket and looks up no token.
     ...(teams.length > 0 ? { teams } : {}),
-    ...(credentialFaults.length > 0 ? { credential_faults: credentialFaults } : {}),
     ...(limits !== undefined ? { limits } : {}),
     ...(devices !== undefined ? { devices } : {}),
     // R12.2: the blocked read model, in the SAME shape the dashboard serves at

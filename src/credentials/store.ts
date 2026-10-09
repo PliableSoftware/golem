@@ -42,7 +42,20 @@ import {
   fileBackend,
   keychainBackend,
 } from "./backends.js";
-import { hasEdgeWhitespace, hasForbiddenChar, hasNonLatin1 } from "./validate.js";
+
+/**
+ * Read-side COMPATIBILITY rule (R8.29). Builds before R8.29 stored a prompted key
+ * untrimmed and trimmed on every read, so a key with edge whitespace may already
+ * be on disk or in a keychain. Backends now return bytes exactly, so for GATEWAY
+ * accounts the store trims leading/trailing whitespace on read: a gateway API key
+ * never legitimately has any, and without this an upgrade would start sending
+ * those keys with the whitespace. Portal tokens (`portal-oauth`) and Buzz secrets
+ * (`buzz:` accounts) stay byte-exact. The kind is guessed from the name only for
+ * this trim: a gateway someone names `buzz:x` merely stays byte-exact.
+ */
+function forRead(account: string, secret: string): string {
+  return account === "portal-oauth" || account.startsWith("buzz:") ? secret : secret.trim();
+}
 
 /** A credential plus where it came from. `secret` must never be logged. */
 export interface ResolvedCredential {
@@ -54,38 +67,6 @@ export interface ResolvedCredential {
 export interface CredentialFault {
   readonly backend: CredentialBackendId;
   readonly message: string;
-  /**
-   * True when a value WAS stored but is unusable (control character, BOM, and for
-   * gateway keys non-Latin-1 or edge whitespace). Distinct from "absent": a caller
-   * that creates on absence must refuse here, or it overwrites the stored value.
-   */
-  readonly malformed?: true;
-}
-
-/** What an account holds; decides how strict the read-side check is and the remedy text. */
-export type CredentialKind = "gateway" | "portal" | "buzz";
-
-/**
- * Account kinds are told apart by name (the store has no kind field): the portal
- * token is the literal `portal-oauth` and Buzz identities are `buzz:<project>:<persona>`
- * (a test pins both against their owners, `PORTAL_ACCOUNT` and `buzzAccount`).
- * Everything else is a gateway API key.
- */
-export function credentialKind(account: string): CredentialKind {
-  if (account === "portal-oauth") return "portal";
-  if (account.startsWith("buzz:")) return "buzz";
-  return "gateway";
-}
-
-/** Thrown by `resolve` when a value is stored but malformed. Never carries the value. */
-export class MalformedCredentialError extends Error {
-  constructor(
-    readonly account: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "MalformedCredentialError";
-  }
 }
 
 /**
@@ -106,11 +87,7 @@ export interface CredentialStatus {
 export type StoreTarget = "auto" | "keychain" | "file";
 
 export interface CredentialStore {
-  /**
-   * Resolve the account's secret, or null when no backend has one. Throws
-   * {@link MalformedCredentialError} when one IS stored but unusable, so "absent"
-   * never reads as "safe to create" over a value that is only malformed.
-   */
+  /** Resolve the account's secret, or null when no backend has one. */
   resolve(account: string): Promise<ResolvedCredential | null>;
   /**
    * R9.20 — resolve SEVERAL accounts, using a backend's batched read where it has
@@ -124,10 +101,6 @@ export interface CredentialStore {
    * timing.
    */
   resolveMany(accounts: readonly string[]): Promise<Map<string, ResolvedCredential | null>>;
-  /** {@link resolveMany} with each account's faults (malformed ones included), never throwing for them. */
-  resolveManyDetailed(
-    accounts: readonly string[],
-  ): Promise<Map<string, { hit: ResolvedCredential | null; faults: readonly CredentialFault[] }>>;
   /** Non-secret presence/location report for display surfaces. */
   status(account: string): Promise<CredentialStatus>;
   /** Persist a secret. Returns where it landed. Throws if the target is unusable. */
@@ -172,41 +145,6 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
     fileB,
   ];
 
-  /** Never name the value: only the account and the remedy. */
-  /** What to do about a malformed value, per account kind. Never names the value. */
-  function malformedMessage(account: string): string {
-    const what = "stored key is malformed (control character, byte-order mark";
-    switch (credentialKind(account)) {
-      case "portal":
-        return `${what}): the portal token cannot be used. Re-link with \`golem team link\`.`;
-      case "buzz":
-        return (
-          `${what}): this Buzz identity secret cannot be used, and Golem will NOT overwrite it ` +
-          `(that would rotate the identity). Remove the stored credential "${account}" yourself, ` +
-          "then re-provision, only if you mean to rotate it."
-        );
-      default:
-        return (
-          `${what}, non-Latin-1 character or surrounding whitespace): re-enter it with ` +
-          `\`golem gateway login ${account}\`.`
-        );
-    }
-  }
-
-  /** Control chars and BOM are never valid; gateway keys are stricter (see validate.ts). */
-  function isMalformed(account: string, secret: string): boolean {
-    if (hasForbiddenChar(secret)) return true;
-    return (
-      credentialKind(account) === "gateway" && (hasNonLatin1(secret) || hasEdgeWhitespace(secret))
-    );
-  }
-
-  const malformedFault = (account: string, backend: CredentialBackendId): CredentialFault => ({
-    backend,
-    message: malformedMessage(account),
-    malformed: true,
-  });
-
   /**
    * Consult backends in order. A backend that FAILS is recorded and skipped
    * rather than aborting the chain — a broken keychain must not hide an opted-in
@@ -219,14 +157,9 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
     const faults: CredentialFault[] = [];
     for (const backend of readChain) {
       try {
-        const secret = await backend.get(account);
-        if (secret !== null) {
-          // A malformed hit STOPS the chain: falling through would hand out a stale
-          // value from a lower-precedence backend instead of surfacing the problem.
-          if (isMalformed(account, secret)) {
-            faults.push(malformedFault(account, backend.id));
-            return { hit: null, faults };
-          }
+        const raw = await backend.get(account);
+        const secret = raw === null ? null : forRead(account, raw);
+        if (secret !== null && secret !== "") {
           return { hit: { secret, location: backend.describe() }, faults };
         }
       } catch (err) {
@@ -300,17 +233,10 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       const stillUnresolved: string[] = [];
       for (const account of unique) {
         const entry = batch.get(account);
-        if (entry?.secret !== undefined && isMalformed(account, entry.secret)) {
-          // Same rule as `consult`: no fall-through to a lower backend.
+        const batched = entry?.secret === undefined ? "" : forRead(account, entry.secret);
+        if (batched !== "") {
           out.set(account, {
-            hit: null,
-            faults: [...(carriedFaults.get(account) ?? []), malformedFault(account, keychainB.id)],
-          });
-          continue;
-        }
-        if (entry?.secret !== undefined) {
-          out.set(account, {
-            hit: { secret: entry.secret, location: keychainB.describe() },
+            hit: { secret: batched, location: keychainB.describe() },
             faults: [],
           });
           continue;
@@ -335,13 +261,10 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       let hit: ResolvedCredential | null = null;
       for (const backend of chain) {
         try {
-          const secret = await backend.get(account);
-          if (secret !== null) {
-            if (isMalformed(account, secret)) {
-              faults.push(malformedFault(account, backend.id));
-            } else {
-              hit = { secret, location: backend.describe() };
-            }
+          const raw = await backend.get(account);
+          const secret = raw === null ? null : forRead(account, raw);
+          if (secret !== null && secret !== "") {
+            hit = { secret, location: backend.describe() };
             break;
           }
         } catch (err) {
@@ -357,15 +280,7 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
   }
 
   return {
-    resolve: async (account) => {
-      const { hit, faults } = await consult(account);
-      const bad = faults.find((f) => f.malformed === true);
-      if (hit === null && bad !== undefined)
-        throw new MalformedCredentialError(account, bad.message);
-      return hit;
-    },
-
-    resolveManyDetailed: (accounts) => consultMany(accounts),
+    resolve: async (account) => (await consult(account)).hit,
 
     resolveMany: async (accounts) => {
       const consulted = await consultMany(accounts);
