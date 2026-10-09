@@ -148,6 +148,7 @@ dynamic or string lookups (`semantic_cache` as an `overrides` key).
 - Doc mentions reworded: `docs/golem-spec.md` (195, 225, 226, 311, 685), `docs/marketing/CLAIMS.md` B-19.
   Left as dated history: `docs/plan/audit/**`, `docs/plan/tasks/DUST3.2.md`, the PHASE3 index,
   `docs/wiki/**`.
+- Phrases were searched too (`semantic cache`, `semantic caching`, `semantic response cache`, `low-relevance`, case-insensitive, excluding dated audit/debrief/synthesis/source history). Live mentions fixed: `src/cli/dials.ts:213`, `docs/wiki/concepts/Compression.md:30`. `docs/golem-spec.md:633` is a historical record line and stays. No hits in README or `vscode-extension`.
 - Redaction: not touched; every `LEVEL_TABLE` row keeps `redaction: true`.
 
 ### Rows LEFT

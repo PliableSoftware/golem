@@ -27,7 +27,7 @@ upstream, not on the dial setting.
   turn. That is also all "cache-alignment" means here: a property of every
   transform (`native-lossless.ts:13-34`), not a separate stage. See
   [[Compression Levels]].
-- **Lossy semantic compression** (stale-turn drop, low-relevance pruning) is added
+- **Lossy semantic compression** (stale-turn drop; the `aggressive` mode prunes harder) is added
   at levels 2–3. This is where real token savings come from — but **only on
   non-caching upstreams**, and only when the Headroom sidecar is enabled
   (`compression.headroom_sidecar`, default off). Level 2 needs the sidecar exactly
