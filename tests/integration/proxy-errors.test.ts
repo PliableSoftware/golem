@@ -8,7 +8,7 @@
 
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { RequestPipeline } from "../../src/proxy/index.js";
 import {
   type FakeUpstream,
@@ -30,6 +30,11 @@ async function closedPort(): Promise<number> {
   });
 }
 
+/** The in-flight reservation is released on response close, which lands a tick after the client reads. */
+async function expectReservationReleased(proxy: RunningProxy): Promise<void> {
+  await vi.waitFor(() => expect(proxy.proxy.bodyBytesInFlight).toBe(0), { timeout: 2_000 });
+}
+
 describe("proxy upstream error mapping", () => {
   it("maps upstream connection refusal to 502 with an Anthropic-shaped body", async () => {
     const port = await closedPort();
@@ -46,6 +51,7 @@ describe("proxy upstream error mapping", () => {
       expect(body.type).toBe("error");
       expect(body.error.type).toBe("api_error");
       expect(body.error.message).toContain("golem proxy: upstream connection failed");
+      await expectReservationReleased(proxy);
     } finally {
       await proxy.close();
     }
@@ -81,6 +87,8 @@ describe("proxy upstream error mapping", () => {
       const body = JSON.parse(response.body.toString("utf8"));
       expect(body.error.type).toBe("api_error");
       expect(body.error.message).toContain("timed out");
+      // DUSTSEC.21: a failed upstream must not leave its body reserved against the cap.
+      await expectReservationReleased(proxy);
     });
   });
 
