@@ -167,28 +167,22 @@ export function resolveCoderRoute(input: CoderRouteInput): CoderRoute {
 export function coderRouteConflict(input: CoderRouteInput): string | undefined {
   // An owner: user coder is refused by resolveCoderRoute; there is no route to conflict.
   if (input.personas?.coder?.owner === "user") return undefined;
-  const fromWorker = workerTarget(input.workerTargets, "coder", input.personas);
-  const fromPersonaWorker = workerTargetFromPersona(input.personas ?? {}, "coder");
+  // Trimmed like `configured`: with no `worker_targets` entry this falls back to the
+  // same persona model `defaultCoder` carries, so padding must not read as a conflict.
+  const fromWorker = workerTarget(input.workerTargets, "coder", input.personas)?.trim();
   const configured = input.defaultCoder?.trim();
 
-  // worker_targets vs defaultCoder
-  if (fromWorker !== undefined && configured !== undefined && configured !== "") {
+  if (
+    fromWorker !== undefined &&
+    fromWorker !== "" &&
+    configured !== undefined &&
+    configured !== ""
+  ) {
     if (fromWorker !== configured) {
       return (
         `inference.worker_targets.coder = "${fromWorker}" and inference.personas.coder.model = ` +
         `"${configured}" name different destinations. worker_targets wins; unset it to use ` +
         "the persona's model."
-      );
-    }
-  }
-
-  // persona worker target vs defaultCoder (when defaultCoder is a target)
-  if (fromPersonaWorker !== undefined && configured !== undefined && configured !== "") {
-    if (resolveTarget(input.settings, configured).ok && fromPersonaWorker !== configured) {
-      return (
-        `inference.personas.coder.model = "${fromPersonaWorker}" (worker target) and ` +
-        `inference.personas.coder.model = "${configured}" (harness target) name different destinations. ` +
-        "Use separate personas for worker vs harness routing, or unset one."
       );
     }
   }

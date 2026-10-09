@@ -96,7 +96,7 @@ Each item is banned in every wording, with the reason. A draft that needs one of
 |---|---|---|
 | B-08 | That `snooze` is instrumented (reports telemetry). | UNVERIFIED in §11, so banned. Note: this pass saw `instrumented(tel, "snooze", ...)` calls at `src/mcp/devices-snooze.ts:241,255`, which contradicts the spec's reasoning. The spec is not edited here; see section 3. |
 | B-09 | LM Studio or vLLM as drop-in inference backends. | UNVERIFIED (§3.3, §6). Untested by URL. |
-| B-10 | A tier-fallback ladder, or falling back to Haiku. | UNVERIFIED (§2.2). Only a `FallbackPolicy.allowHaiku` field is known. |
+| B-10 | A tier-fallback ladder, or falling back to Haiku. | UNVERIFIED (§2.2). Tier step-down exists (`FallbackPolicy.stepDownTier`); a Haiku fallback does not. |
 | B-11 | A Bun standalone binary. | UNVERIFIED (§6, Decision 41). Never confirmed run. |
 | B-12 | That the Decision 56 shim bypasses local answer. | UNVERIFIED (Decision 56 note). |
 | B-13 | Which call sites use a catalog model role (triage, extraction, judging, drafting). | UNVERIFIED (§3.3, Decision 26). Only `coder` (drafter) and rerank (judge) are known. |

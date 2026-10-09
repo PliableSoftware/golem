@@ -348,9 +348,8 @@ to `{ ok:false }` on ENOENT/non-zero/timeout — `detectCapability` therefore
   bge-m3 / nomic-embed-text at Q4-class quant, as a plain data table in
   `catalog.ts` — re-verify current-best models at build time.
 - **Fallback ladder (D3):** tier model → step down one tier on
-  `ModelNotAvailableError` → `HaikuFallbackRequired` (if opted in; the service
-  does NOT make the cloud call, it signals the credentialed caller) → else
-  `CapabilityUnavailableError`. A reachable-but-broken endpoint
+  `ModelNotAvailableError` → else `CapabilityUnavailableError`. (A
+  `HaikuFallbackRequired` opt-in existed here until 2026-10-09; it had no caller and was removed.) A reachable-but-broken endpoint
   (`InferenceEndpointError`) stops the local ladder rather than hammering it.
 
 ## 23. Redaction breaks agent observability when the dev session is routed through Golem (2026-07-04, product finding)

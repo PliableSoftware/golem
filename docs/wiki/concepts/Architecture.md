@@ -80,7 +80,6 @@ flowchart TB
   KB --> INF
   INF --> LOCAL
   INF -.->|"optional"| LAN
-  INF -.->|"Haiku fallback"| UP
   TEL -.-> PX
 ```
 
@@ -151,7 +150,7 @@ selected provider.
 Source: `src/inference/service.ts`, `src/inference/catalog.ts`. Each role
 (summarizer, extractor, classifier, drafter, judge) maps to a concrete quantized
 model for the machine's detected hardware tier; a missing model steps **down** a
-tier before giving up, and only then optionally signals a Claude Haiku fallback.
+tier before giving up with `CapabilityUnavailableError`. There is no Claude Haiku fallback.
 
 ```mermaid
 flowchart TB
@@ -160,10 +159,8 @@ flowchart TB
   CALL -->|"yes"| OK["Return completion"]
   CALL -->|"missing model"| STEP{"step-down tier<br/>allowed and tier > 0?"}
   STEP -->|"yes"| T
-  STEP -->|"no / exhausted"| HAIKU{"Haiku fallback<br/>permitted?"}
-  CALL -->|"endpoint error"| HAIKU
-  HAIKU -->|"yes"| THROW["HaikuFallbackRequired<br/>(caller owns the cloud call)"]
-  HAIKU -->|"no"| ERR["CapabilityUnavailableError"]
+  STEP -->|"no / exhausted"| ERR["CapabilityUnavailableError"]
+  CALL -->|"endpoint error"| ERR
 ```
 
 ### 3b. Upstream provider — passthrough vs translating
