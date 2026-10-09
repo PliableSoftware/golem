@@ -98,7 +98,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 /** The payload used wherever the test needs a *real fetched* team layer. */
 const WIRE_PAYLOAD = {
   settings: [
-    { key: "security.join_injection", value: true, enforced: true },
+    { key: "snooze.enforce", value: true, enforced: true },
     { key: "telemetry.enabled", value: false, enforced: false },
   ],
   schema_version: "v0.9.2",
@@ -109,16 +109,16 @@ const WIRE_PAYLOAD = {
 describe("translateTeamRows — enforced: true means !important", () => {
   it('puts an enforced key in the top-level "!important" list and a plain key in neither', () => {
     const translated = translateTeamRows([
-      row("security.join_injection", true, true),
+      row("snooze.enforce", true, true),
       row("telemetry.enabled", false),
     ]);
 
     expect(translated.settings).toEqual({
-      security: { join_injection: true },
+      snooze: { enforce: true },
       telemetry: { enabled: false },
-      "!important": ["security.join_injection"],
+      "!important": ["snooze.enforce"],
     });
-    expect(translated.applied).toEqual(["security.join_injection (enforced)", "telemetry.enabled"]);
+    expect(translated.applied).toEqual(["snooze.enforce (enforced)", "telemetry.enabled"]);
     expect(translated.skipped).toEqual([]);
   });
 
@@ -240,7 +240,7 @@ describe("cache age is reported PER TEAM (Decision 63(c))", () => {
     await writeTeamLayerCache(userDir, {
       org_id: ORG,
       fetched_at: new Date(now - 90 * 60_000).toISOString(), // 1h30 ago
-      settings: [row("telemetry.enabled", false), row("security.join_injection", true, true)],
+      settings: [row("telemetry.enabled", false), row("snooze.enforce", true, true)],
     });
     await writeTeamLayerCache(userDir, {
       org_id: OTHER_ORG,
@@ -622,8 +622,8 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     expect(provenance["telemetry.enabled"]?.source).toContain(ORG);
 
     // `enforced: true` arrived as an "!important" declaration.
-    expect(provenance["security.join_injection"]?.layer).toBe("team");
-    expect(provenance["security.join_injection"]?.important).toBe(true);
+    expect(provenance["snooze.enforce"]?.layer).toBe("team");
+    expect(provenance["snooze.enforce"]?.important).toBe(true);
   });
 
   it("an enforced team key beats the PROJECT file, while a plain one loses to it", async () => {
@@ -635,7 +635,7 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     await mkdir(path.join(projectDir, ".golem"), { recursive: true });
     await writeFile(
       path.join(projectDir, ".golem", "settings.json"),
-      JSON.stringify({ telemetry: { enabled: true }, security: { join_injection: false } }),
+      JSON.stringify({ telemetry: { enabled: true }, snooze: { enforce: false } }),
       "utf8",
     );
 
@@ -652,8 +652,8 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     expect(settings.telemetry.enabled).toBe(true);
     expect(provenance["telemetry.enabled"]?.layer).toBe("project");
     // Enforced team key: policy, applied after every file layer.
-    expect(settings.security.join_injection).toBe(true);
-    expect(provenance["security.join_injection"]?.layer).toBe("team");
+    expect(settings.snooze.enforce).toBe(true);
+    expect(provenance["snooze.enforce"]?.layer).toBe("team");
   });
 
   it("loadEffectiveConfig populates the slot from the cache, end to end", async () => {
@@ -674,7 +674,7 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     expect(config.team.fromCache).toBe(true);
     expect(config.settings.telemetry.enabled).toBe(false);
     expect(config.provenance["telemetry.enabled"]?.layer).toBe("team");
-    expect(config.provenance["security.join_injection"]?.important).toBe(true);
+    expect(config.provenance["snooze.enforce"]?.important).toBe(true);
   });
 });
 

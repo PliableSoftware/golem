@@ -36,7 +36,7 @@ async function twoCachedTeams(userDir: string, nowMs: number): Promise<void> {
     fetched_at: new Date(nowMs - 30 * 24 * 60 * 60_000).toISOString(),
     settings: [
       { key: "telemetry.enabled", value: true, enforced: false },
-      { key: "security.join_injection", value: true, enforced: true },
+      { key: "snooze.enforce", value: true, enforced: true },
     ],
   });
 }
@@ -173,7 +173,7 @@ describe("golem status reports the effective config WITH team policy", () => {
       fetched_at: new Date().toISOString(),
       settings: [
         { key: "telemetry.enabled", value: false, enforced: false },
-        { key: "security.join_injection", value: true, enforced: true },
+        { key: "snooze.enforce", value: true, enforced: true },
       ],
     });
 
@@ -192,8 +192,8 @@ describe("golem status reports the effective config WITH team policy", () => {
     expect(telemetry?.source).toContain(RECENT);
     expect(telemetry?.source).not.toContain(userDir);
 
-    expect(report.config["security.join_injection"]?.value).toBe(true);
-    expect(report.config["security.join_injection"]?.layer).toBe("team");
+    expect(report.config["snooze.enforce"]?.value).toBe(true);
+    expect(report.config["snooze.enforce"]?.layer).toBe("team");
   });
 
   it("applies nothing for an unlinked project, even with a cache on the machine", async () => {
