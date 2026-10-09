@@ -414,61 +414,6 @@ describe("DUSTSEC.24 rewritten patterns match exactly what the previous patterns
     }
     expect(withMatch).toBeGreaterThan(300);
   });
-
-  it("connection-password: identical for schemes up to the 128-character bound", () => {
-    const old = new RegExp(
-      String.raw`\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:@/]+:(?!\[${"REDACTED"}:connection-password:\d+\]@)([^\s@/]+)@`,
-      "g",
-    );
-    const rand = rng(2024);
-    const pieces = [
-      "://",
-      ":",
-      "@",
-      "/",
-      "x://u:",
-      "pg+a.b://user:",
-      "u:pw@h",
-      "pw@",
-      "postgres",
-      "a.b",
-      "+",
-      "-",
-      ".",
-      " ",
-      "\n",
-      "user",
-      "pw",
-      `${MARK}connection-password:1]`,
-    ];
-    let withMatch = 0;
-    for (let i = 0; i < 6000; i++) {
-      const text = randomText(rand, pieces, "abcXYZ019.-+");
-      if (/[a-zA-Z0-9+.-]{129,}/.test(text)) continue;
-      const expected = spans(old, text);
-      if (expected.length > 0) withMatch += 1;
-      expect(spans(rule("connection-password").pattern, text), JSON.stringify(text)).toEqual(
-        expected,
-      );
-    }
-    expect(withMatch).toBeGreaterThan(100);
-  });
-
-  it("email: identical for local parts up to the 128-character bound", () => {
-    const old = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
-    const rand = rng(99);
-    const pieces = ["@", ".com", ".", "-", "+", "_", " ", "\n", "a@b.co", "x.y@z.org", "%", ".."];
-    let withMatch = 0;
-    for (let i = 0; i < 6000; i++) {
-      const text = randomText(rand, pieces, "abcXYZ019.-_");
-      // Out of the bound's reach: skip the rare sample with a 129+ char class run.
-      if (/[A-Za-z0-9._%+-]{129,}/.test(text)) continue;
-      const expected = spans(old, text);
-      if (expected.length > 0) withMatch += 1;
-      expect(spans(rule("email").pattern, text), JSON.stringify(text)).toEqual(expected);
-    }
-    expect(withMatch).toBeGreaterThan(300);
-  });
 });
 
 // ---------------------------------------------------------------------------

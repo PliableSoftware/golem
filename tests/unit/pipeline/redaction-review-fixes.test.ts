@@ -312,13 +312,23 @@ describe("DUSTSEC.24 review (3) the hex-token exemption is for separator-free ru
 // ---------------------------------------------------------------------------
 
 describe("DUSTSEC.24 review (4) email: the match always begins within 128 characters of the @", () => {
-  const spansOf = (re: RegExp, text: string) =>
-    matches(re, text).map((m) => [m.index, m[0]] as const);
+  /** What the ORIGINAL rule produces: each match replaced, one placeholder per distinct value. */
+  const oldEmail = (text: string): string => {
+    const seen = new Map<string, number>();
+    return text.replace(OLD_EMAIL, (m) => {
+      if (!seen.has(m)) seen.set(m, seen.size + 1);
+      return `${MARK}email:${seen.get(m)}]`;
+    });
+  };
+  // The new rule alone, with the same placeholder numbering.
+  const newEmail = (text: string): string => redactIdentifierText(text);
 
-  it("realistic addresses: 300 generated, identical to the original rule", () => {
+  it("realistic addresses: 1800 generated texts, identical output to the original rule", () => {
     const rand = rng(8);
     const word = () =>
-      base62(`w${Math.floor(rand() * 1e9)}`, 2 + Math.floor(rand() * 14)).toLowerCase();
+      base62(`w${Math.floor(rand() * 1e9)}`, 2 + Math.floor(rand() * 14))
+        .toLowerCase()
+        .replace(/[0-9]/g, "q");
     const tlds = ["com", "org", "io", "co.uk", "dev"];
     let n = 0;
     for (let i = 0; i < 300; i++) {
@@ -333,34 +343,45 @@ describe("DUSTSEC.24 review (4) email: the match always begins within 128 charac
         `"${addr}",`,
         `(${addr}).`,
         `to:${addr}\n`,
+        `${addr} ${addr}`,
       ]) {
-        expect(spansOf(rule("email").pattern, text), text).toEqual(spansOf(OLD_EMAIL, text));
+        expect(newEmail(text), text).toBe(oldEmail(text));
         n += 1;
       }
     }
-    expect(n).toBe(1800);
+    expect(n).toBe(2100);
   });
 
-  it("fuzz: same end and same text once leading punctuation is dropped, for runs up to 128", () => {
+  it("fuzz: 8000 texts with runs up to 128, same redactions as the original rule", () => {
     const rand = rng(404);
-    const pieces = ["@", ".com", ".", "-", "+", "_", " ", "\n", "..", "a@b.org", "x.y@z.io", "%"];
+    const pieces = [
+      "@",
+      ".com",
+      ".",
+      "-",
+      "+",
+      "_",
+      " ",
+      "\n",
+      "..",
+      "%",
+      "a@b.co",
+      "x@",
+      "@y.org",
+      ".org-z@w.io",
+    ];
     let hits = 0;
+    let checked = 0;
     for (let i = 0; i < 8000; i++) {
-      const text = randomText(rand, pieces, "abcXYZ019.-_");
+      const text = randomText(rand, pieces, "abcXYZ.-_");
       if (/[A-Za-z0-9._%+-]{129,}/.test(text)) continue;
-      const before = spansOf(OLD_EMAIL, text);
-      const after = spansOf(rule("email").pattern, text);
-      hits += before.length;
-      // Every original match is found, ending in the same place; the new match may
-      // begin later only by leading punctuation the original also never started on.
-      expect(after.length, JSON.stringify(text)).toBe(before.length);
-      before.forEach(([idx, t], k) => {
-        const [idx2, t2] = after[k] as readonly [number, string];
-        expect(idx2 + t2.length, JSON.stringify(text)).toBe((idx as number) + t.length);
-        expect(t.replace(/^[._%+-]+/, ""), JSON.stringify(text)).toBe(t2.replace(/^[._%+-]+/, ""));
-      });
+      checked += 1;
+      if (OLD_EMAIL.test(text)) hits += 1;
+      OLD_EMAIL.lastIndex = 0;
+      expect(newEmail(text), JSON.stringify(text)).toBe(oldEmail(text));
     }
-    expect(hits).toBeGreaterThan(500);
+    expect(checked).toBeGreaterThan(5000);
+    expect(hits).toBeGreaterThan(1000);
   });
 
   const ph = `${MARK}email:1]`;

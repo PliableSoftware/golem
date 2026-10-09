@@ -161,6 +161,12 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
       [redactStart, redactEnd] = span;
       target = value;
     }
+    if (rule.extendStart !== undefined && rule.group === undefined) {
+      const from = rule.extendStart(text, matchStart, cursor);
+      if (from === -1) continue; // nothing in front of the tail: not a match
+      redactStart = Number.isInteger(from) && from >= cursor && from <= matchStart ? from : cursor;
+      target = text.slice(redactStart, redactEnd);
+    }
     if (rule.validate !== undefined && !rule.validate(target)) {
       continue; // failed the extra check (e.g. Luhn) → not a secret, leave it
     }

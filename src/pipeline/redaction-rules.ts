@@ -53,6 +53,15 @@ export interface RedactionRule {
    * match. Default: the whole text.
    */
   readonly scanEnd?: (text: string) => number;
+  /**
+   * For a whole-match rule whose pattern matches only the TAIL of the thing to
+   * redact: where the redaction span really starts. `start` is the match's start,
+   * `floor` the end of the previous redaction (the span may not reach back past it).
+   * Returns an integer in `[floor, start]`, or -1 for "not a match". Anything else
+   * is treated as `floor`: toward MORE redaction. Lets a rule anchor on a rare
+   * character (`@`) instead of trying a start at every position.
+   */
+  readonly extendStart?: (text: string, start: number, floor: number) => number;
 }
 
 /** Luhn checksum over the digits of `target` (separators allowed). */
@@ -195,6 +204,27 @@ function privateKeyScanEnd(text: string): number {
   return end;
 }
 
+const isWordChar = (c: number): boolean => isAsciiAlnum(c) || c === 95;
+const isEmailLocalChar = (c: number): boolean =>
+  isWordChar(c) || c === 46 || c === 37 || c === 43 || c === 45;
+
+/**
+ * `extendStart` for the email rule: the local part before the `@` at `at`. The
+ * run of `[A-Za-z0-9._%+-]` ending there, at most 128 characters and not reaching
+ * back past `floor`, starting at its first word character (the original rule began
+ * at the first `\b`, which is that character). -1 when there is none.
+ */
+function emailLocalStart(text: string, at: number, floor: number): number {
+  const lo = Math.max(floor, at - 128);
+  let i = at;
+  while (i > lo && isEmailLocalChar(text.charCodeAt(i - 1))) i -= 1;
+  // Resuming right after a previous match, the original's `\b` fell between that match's last
+  // letter and a punctuation start, so the span begins on the punctuation.
+  if (i === floor && i < at && i > 0 && isWordChar(text.charCodeAt(i - 1))) return i;
+  while (i < at && !isWordChar(text.charCodeAt(i))) i += 1;
+  return i < at ? i : -1;
+}
+
 /**
  * The rule table. Order is load-bearing and part of the audit surface:
  * multi-line PEM blocks first (their base64 body would otherwise be shredded
@@ -296,21 +326,20 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "Credentials embedded in connection-string URLs " +
       "(scheme://user:password@host). Only the password is redacted so the " +
       "scheme, user, and host stay legible to the model.",
-    // DUSTSEC.24: the scheme is bounded to 128 characters and has NO leading `\b`.
-    // Unbounded, every start in a long `a.a.a.` run (a legal scheme alphabet) rescans
-    // the run looking for `://`: quadratic. A `\b` would make a scheme glued onto other
-    // word characters, or longer than the bound, impossible to start (the password
-    // would leak where the original rule redacted it), so a start is any letter within
-    // the 128 characters before `://`. Only the password is redacted, so where the
-    // match starts changes nothing; every `scheme://user:password@` the original
-    // matched is still matched with the same password span, and a few more are.
+    // DUSTSEC.24: anchored on the `:` before `//`, with the scheme checked by a lookbehind
+    // (a letter, then up to 127 scheme characters, before the colon). A start at every
+    // letter of a long `a.a.a.` run was quadratic, and a leading `\b` made a scheme
+    // glued onto other word characters, or longer than 128, impossible to match (the
+    // password would leak where the original rule redacted it). Only the password is
+    // redacted, so where the match starts changes nothing: every password the original
+    // matched is matched with the same span, and a few more are.
     // The lookahead skips a group that is EXACTLY one connection-password
     // placeholder, so a second pass over already-redacted text cannot re-match
     // (and renumber) it (S10). It names that ONE kind and anchors on `]@`: a
     // password shaped like any other placeholder (attacker-chosen kind text, or
     // another rule's placeholder) is still redacted, as before.
     pattern:
-      /[a-zA-Z][a-zA-Z0-9+.-]{0,127}:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
+      /:(?<=[a-zA-Z][a-zA-Z0-9+.-]{0,127}:)\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
     group: 1,
   },
   {
@@ -340,14 +369,16 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
   {
     id: "email",
     description: "Email addresses (PII).",
-    // DUSTSEC.24: the local part is bounded to 128 characters (RFC 5321 caps it at 64).
-    // Unbounded, every start in a long run with no `@` after it rescans the whole run
-    // (quadratic on `a.a.a.`). The start is a word character, with no `\b`, so the
-    // match always begins within the 128 characters before the `@`: a longer local
-    // part has its last 128 characters and the whole domain redacted, and only the
-    // head beyond that stays. For an address that fits, the match is the original's
-    // (the first word character after any leading `.%+-`, which is where `\b` fell).
-    pattern: /[A-Za-z0-9_][A-Za-z0-9._%+-]{0,127}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    // DUSTSEC.24: the pattern matches `@domain` only, and `extendStart` reaches back over
+    // the local part (see emailLocalStart). A pattern that started at every position of
+    // a long run was quadratic on `a.a.a.` (no `@`), and with a leading `\b` or a bound
+    // it either skipped candidates or cost 128 steps per character of a 10 MB run.
+    // The local part is at most 128 characters (RFC 5321 caps it at 64): a longer one
+    // has its last 128 characters and the whole domain redacted, only the head beyond
+    // that stays. For an address that fits, the span is the original rule's: from the
+    // first word character of the run before the `@`.
+    pattern: /@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    extendStart: emailLocalStart,
   },
   {
     id: "nostr-secret-key",
