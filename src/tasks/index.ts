@@ -42,4 +42,11 @@ export {
   taskSchema,
   type Worktree,
 } from "./types.js";
-export { captureWorktree, describeWorktree, worktreeDrift } from "./worktree.js";
+export {
+  captureWorktree,
+  describeWorktree,
+  normalizeGitPath,
+  resumeCwd,
+  samePath,
+  worktreeDrift,
+} from "./worktree.js";

@@ -12,10 +12,41 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import nodePath from "node:path";
 import { promisify } from "node:util";
 import type { Worktree } from "./types.js";
 
 const run = promisify(execFile);
+
+/** The subset of `node:path` the normaliser needs, so tests can pass `path.win32`. */
+export type PathModule = Pick<typeof nodePath, "normalize" | "sep"> & { readonly win32?: unknown };
+
+/**
+ * Git prints paths with forward slashes on every OS (`C:/Users/x/proj` on Windows).
+ * Normalise to the platform's own form before storing or comparing, so a recorded
+ * path is the same string `node:path` and `fs` would produce. Trailing separators go
+ * too (but a bare root keeps its one).
+ */
+export function normalizeGitPath(p: string, pathMod: PathModule = nodePath): string {
+  const normalized = pathMod.normalize(p);
+  const root = pathMod.normalize(pathMod.sep === "\\" ? `${normalized.slice(0, 2)}\\` : "/");
+  let out = normalized;
+  while (out.length > root.length && (out.endsWith("\\") || out.endsWith("/"))) {
+    out = out.slice(0, -1);
+  }
+  return out;
+}
+
+/**
+ * Do two paths name the same place? Both are normalised first; on a Windows path
+ * module the comparison is case-insensitive (drive letters, and NTFS names, differ in
+ * case between git, `realpath` and `process.cwd()`).
+ */
+export function samePath(a: string, b: string, pathMod: PathModule = nodePath): boolean {
+  const x = normalizeGitPath(a, pathMod);
+  const y = normalizeGitPath(b, pathMod);
+  return pathMod.sep === "\\" ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
 
 /** Cap so a huge dirty tree cannot bloat a task record. */
 const MAX_DIRTY_FILES = 50;
@@ -35,7 +66,7 @@ function dirtyPaths(porcelainZ: string): string[] {
   const out: string[] = [];
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i] as string;
-    out.push(token.slice(3));
+    out.push(normalizeGitPath(token.slice(3)));
     if (token[0] === "R" || token[0] === "C") i += 1;
   }
   return out;
@@ -50,17 +81,24 @@ export async function captureWorktree(dir: string): Promise<Worktree | undefined
   const branch = (await git(dir, ["symbolic-ref", "--short", "-q", "HEAD"]))?.trim();
   const status = (await git(dir, ["status", "--porcelain", "-z"])) ?? "";
   return {
-    path: top,
+    path: normalizeGitPath(top),
     baseCommit: head,
     ...(branch !== undefined && branch !== "" ? { branch } : {}),
     dirtyFiles: dirtyPaths(status).slice(0, MAX_DIRTY_FILES),
   };
 }
 
+/** The directory to launch a resumed session in: the recorded worktree if it still exists. */
+export function resumeCwd(w: Worktree | undefined): string | undefined {
+  if (w === undefined) return undefined;
+  const dir = normalizeGitPath(w.path);
+  return existsSync(dir) ? dir : undefined;
+}
+
 /** One line for resume output: `path [branch] @ commit`. */
 export function describeWorktree(w: Worktree): string {
   const branch = w.branch !== undefined ? ` [${w.branch}]` : "";
-  return `${w.path}${branch} @ ${w.baseCommit.slice(0, 10)}`;
+  return `${normalizeGitPath(w.path)}${branch} @ ${w.baseCommit.slice(0, 10)}`;
 }
 
 /**
@@ -69,8 +107,9 @@ export function describeWorktree(w: Worktree): string {
  */
 export async function worktreeDrift(w: Worktree | undefined): Promise<string[]> {
   if (w === undefined) return [];
-  if (!existsSync(w.path)) return [`recorded worktree no longer exists: ${w.path}`];
-  const head = (await git(w.path, ["rev-parse", "HEAD"]))?.trim();
+  const dir = normalizeGitPath(w.path);
+  if (!existsSync(dir)) return [`recorded worktree no longer exists: ${dir}`];
+  const head = (await git(dir, ["rev-parse", "HEAD"]))?.trim();
   if (head !== undefined && head !== "" && head !== w.baseCommit) {
     return [
       `worktree HEAD moved since the park (${w.baseCommit.slice(0, 10)} -> ${head.slice(0, 10)})`,

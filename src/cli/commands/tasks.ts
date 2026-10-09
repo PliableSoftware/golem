@@ -2,7 +2,6 @@
  * golem task — extracted from program.ts (R8.27).
  */
 
-import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
@@ -31,6 +30,7 @@ import {
   formatResumeCommand,
   isResumable,
   PlanTaskStore,
+  resumeCwd,
   runQueueLocally,
   TERMINAL_TASK_STATES,
   worktreeDrift,
@@ -316,10 +316,7 @@ export default function register(program: Command): void {
             );
             return;
           }
-          const cwd =
-            task.worktree !== undefined && existsSync(task.worktree.path)
-              ? task.worktree.path
-              : undefined;
+          const cwd = resumeCwd(task.worktree);
           const result = await spawnResume(argv, cwd);
           // A plan doc is committed and shared: launching must not dirty it with
           // machine-local `running`/attempt bookkeeping. Only local tasks record it.

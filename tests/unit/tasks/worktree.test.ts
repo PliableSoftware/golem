@@ -12,6 +12,8 @@ import {
   captureWorktree,
   describeWorktree,
   FileTaskStore,
+  normalizeGitPath,
+  samePath,
   worktreeDrift,
 } from "../../../src/tasks/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
@@ -45,7 +47,7 @@ describe("captureWorktree", () => {
     await writeFile(path.join(dir, "a.txt"), "changed\n");
     await writeFile(path.join(dir, "new file.txt"), "x\n");
     const w = await captureWorktree(dir);
-    expect(w?.path).toBe(dir);
+    expect(samePath(w?.path ?? "", dir)).toBe(true);
     expect(w?.branch).toBe("main");
     expect(w?.baseCommit).toBe(git(dir, "rev-parse", "HEAD").trim());
     expect([...(w?.dirtyFiles ?? [])].sort()).toStrictEqual(["a.txt", "new file.txt"]);
@@ -56,7 +58,7 @@ describe("captureWorktree", () => {
     const linked = path.join(await realpath(await newTempDir()), "wt");
     git(main, "worktree", "add", "-q", "-b", "feature/x", linked);
     const w = await captureWorktree(linked);
-    expect(w?.path).toBe(linked);
+    expect(samePath(w?.path ?? "", linked)).toBe(true);
     expect(w?.branch).toBe("feature/x");
   });
 
@@ -109,7 +111,30 @@ describe("a parked snooze note", () => {
     const result = await persistSnoozeNote(dir, "pick up at step 3");
     expect(result.ok).toBe(true);
     const task = (await new FileTaskStore(dir).list())[0];
-    expect(task?.worktree?.path).toBe(dir);
+    expect(samePath(task?.worktree?.path ?? "", dir)).toBe(true);
     expect(task?.worktree?.branch).toBe("main");
+  });
+});
+
+describe("normalizeGitPath / samePath (Windows input, checked on any runner)", () => {
+  it("turns git's forward slashes into backslashes under path.win32", () => {
+    expect(normalizeGitPath("C:/Users/x/proj", path.win32)).toBe("C:\\Users\\x\\proj");
+  });
+
+  it("drops a trailing separator but keeps a bare root", () => {
+    expect(normalizeGitPath("C:/Users/x/proj/", path.win32)).toBe("C:\\Users\\x\\proj");
+    expect(normalizeGitPath("C:/", path.win32)).toBe("C:\\");
+    expect(normalizeGitPath("/", path.posix)).toBe("/");
+    expect(normalizeGitPath("/a/b/", path.posix)).toBe("/a/b");
+  });
+
+  it("compares case-insensitively and slash-insensitively on win32", () => {
+    expect(samePath("c:/Users/X/proj", "C:\\users\\x\\PROJ", path.win32)).toBe(true);
+    expect(samePath("C:/Users/x/a", "C:/Users/x/b", path.win32)).toBe(false);
+  });
+
+  it("stays case-sensitive on posix", () => {
+    expect(samePath("/a/B", "/a/b", path.posix)).toBe(false);
+    expect(samePath("/a/b/", "/a/b", path.posix)).toBe(true);
   });
 });
