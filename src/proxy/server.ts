@@ -162,6 +162,11 @@ export class GolemProxy {
     return addr && typeof addr === "object" ? addr : null;
   }
 
+  /** Request-body bytes currently reserved against the in-flight cap (tests, diagnostics). */
+  get bodyBytesInFlight(): number {
+    return this.#bodyBudget.used;
+  }
+
   async close(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.server.close((err) => (err ? reject(err) : resolve()));
@@ -260,9 +265,15 @@ export class GolemProxy {
 
     let forward: ProxyRequest;
     const hold: BodyHold = { bytes: 0 };
+    // Idempotent: called when the final upstream response headers arrive (the body
+    // is no longer needed: the retry loop has ended) and again on close.
+    const releaseHold = (): void => {
+      this.#bodyBudget.release(hold.bytes);
+      hold.bytes = 0;
+    };
     try {
       // Release what this request reserved once the response is done, however it ends.
-      res.once("close", () => this.#bodyBudget.release(hold.bytes));
+      res.once("close", releaseHold);
       const body = await readBody(req, this.config.maxRequestBodyBytes, this.#bodyBudget, hold);
       let headers = forwardableRequestHeaders(req.headers);
       let readable = body;
@@ -526,6 +537,13 @@ export class GolemProxy {
       }
       attempt += 1;
     }
+
+    // DUSTSEC.21: the retry loop is over and nothing replays the request body after
+    // the response headers, so stop counting it against the in-flight cap: a long
+    // SSE stream must not hold its request's bytes for its whole life. (The proxy
+    // still references the buffer until the response ends; this bounds ADMISSION,
+    // it does not shrink the resident set of requests already streaming.)
+    releaseHold();
 
     // Translating upstream (R6.1 case b): convert the response to the Anthropic
     // shape. This is the ONLY path that parses/reserializes a response body — the

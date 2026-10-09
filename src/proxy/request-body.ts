@@ -179,8 +179,8 @@ export interface NormalizedRequestBody {
  *    receives is then exactly the bytes that were scanned. A re-encode would
  *    leave the upstream's decoder free to disagree with ours (trailing bytes,
  *    concatenated members) about what the payload is.
- * 2. A leading UTF-8 byte-order mark is dropped: a BOM makes `JSON.parse` fail,
- *    which used to mean "not JSON, forward raw". It is NOT restored on forward.
+ * 2. A leading UTF-8 byte-order mark is NOT touched here: the pipeline parses a
+ *    BOM-free view and forwards the original bytes unless redaction rewrote them.
  *
  * Throws {@link RequestBodyRefusal}: an unsupported or undecodable encoding is
  * refused, never forwarded raw.
@@ -222,9 +222,6 @@ export function normalizeRequestBody(
     }
     const { "content-encoding": _removed, ...rest } = headers;
     outHeaders = rest;
-  }
-  if (out.length >= 3 && out[0] === 0xef && out[1] === 0xbb && out[2] === 0xbf) {
-    out = out.subarray(3);
   }
   return { body: out, headers: outHeaders };
 }

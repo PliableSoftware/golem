@@ -59,3 +59,41 @@ value), enforced on the declared `content-length` before reading, while streamin
 and on decompressed output. 413, nothing forwarded. The redaction walk itself stays synchronous:
 measured 803 ms for a 3.9 MB body with 35,000 secrets, 109 ms for 5 MB of text, and (review) 4.7 s for 49 MiB of JSON with 425k secrets, so the limit
 bounds the worst stall rather than removing it. The walk is still synchronous. On the messages path a failed `process` re-walks in `redactOnly`; that double walk was NOT removed, because skipping it safely would need proof that redaction had completed before the failure, and fail-closed matters more than the stall. Total buffered request bytes across concurrent requests are capped (ProxyServerOptions.maxInFlightBodyBytes, default max(256 MiB, 2x the body limit), wire plus decoded form): over it, 503 with Retry-After and nothing forwarded. A streamed or worker-thread walk is not done here.
+
+### Second review round (2026-10-09)
+
+**Classification, restated.** A body is OPAQUE (forwarded unchanged) only when it does not parse as
+JSON AND either (a) its label is known-binary (image/*, audio/*, video/*, font/*, multipart/*,
+octet-stream, pdf, archives, protobuf/grpc) or (b) it has no, an unknown, or a text label and starts
+with a known binary magic signature (PNG, JPEG, GIF, PDF, ZIP, gzip, 7z, RAR, RIFF, ELF, bzip2, zstd,
+wasm, Ogg, MP3, MP4 ftyp). Every other body is TEXT whether or not it holds NUL bytes (a NUL never
+makes a body opaque) and is redacted losslessly (UTF-8, or latin1 when not valid UTF-8). **A client
+can still choose a known-binary label to avoid scanning non-JSON text.** That is accepted by design:
+binary cannot be scanned reliably and the label is client-chosen. Claude Code always labels JSON as
+JSON, and JSON under any label is still walked.
+
+**UTF-16/32.** A non-opaque body with NULs is scanned over its WHOLE length in 1 KiB windows
+(half-window steps): dense NULs at a consistent parity, or NUL-dominated windows, are refused (502,
+nothing forwarded). Sparse cases (a short UTF-16 secret in a large body, mostly-CJK text) are caught
+by decoding the body as UTF-16 at both alignments and both endiannesses and refusing if the text
+redactor finds a secret in any view. Binary with a magic signature or a known-binary label is never
+refused or altered. Cost: the decode check runs only on NUL-bearing non-opaque bodies.
+
+**Duplicate JSON keys.** `JSON.parse` keeps the last value, so the walk missed a secret in a shadowed
+first value while the original bytes were forwarded. A byte scanner now detects repeated keys (escaped
+spellings included). Only for such bodies the raw text is run through the text redactor: used if it
+still parses as JSON, otherwise refused. Applied in `process`, `redactOnly` and the generic walker.
+Deliberately NOT done for every body: a raw-text pass over all JSON would redact key names and
+escaped text that the structured walk leaves alone, and could change bodies that carry no secret.
+
+**BOM.** The BOM is stripped only from the view used for parsing. An unchanged body is forwarded with
+its original bytes (BOM included); a rewritten body is re-serialised without it.
+
+**In-flight cap.** The reservation is released once the final upstream response headers arrive (the
+retry loop has ended and nothing replays the body afterwards) and on close. The released bytes are
+still referenced by the request until the response ends, so this bounds admission, not the resident
+set of requests already streaming.
+
+**`proxy.bypass_all`.** The size limit and the in-flight cap still apply in bypass mode, as
+memory-safety guards. Nothing is decoded, scanned or redacted in bypass mode; "full bypass" is not
+a way past the limits. The `golem-bypass` skill text now says so.

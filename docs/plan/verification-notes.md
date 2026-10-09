@@ -11059,3 +11059,9 @@ decoded bodies are forwarded identity-encoded (always accepted) instead of re-en
 - JSON is parsed under any content label first; NUL-bearing UTF-16/32 without a BOM is refused.
 - NOT redacted by design: non-JSON opaque bodies (multipart, octet-stream, image/audio/video, PDF, archives,
   unlabelled bodies containing NUL bytes), including the text fields inside a multipart upload.
+- Second review (2026-10-09): NUL bytes no longer make a text body opaque (opaque = known-binary
+  label, or magic signature under a text/no label, and not JSON); UTF-16/32 is refused by whole-body
+  window scan plus a UTF-16 decode check; duplicate JSON keys are detected by a byte scanner and
+  their raw text redacted; BOM stripped only for parsing; the in-flight reservation is released when
+  upstream headers arrive (no replay after the retry loop); size limit and cap also apply under
+  `proxy.bypass_all` (memory guard only, nothing decoded or redacted).
