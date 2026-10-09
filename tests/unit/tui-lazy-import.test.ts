@@ -118,7 +118,7 @@ describe("the CLI keeps the panel off the hot path", () => {
     const unexpected = specifiers.filter(
       (s) =>
         !s.startsWith("./control-surface-") &&
-        !["node:path", "./errors.js", "./loader.js", "./ui-model.js"].includes(s),
+        !["node:path", "./effective.js", "./errors.js", "./loader.js", "./ui-model.js"].includes(s),
     );
     expect(unexpected).toEqual([]);
   });
