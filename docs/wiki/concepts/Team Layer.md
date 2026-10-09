@@ -103,6 +103,12 @@ question from *whose policy is this*.
 three `portal.*` identity keys, and the four `team.*` keys. A denied key arriving
 from the team origin is **DROPPED, not sanitised**, with a warning that names it:
 
+**Decided 2026-10-09 (P4, USER, revised the same day):** a team may set a `security.*` key
+only toward a STRICTER value and can never loosen one; a key with no declared stricter
+direction stays denied remotely. The user first said "any security setting" and revised
+it on discussion. Consistent with the `proxy.bypass_all` ban. The code is the task
+`team-security-stricter-only` (not built); see ADR-0008's amendment.
+
 ```
 team org_…: REFUSED "proxy.bypass_all" — a remote origin may never set it, at any
 importance (ADR-0008 floor). The value was DROPPED, not applied.

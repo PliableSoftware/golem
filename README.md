@@ -7,8 +7,9 @@ your LLM traffic and handles what shouldn't have to hit a model provider
 first: **redaction** (secrets/PII stripped before anything leaves the
 machine), **local tools** (vector knowledge base, tiered Ollama inference, CCR
 expansion), **routing** (Claude, with Foundry/OpenRouter adapters extending
-the same pipeline), and **honest observability** (real billed-token telemetry,
-not estimates). Compression (Golem-native lossless stage; optional
+the same pipeline), and **honest observability** (the prompt-cache report uses
+the billed `usage` from API responses; savings and tokens-saved figures are
+estimates, about 4 characters per token). Compression (Golem-native lossless stage; optional
 [Headroom](https://github.com/headroomlabs-ai/headroom) Python sidecar for
 ML-heavy stages) is part of the pipeline too, but it's *situational* — it pays
 off on non-caching upstreams, not on Anthropic's cached traffic, where the

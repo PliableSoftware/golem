@@ -333,3 +333,21 @@ DUST1 audit (UNVERIFIED, not re-checked in this pass), `golem
 status` loads the team origin, while `config`, the TUI, VS Code, hooks, MCP and
 the hot-reload do not. This ADR's provenance and portal sections do not settle
 it, and no amendment is made for it.
+
+## Amendment (2026-10-09, P4, USER decision, revised the same day)
+
+**Amended 2026-10-09 (DECISIONS.md P4/S17, USER decision; spec Decision 59
+amendment note).** The text above is unchanged and is history.
+
+- **Rule.** A team may set a `security.*` key only toward a STRICTER value and can
+  never loosen one. A `security.*` key with no declared stricter direction (a port,
+  say) stays denied remotely: fail closed. `REMOTE_DENIED_SETTINGS` keeps its named
+  keys, and this is consistent with the existing `proxy.bypass_all` ban: an
+  organisation can make a member's machine safer, never less safe.
+- **Consequence.** A team cannot enable phone approval (Decision 61), even once R13.9
+  exists, because enabling it is a loosening.
+- **How it was decided.** The user first answered "teams may set any security
+  setting", against the recommendation to deny them, and then revised that answer on
+  discussion to the stricter-only rule above. The revision supersedes the first answer.
+- **Not built.** The code is carried by the task `team-security-stricter-only`. Until
+  it lands, the floor above is as shipped.

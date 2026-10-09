@@ -30,6 +30,11 @@ is true but silent about cause; the verdict explains but can be wrong at the
 margins. A single "cache health" figure would hide precisely the distinction a
 reader needs.
 
+Only this report is billed usage. The savings figures in `golem stats` and the
+dashboard (tokens saved, before and after) are estimates at about 4 characters per
+token (`src/compression/tokens.ts:17-21`, `src/cli/stats.ts:128`), not billed counts
+(2026-10-09, `readme-estimates-claim`).
+
 ## Verdicts
 
 - **`first`** — no previous request for this conversation.

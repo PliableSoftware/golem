@@ -101,6 +101,11 @@ Different problems, different events.
 > `PreToolUse` takes a flat `permissionDecision` + `permissionDecisionReason`;
 > `PermissionRequest` nests `decision.behavior` + `message`.
 
+> **Decided 2026-10-09 (P3, USER):** Decision 61's opt-in setting reaches hosted sessions,
+> so Decision 60(d)'s "no setting changes that" is amended. Safeguards as for local
+> sessions: off by default, fresh re-authentication per answer, a loud log, a kill switch.
+> The setting is not built (R13.9), so the refusal described here is what ships today.
+
 ## The gate is the host's own
 
 Spawned with `--settings <inline JSON>`, which **wires hooks for a project that
