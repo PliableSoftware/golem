@@ -126,16 +126,29 @@ export async function appendHostLog(
   }
 }
 
-async function rotateIfLarge(file: string, maxBytes: number, keep: number): Promise<void> {
-  let size: number;
+async function statOrNull(file: string): Promise<{ size: number; ino: number } | null> {
   try {
-    size = (await stat(file)).size;
+    const st = await stat(file);
+    return { size: st.size, ino: st.ino };
   } catch (err) {
     // A concurrent writer already rotated it away.
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
-  if (size <= maxBytes) return;
+}
+
+async function rotateIfLarge(file: string, maxBytes: number, keep: number): Promise<void> {
+  const measured = await statOrNull(file);
+  if (measured === null || measured.size <= maxBytes) return;
+  // Re-check right before the rename: if another writer rotated meanwhile, the path
+  // now names a young file (different inode, or back under the threshold) and
+  // renaming it would shorten retention for nothing. ino is 0 on some Windows
+  // filesystems, where only the size check is meaningful. A rename is atomic on the
+  // path and cannot be conditioned on identity, so a window of microseconds remains;
+  // it costs early rotation, never a line.
+  const now = await statOrNull(file);
+  if (now === null || now.size <= maxBytes) return;
+  if (measured.ino !== 0 && now.ino !== measured.ino) return;
   const dir = path.dirname(file);
   lastStamp = Math.max(Date.now(), lastStamp + 1);
   const aside = path.join(
@@ -178,16 +191,27 @@ export async function readHostLog(
 ): Promise<readonly HostLogEntry[]> {
   const live = hostLogPath(projectDir);
   const dir = path.dirname(live);
-  const files = [...(await listRotated(dir)).map((n) => path.join(dir, n)), live];
   let lines: string[] = [];
-  for (let i = files.length - 1; i >= 0 && lines.length < limit; i -= 1) {
-    let raw: string;
-    try {
-      raw = await readFile(files[i] as string, "utf8");
-    } catch {
-      continue;
+  // A rotation can land between listing and reading (a file renamed away, or a new
+  // rotated name appearing). Re-list after reading and retry when the set changed.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const listed = await listRotated(dir);
+    const files = [...listed.map((n) => path.join(dir, n)), live];
+    lines = [];
+    let vanished = false;
+    for (let i = files.length - 1; i >= 0 && lines.length < limit; i -= 1) {
+      let raw: string;
+      try {
+        raw = await readFile(files[i] as string, "utf8");
+      } catch {
+        if (files[i] !== live) vanished = true;
+        continue;
+      }
+      lines = [...raw.split("\n").filter((l) => l.trim() !== ""), ...lines];
     }
-    lines = [...raw.split("\n").filter((l) => l.trim() !== ""), ...lines];
+    const after = await listRotated(dir);
+    const stable = after.length === listed.length && after.every((n, i) => n === listed[i]);
+    if (stable && !vanished) break;
   }
   const out: HostLogEntry[] = [];
   for (const line of lines.slice(-limit)) {

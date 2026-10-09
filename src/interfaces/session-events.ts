@@ -24,6 +24,17 @@
  *   still holds. A client MUST treat it as "this connection was dropped, reconnect"
  *   and MUST NOT render it as the session having ended.
  *
+ * - **Amendment 2026-10-09 (review fix): the dropped frame is for BACKPRESSURE
+ *   only.** The session is live in that case and the client reconnects. A host
+ *   shutdown is the session ending, so it publishes a real, stamped
+ *   {@link SessionEndedEvent} (never the dropped frame) and the client must not
+ *   reconnect.
+ *
+ * - **Amendment 2026-10-09 (review fix): `attached` carries an `epoch`.** A bus
+ *   rebuilt under the same session id restarts `seq` at 1. `epoch` identifies the
+ *   bus instance; when it differs from the one a client last saw, the client's
+ *   held seq belongs to a dead instance and MUST be discarded (resume from 0).
+ *
  * - **Connection state is an EVENT, never an inference.** ADR-0006's rule — "a
  *   dropped link shows not connected, never a stale approved" — is inherited
  *   here for conversation, where the same failure looks like a message the user
@@ -118,7 +129,8 @@ export interface SessionEndedEvent {
 /**
  * The synthetic frame sent to a subscriber the server dropped for backpressure.
  * NOT a {@link SessionEvent}: no `seq`, no SSE `id:`. The session is still live;
- * only this connection ended. See the 2026-10-09 amendment above.
+ * only this connection ended (a backpressure drop, never a shutdown). See the
+ * 2026-10-09 amendments above.
  */
 export interface SessionDroppedFrame {
   readonly type: "ended";
@@ -136,6 +148,8 @@ export interface SessionAttachedEvent {
   readonly sessionId: string;
   /** The seq the client is resuming from, or 0 for a fresh attach. */
   readonly resumedFrom: number;
+  /** Identifies the bus instance whose `seq`s follow. See the 2026-10-09 amendment. */
+  readonly epoch: string;
   /**
    * True when the client asked to resume from a cursor the server no longer
    * holds. The client has a GAP and must say so rather than render a continuous

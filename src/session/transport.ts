@@ -240,8 +240,10 @@ export function handleStream(
   const attach = session.bus.subscribe(
     {
       send: (event) => write(sseFrame(event)),
-      close: (reason) => {
-        write(sseFrame({ type: "ended", dropped: true, reason }));
+      close: (reason, kind) => {
+        // Only a backpressure drop sends the seq-less frame. A shutdown already
+        // delivered a real `ended` event through `send`; just close the stream.
+        if (kind !== "shutdown") write(sseFrame({ type: "ended", dropped: true, reason }));
         res.end();
       },
     },
@@ -255,6 +257,7 @@ export function handleStream(
       type: "attached",
       seq: 0,
       sessionId: session.bus.sessionId,
+      epoch: session.bus.epoch,
       resumedFrom: after,
       gap: attach.gap,
     } as SessionEvent),

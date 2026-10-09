@@ -22,6 +22,7 @@
  *    the agent — trades a correctness property for a convenience one.
  */
 
+import { randomBytes } from "node:crypto";
 import type { SessionEvent } from "../interfaces/session-events.js";
 
 /**
@@ -37,11 +38,17 @@ export const RING_CAPACITY = 500;
 /** How many events may queue for ONE subscriber before it is dropped as too slow. */
 export const SUBSCRIBER_QUEUE_LIMIT = 200;
 
+export type SubscriberCloseKind = "dropped" | "shutdown";
+
 export interface Subscriber {
   /** Deliver one event. Returns false when the sink is backed up. */
   readonly send: (event: SessionEvent) => boolean;
-  /** Called when this subscriber is dropped, with the reason. */
-  readonly close: (reason: string) => void;
+  /**
+   * Called when this subscriber is closed, with the reason and WHY: `dropped` is a
+   * backpressure drop (the session is live; reconnect and resume), `shutdown` is the
+   * host going away (the session is over; a real `ended` event was published first).
+   */
+  readonly close: (reason: string, kind?: SubscriberCloseKind) => void;
 }
 
 export interface AttachResult {
@@ -67,6 +74,13 @@ export class SessionBus {
   private readonly backlog = new WeakMap<Subscriber, number>();
   /** Set once the session is over; a late attach is told immediately. */
   private ended: SessionEvent | undefined;
+
+  /**
+   * Identifies THIS bus instance. A bus rebuilt under the same session id (a host
+   * restart, a resume) restarts seq at 1, so a client must be able to tell that the
+   * seqs it holds belong to another instance. Sent on the `attached` frame.
+   */
+  readonly epoch: string = randomBytes(8).toString("hex");
 
   constructor(
     readonly sessionId: string,
@@ -109,6 +123,7 @@ export class SessionBus {
         this.subscribers.delete(sub);
         sub.close(
           `dropped: this client fell more than ${SUBSCRIBER_QUEUE_LIMIT} events behind. Reconnect with Last-Event-ID to resume — nothing was lost.`,
+          "dropped",
         );
       }
     }
@@ -144,11 +159,16 @@ export class SessionBus {
     return this.ended;
   }
 
-  /** Drop every subscriber, e.g. because the process is going away. */
+  /**
+   * Drop every subscriber because the process is going away. The session is over,
+   * so subscribers are first told with a REAL `ended` event (stamped, in the ring);
+   * a client must never have to conclude it from a closed socket.
+   */
   closeAll(reason: string): void {
+    if (this.ended === undefined) this.publish({ type: "ended", reason });
     for (const sub of [...this.subscribers]) {
       this.subscribers.delete(sub);
-      sub.close(reason);
+      sub.close(reason, "shutdown");
     }
   }
 }

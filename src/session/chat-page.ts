@@ -185,6 +185,8 @@ export function renderChatPage(options: ChatPageOptions): string {
   var log = document.getElementById("log");
   var body = document.body;
   var lastSeq = 0;
+  var epoch = null;   // bus instance the held seqs belong to
+  var over = false;   // the session really ended: never reconnect
   var es = null;
 
   function atBottom() {
@@ -257,6 +259,19 @@ export function renderChatPage(options: ChatPageOptions): string {
       setTimeout(connect, 1000);
       return;
     }
+    // A bus rebuilt under this session id restarts seq at 1: the seqs held belong to
+    // another instance. Forget them and resume from the start of the new one.
+    if (ev.type === "attached" && typeof ev.epoch === "string") {
+      var changed = epoch !== null && epoch !== ev.epoch;
+      epoch = ev.epoch;
+      if (changed) {
+        lastSeq = 0;
+        if (es !== null) es.close();
+        append(el("div", "gap", "The session was restarted on the host — continuing from its new start."));
+        connect();
+        return;
+      }
+    }
     if (typeof ev.seq === "number" && ev.seq > 0) {
       // A resume must never repeat an event already rendered.
       if (ev.seq <= lastSeq) return;
@@ -288,6 +303,8 @@ export function renderChatPage(options: ChatPageOptions): string {
         append(el("div", "gap", "⏸ " + ev.detail));
         break;
       case "ended":
+        over = true;
+        if (es !== null) es.close();
         assistantEl = null;
         append(el("div", "boundary", "session ended — " + ev.reason));
         break;
@@ -295,6 +312,7 @@ export function renderChatPage(options: ChatPageOptions): string {
   }
 
   function connect() {
+    if (over) return;
     if (es !== null) es.close();
     // EventSource sends Last-Event-ID itself on ITS reconnects; the after= query covers
     // the case where we are reconnecting deliberately.
@@ -308,6 +326,7 @@ export function renderChatPage(options: ChatPageOptions): string {
         });
       });
     es.onerror = function () {
+      if (over) return;
       // Not connected REPLACES the content; it does not decorate stale turns.
       body.classList.add("offline");
     };

@@ -19,7 +19,7 @@ type Unstamped = SessionEvent extends infer E
 
 /** One of every variant, so the union is exercised end to end. */
 const ONE_OF_EACH: readonly Unstamped[] = [
-  { type: "attached", sessionId: "s", resumedFrom: 0, gap: false },
+  { type: "attached", sessionId: "s", resumedFrom: 0, epoch: "e1", gap: false },
   { type: "text", text: "hi" },
   { type: "tool_call", id: "t1", name: "Read", input: { path: "x" } },
   { type: "tool_result", toolCallId: "t1", isError: false, content: "ok" },
