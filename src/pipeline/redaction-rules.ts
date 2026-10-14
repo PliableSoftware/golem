@@ -226,22 +226,15 @@ function emailLocalStart(text: string, at: number, floor: number): number {
 }
 
 /**
- * Every placeholder kind a built-in rule or the entropy sweep produces. The
- * connection-password rule exempts a password that is exactly one of these (see
- * there); a test pins this list to the rule table.
+ * The placeholder kinds that can appear in a password position on a SECOND pass
+ * without the connection-password rule having seen them on the first: its own, and
+ * those of the rules that run AFTER it (azure-account-key, credit-card, email,
+ * nostr-secret-key) and the entropy sweep. An EARLIER rule's placeholder in that
+ * position is renamed to a connection-password one on the first pass (pinned by
+ * redaction.test.ts), so it never survives to be re-read. A test pins this list to
+ * the rule table.
  */
 const PLACEHOLDER_KINDS: readonly string[] = [
-  "private-key",
-  "aws-key",
-  "aws-secret-key",
-  "github-token",
-  "anthropic-key",
-  "openai-key",
-  "slack-token",
-  "google-api-key",
-  "stripe-key",
-  "gcp-oauth-token",
-  "jwt",
   "connection-password",
   "azure-account-key",
   "credit-card",
@@ -368,8 +361,9 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
     // when a real password follows it (`[key]:pw@` redacts `pw`), and the lookahead
     // `(?!(?<=\[REDACTED:)KIND:\d+\])` refuses a match that would start on one (nothing
     // follows to be a password). The other lookahead skips a password that is EXACTLY one
-    // placeholder, anchored on `]@` (S10: no renumbering). KIND is every built-in rule
-    // id plus the entropy sweep; the kind is the only free text in a placeholder, so only
+    // placeholder, anchored on `]@` (S10: no renumbering). KIND is connection-password, the rules
+    // that run after this one, and the entropy sweep (an earlier rule's placeholder is renamed
+    // on the first pass, as before); the kind is the only free text in a placeholder, so only
     // the fixed vocabulary is exempt and a made-up kind (which could carry a secret) is
     // still a password. The number is any digits, as it always was. A plugin rule's kind
     // is not known here and is not exempt.

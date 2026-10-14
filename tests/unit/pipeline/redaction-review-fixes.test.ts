@@ -441,17 +441,6 @@ describe("DUSTSEC.24 review (6) scanEnd is clamped toward more redaction", () =>
 // ---------------------------------------------------------------------------
 
 const KINDS = [
-  "private-key",
-  "aws-key",
-  "aws-secret-key",
-  "github-token",
-  "anthropic-key",
-  "openai-key",
-  "slack-token",
-  "google-api-key",
-  "stripe-key",
-  "gcp-oauth-token",
-  "jwt",
   "connection-password",
   "azure-account-key",
   "credit-card",
@@ -536,12 +525,18 @@ describe("DUSTSEC.24 second review (1) a scheme of any length still has its pass
 });
 
 describe("DUSTSEC.24 second review (2) a second pass never re-redacts another rule's placeholder", () => {
-  it("a password-position placeholder of any built-in kind is left alone, an unknown kind is not", () => {
+  it("a password-position placeholder of a late kind is left alone; an earlier rule's is renamed, an unknown kind is a password", () => {
     const ph = (kind: string, n: number) => `${MARK}${kind}:${n}]`;
     for (const kind of KINDS) {
       const text = `postgres://u:${ph(kind, 5)}@h`;
       expect(redactIdentifierText(text), kind).toBe(text);
     }
+    // An EARLIER rule's placeholder is renamed on the first pass (the pinned S10 behaviour), so a
+    // second pass finds nothing new.
+    const early = `postgres://u:${ph("github-token", 4)}@h`;
+    const renamed = redactIdentifierText(early);
+    expect(renamed).toBe(`postgres://u:${ph("connection-password", 1)}@h`);
+    expect(redactIdentifierText(renamed)).toBe(renamed);
     // The kind is the only free text in a placeholder, so only the fixed vocabulary is
     // exempt: a made-up kind (which could carry a secret) is a password like any other.
     const hidden = `postgres://u:${ph(base62("kind", 10), 3)}@h`;
@@ -551,9 +546,9 @@ describe("DUSTSEC.24 second review (2) a second pass never re-redacts another ru
   it("a placeholder in the user position: a real password after it is redacted, a lone placeholder is left", () => {
     const ph = (kind: string, n: number) => `${MARK}${kind}:${n}]`;
     const pw = base62("pw3", 12);
-    // earlier rules' placeholders really do land in the user position of a URL
-    expect(redactIdentifierText(`pg://${ph("aws-key", 1)}:${pw}@h`)).toBe(
-      `pg://${ph("aws-key", 1)}:${ph("connection-password", 1)}@h`,
+    // a later rule's placeholder can land in the user position of a URL (an address as the user name)
+    expect(redactIdentifierText(`pg://${ph("email", 1)}:${pw}@h`)).toBe(
+      `pg://${ph("email", 1)}:${ph("connection-password", 1)}@h`,
     );
     for (const text of [
       `pg://${ph("credit-card", 1)}:${ph("connection-password", 2)}@h`,
@@ -570,8 +565,10 @@ describe("DUSTSEC.24 second review (2) a second pass never re-redacts another ru
     );
   });
 
-  it("the kinds listed here are exactly the built-in rule ids plus the entropy sweep", () => {
-    expect([...KINDS].sort()).toEqual([...REDACTION_RULES.map((r) => r.id), "high-entropy"].sort());
+  it("the kinds listed here are connection-password, the rules after it, and the entropy sweep", () => {
+    const ids = REDACTION_RULES.map((r) => r.id);
+    const after = ids.slice(ids.indexOf("connection-password"));
+    expect([...KINDS].sort()).toEqual([...after, "high-entropy"].sort());
   });
 
   it("the review's glued shapes are idempotent", () => {
