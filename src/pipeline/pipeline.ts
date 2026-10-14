@@ -52,6 +52,7 @@ import { parseJsonBody, redactAnyBody, refuseDuplicateKeys } from "./body-redact
 import { applyBrevity } from "./brevity.js";
 import { applyJoinMessages, canInject } from "./join-injection.js";
 import { eligibleLocalAnswerText, synthesizeLocalAnswerResponse } from "./local-answer-response.js";
+import { assertRedactionOn } from "./policy-guard.js";
 import { redactRequestBody } from "./redaction.js";
 
 /**
@@ -408,8 +409,11 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       const stageMs: Record<string, number> = {};
       if (input.body === null) return input;
       if (!isMessagesRequest(input)) {
-        // DUSTSEC.19 — redaction only, honouring the same policy flag as stage 1.
-        return (await options.policy()).stages.redaction ? redactAnyBody(input) : input;
+        // DUSTSEC.19 — redaction only. DUST2.23: the policy is still asked for and
+        // checked, so a policy that says redaction-off throws (the proxy then falls
+        // back to redaction alone) instead of being obeyed.
+        assertRedactionOn(await options.policy());
+        return redactAnyBody(input);
       }
 
       let parsed: unknown;
@@ -449,7 +453,8 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         }
       }
 
-      const policy = await options.policy();
+      // DUST2.23: throws on a policy with redaction off (fail closed, see policy-guard.ts).
+      const policy = assertRedactionOn(await options.policy());
       const stages = policy.stages;
       const stageSavings: Record<string, TokenDelta> = {};
       let body: Record<string, unknown> = parsed;
@@ -506,8 +511,9 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         }
       }
 
-      // Stage 1 — redaction (always first; runs at every level per the table).
-      if (stages.redaction) {
+      // Stage 1 — redaction (always first; unconditional since DUST2.23: the policy
+      // can no longer say otherwise, see policy-guard.ts).
+      {
         const redacted = redactRequestBody(body);
         stageSavings.redaction = redacted.delta;
         if (redacted.count > 0 && isRecord(redacted.value)) {
@@ -635,7 +641,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
           }
         }
         if (touched) changed = true;
-        if (stages.redaction) {
+        {
           const reRedacted = redactRequestBody(body);
           if (reRedacted.count > 0 && isRecord(reRedacted.value)) {
             body = reRedacted.value;

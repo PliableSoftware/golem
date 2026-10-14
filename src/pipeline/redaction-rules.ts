@@ -760,15 +760,49 @@ const PATH_CHUNK_HEX_RE = /^[0-9a-fA-F]+$/;
 /** See the `MIN_CHUNKS_FOR_HEX_ALLOWANCE` paragraph in {@link isPathLikeToken}'s doc comment. */
 const MIN_CHUNKS_FOR_HEX_ALLOWANCE = 3;
 
+/**
+ * DUST2.23 / DUST1.1 headline 9 — `=` and `+` are path/URL delimiters too
+ * (`--out=/a/b`, `OUT_DIR=/a/b`, `?q=Alice+Bob`). Before, a chunk carrying one failed
+ * the alpha/numeric/hex test, so the whole token lost the exemption and a long,
+ * varied, ordinary path was redacted (over-redaction, not a leak). They now split
+ * chunks like `/_-`, but a token that contains one is judged by a STRICTER rule
+ * ("strict mode"), because `=`/`+` are also base64 characters and `key=<secret>` is
+ * the commonest way a secret is written down:
+ *
+ * - at least {@link MIN_CHUNKS_STRICT} chunks, so `key=<one secret run>` (two chunks)
+ *   never qualifies, whatever the run looks like;
+ * - every alphabetic chunk longer than {@link STRICT_FREE_ALPHA_CHARS} letters must
+ *   be word-shaped ({@link STRICT_WORD_RE}: lower, UPPER, Capitalized, or CamelCase
+ *   with every hump at least three letters). A random letters-only chunk of that
+ *   length is essentially never word-shaped, so a secret cannot hide among words.
+ *
+ * Tokens with no `=`/`+` take exactly the old path, byte for byte.
+ */
+const PATH_DELIMITER_RE = /[/_=+-]/;
+const MIN_CHUNKS_STRICT = 3;
+const STRICT_FREE_ALPHA_CHARS = 3;
+const STRICT_WORD_RE =
+  /^(?:[A-Z][a-z]{2,}|[a-z]{3,}|[A-Z]{2,}(?![a-z]))(?:[A-Z][a-z]{2,}|[a-z]{3,}|[A-Z]{2,}(?![a-z]))*$/;
+
 function isPathLikeToken(token: string): boolean {
-  const chunks = token.split(/[/_-]/).filter((c) => c.length > 0);
+  const chunks = token.split(PATH_DELIMITER_RE).filter((c) => c.length > 0);
   if (chunks.length < 2) {
+    return false;
+  }
+  const strict = token.includes("=") || token.includes("+");
+  if (strict && chunks.length < MIN_CHUNKS_STRICT) {
     return false;
   }
   let hasMixedHexChunk = false;
   for (const chunk of chunks) {
-    if (PATH_CHUNK_ALPHA_RE.test(chunk) || PATH_CHUNK_NUMERIC_RE.test(chunk)) {
-      continue; // clean: a plain word or a plain number
+    if (PATH_CHUNK_ALPHA_RE.test(chunk)) {
+      if (strict && chunk.length > STRICT_FREE_ALPHA_CHARS && !STRICT_WORD_RE.test(chunk)) {
+        return false; // a letters-only run that is not word-shaped is not a path word
+      }
+      continue; // clean: a plain word
+    }
+    if (PATH_CHUNK_NUMERIC_RE.test(chunk)) {
+      continue; // clean: a plain number
     }
     if (PATH_CHUNK_HEX_RE.test(chunk)) {
       // Reaches here only because it failed BOTH checks above, so it mixes at
