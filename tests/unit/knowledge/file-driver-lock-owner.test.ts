@@ -7,7 +7,11 @@
 import { readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { acquireLock } from "../../../src/knowledge/file-driver.js";
+import {
+  acquireLock,
+  OWNER_READ_ATTEMPTS,
+  touchLockIfOwned,
+} from "../../../src/knowledge/file-driver.js";
 import { collectionDir, FileVectorDriver, type StoredChunk } from "../../../src/knowledge/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
@@ -199,5 +203,115 @@ describe("write fencing", () => {
     await expect(stat(path.join(dir, "chunks.jsonl"))).rejects.toThrow();
     await expect(stat(path.join(dir, "meta.json"))).rejects.toThrow();
     expect((await readFile(path.join(dir, "chunks.lock"), "utf8")).trim()).toBe("9999.newowner");
+  });
+});
+
+const errno = (code: string) => Object.assign(new Error(code), { code });
+
+describe("fence and heartbeat edge cases", () => {
+  it("losing the lock between the two commit checks commits nothing to chunks.jsonl", async () => {
+    const base = await newTempDir();
+    const chunk: StoredChunk = {
+      chunk: { chunkId: "c1", projectId: "p", text: "t", sourcePath: "a.md", metadata: {} },
+      vector: [1, 0],
+    };
+    let reads = 0;
+    // Reads: assertHeld before meta.json (own token), assertHeld before chunks.jsonl
+    // (someone else's), then release. Removing the second check lets chunks.jsonl land.
+    const driver = new FileVectorDriver(base, {
+      readLock: async (file) => {
+        reads++;
+        return reads === 1 ? readFile(file, "utf8") : "9999.newowner\n";
+      },
+    });
+    await expect(driver.upsert("p", [chunk])).rejects.toThrow(/lock lost/);
+    const dir = collectionDir(base, "p");
+    await expect(stat(path.join(dir, "chunks.jsonl"))).rejects.toThrow();
+    expect(reads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("touchLockIfOwned: a transient read error still counts as owned, ENOENT does not", async () => {
+    await writeFile(lockPath, "me\n");
+    expect(
+      await touchLockIfOwned(lockPath, "me", async () => {
+        throw errno("EBUSY");
+      }),
+    ).toBe(true);
+    expect(
+      await touchLockIfOwned(lockPath, "me", async () => {
+        throw errno("ENOENT");
+      }),
+    ).toBe(false);
+    expect(await touchLockIfOwned(lockPath, "me", async () => "other\n")).toBe(false);
+  });
+
+  it("a heartbeat whose reads hit a transient error does not mark the lock lost", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const release = await acquireLock(lockPath, {
+      staleMs: 30,
+      readLock: async () => {
+        throw errno("EBUSY");
+      },
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    vi.useRealTimers();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(release.lost).toBe(false);
+  });
+
+  it("assertHeld retries a transient read error before deciding", async () => {
+    let fails = OWNER_READ_ATTEMPTS - 1;
+    const release = await acquireLock(lockPath, {
+      readLock: async (file) => {
+        if (fails-- > 0) throw errno("EBUSY");
+        return readFile(file, "utf8");
+      },
+    });
+    await release.assertHeld();
+    expect(release.lost).toBe(false);
+    await release();
+  });
+
+  it("assertHeld that can never read aborts but does not mark the lock lost", async () => {
+    const release = await acquireLock(lockPath, {
+      readLock: async () => {
+        throw errno("EBUSY");
+      },
+    });
+    await expect(release.assertHeld()).rejects.toThrow(/could not be verified/);
+    expect(release.lost).toBe(false);
+    await release();
+  });
+
+  it("release retries a transient read error so the lock does not linger", async () => {
+    let fails = OWNER_READ_ATTEMPTS - 1;
+    const release = await acquireLock(lockPath, {
+      readLock: async (file) => {
+        if (fails-- > 0) throw errno("EBUSY");
+        return readFile(file, "utf8");
+      },
+    });
+    await release();
+    await expect(stat(lockPath)).rejects.toThrow();
+  });
+
+  it("a take-over whose verification cannot read removes the lock it just wrote", async () => {
+    await writeFile(lockPath, "1.deadowner\n");
+    await utimes(lockPath, OLD, OLD);
+    let failures = OWNER_READ_ATTEMPTS;
+    const release = await acquireLock(lockPath, {
+      staleMs: 1_000,
+      waitMs: 600,
+      readLock: async (file) => {
+        // Only the post-rename verification of the lock itself fails.
+        if (file === lockPath && (await readFile(file, "utf8")).startsWith("1.") === false) {
+          if (failures-- > 0) throw errno("EIO");
+        }
+        return readFile(file, "utf8");
+      },
+    });
+    // Without the cleanup our own token would sit in the lock, unowned, until it aged out.
+    expect((await readFile(lockPath, "utf8")).trim()).not.toBe("1.deadowner");
+    await release();
   });
 });
