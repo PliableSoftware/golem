@@ -20,7 +20,9 @@ import type { AddressInfo } from "node:net";
 import type { BlockedView } from "../cli/blocked-view.js";
 import type { SessionStateReport } from "../cli/session-report.js";
 import type { StatsReport } from "../cli/stats.js";
+import type { UsageView } from "../telemetry/usage-view.js";
 import { ICON_SIZES, iconPng, iconSizeForPath } from "./icon.js";
+import { type UsageTile, usageTiles } from "./usage-tiles.js";
 
 /** Everything the page shows, snake_case (it is also the JSON API shape). */
 export interface DashboardSnapshot {
@@ -41,6 +43,11 @@ export interface DashboardSnapshot {
    * and this server gains no write route.
    */
   readonly blocked?: BlockedView;
+  /**
+   * DUST2.18 — billed cache/spend + estimated avoided tokens, same rollups as
+   * `golem stats --cache` / `golem bench cost`. Absent reads as "no usage data".
+   */
+  readonly usage?: UsageView;
 }
 
 /**
@@ -192,7 +199,8 @@ async function handle(
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store",
       });
-      res.end(req.method === "HEAD" ? undefined : `${JSON.stringify(snapshot)}\n`);
+      const payload = { ...snapshot, usage_tiles: usageTiles(snapshot.usage) };
+      res.end(req.method === "HEAD" ? undefined : `${JSON.stringify(payload)}\n`);
       return;
     }
     // R12.5 — the two static assets that make the page installable to a home
@@ -235,7 +243,7 @@ async function handle(
   }
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -255,6 +263,22 @@ function stageRows(snapshot: DashboardSnapshot): string {
         `<td class="num">${d.tokens_after}</td><td class="num">${d.tokens_saved}</td></tr>`,
     )
     .join("\n          ");
+}
+
+/**
+ * DUST2.18 — the usage tiles as server-rendered HTML. Every string is escaped;
+ * `estimated` tiles carry their "(est.)" in the label. The client poller rebuilds
+ * the same nodes with textContent from `usage_tiles` in `/api/stats`.
+ */
+export function usageTilesHtml(tiles: readonly UsageTile[]): string {
+  return tiles
+    .map(
+      (t) =>
+        `<div class="tile usage-tile ${t.basis}" data-tile="${escapeHtml(t.id)}">` +
+        `<div class="label">${escapeHtml(t.label)}</div>` +
+        `<div class="value">${escapeHtml(t.value)}</div></div>`,
+    )
+    .join("\n    ");
 }
 
 /**
@@ -409,6 +433,11 @@ export function renderPage(snapshot: DashboardSnapshot): string {
         <small>/</small> <span id="ccr-retrieved">${s.ccr_refs_retrieved}</span></div></div>
   </div>
 
+  <h2>Usage and cost</h2>
+  <div class="tiles" id="usage-tiles">
+    ${usageTilesHtml(usageTiles(snapshot.usage))}
+  </div>
+
   <h2>Stage attribution</h2>
   <div class="scroll-x">
   <table>
@@ -466,8 +495,28 @@ export function renderPage(snapshot: DashboardSnapshot): string {
     }
     slot.appendChild(box);
   }
+  // DUST2.18 — usage tiles from the server's display model; textContent only.
+  function renderUsage(tiles) {
+    var box = document.getElementById("usage-tiles");
+    if (!box || !Array.isArray(tiles)) return;
+    box.textContent = "";
+    tiles.forEach(function (t) {
+      var tile = document.createElement("div");
+      tile.className = "tile usage-tile " + (t.basis === "billed" ? "billed" : "estimated");
+      var label = document.createElement("div");
+      label.className = "label";
+      label.textContent = String(t.label);
+      var value = document.createElement("div");
+      value.className = "value";
+      value.textContent = String(t.value);
+      tile.appendChild(label);
+      tile.appendChild(value);
+      box.appendChild(tile);
+    });
+  }
   function render(snap) {
     var s = snap.stats;
+    renderUsage(snap.usage_tiles);
     setText("project-dir", snap.project_dir);
     setText("tokens-saved", s.tokens_saved);
     setText("tokens-before", s.tokens_before);

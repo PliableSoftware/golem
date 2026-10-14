@@ -111,12 +111,14 @@ export default function register(program: Command): void {
             const { getDialInfo } = await import("../dials.js");
             const { blockedView } = await import("../blocked-view.js");
             const { readSessionState, resolveBlock } = await import("../../hooks/session-state.js");
-            const [dial, stats, session] = await Promise.all([
+            const { collectUsageViewCached } = await import("../../telemetry/index.js");
+            const [dial, stats, session, usage] = await Promise.all([
               getDialInfo("compression", { projectDir: opts.dir }),
               // Resolved per poll: the source flips from the in-memory live one to
               // durable telemetry once the proxy records its first request.
               statsSourceForCli(opts.dir).then((source) => collectStats(source)),
               readSessionState(opts.dir),
+              collectUsageViewCached(opts.dir),
             ]);
             return {
               project_dir: opts.dir,
@@ -125,6 +127,7 @@ export default function register(program: Command): void {
               // R12.2: the same blocked read model `/api/state` serves, so the
               // page itself renders it instead of only the JSON endpoint.
               blocked: blockedView(resolveBlock(session)),
+              usage,
               generated_at: new Date().toISOString(),
             };
           },

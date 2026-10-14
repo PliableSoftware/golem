@@ -30,10 +30,29 @@ is true but silent about cause; the verdict explains but can be wrong at the
 margins. A single "cache health" figure would hide precisely the distinction a
 reader needs.
 
-Only this report is billed usage. The savings figures in `golem stats` and the
+Only the billed block is billed usage. The savings figures in `golem stats` and the
 dashboard (tokens saved, before and after) are estimates at about 4 characters per
 token (`src/compression/tokens.ts:17-21`, `src/cli/stats.ts:128`), not billed counts
 (2026-10-09, `readme-estimates-claim`).
+
+## On the dashboard (DUST2.18)
+
+The dashboard's "Usage and cost" tiles and `/api/state`'s `usage` block are folded by
+`buildUsageView` (`src/telemetry/usage-view.ts`) from the SAME rollups: `aggregateCacheStats`
+(this page) and `buildCostBenchmark` (`golem bench cost`). Billed tiles (cache hit rate,
+billed input tokens, cost = billed tokens x catalog prices, "(partial)" when a model could
+not be priced) carry no qualifier; the avoided-upstream tile is chars/4 and says "(est.)".
+No samples renders as "no usage data yet", never `0%` or `NaN`. Display strings are built
+once in `src/dashboard/usage-tiles.ts`; the page sets them with `textContent`/`escapeHtml`
+only. The LAN/auth behaviour is untouched.
+
+Cost and scope: the view is read through `collectUsageViewCached` (10 s TTL, keyed by project
+dir, single-flight, a failure serves the last good view or the empty state), so ~2 s polls
+do not each re-read the event log. Scope matches the page it sits on: `golem stats --cache`
+without `--project` aggregates every project recorded in this directory's telemetry, and the
+dashboard's other tiles (`collectStats` with no project id) do the same, so the usage tiles
+are likewise unscoped and all-time rather than per-project. See [[Blocked State Read Model]] for the sibling
+`/api/state` block.
 
 ## Verdicts
 

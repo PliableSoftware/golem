@@ -22,7 +22,12 @@ import { z } from "zod";
 import { AUTONOMY_LEVELS, type AutonomyLevel, readAutonomyLevel } from "../autonomy/index.js";
 import { readSessionState, resolveBlock } from "../hooks/index.js";
 import { compressionName } from "../interfaces/policy.js";
-import { openTelemetryStore, type ToolUsageStats } from "../telemetry/index.js";
+import {
+  collectUsageViewCached,
+  openTelemetryStore,
+  type ToolUsageStats,
+  type UsageView,
+} from "../telemetry/index.js";
 import { type BlockedView, blockedView, blockedViewSchema } from "./blocked-view.js";
 import { statsSourceForCli } from "./mcp-compression.js";
 import { collectStats, type StatsReport } from "./stats.js";
@@ -86,6 +91,12 @@ export interface SessionStateReport {
   /** Cumulative savings + per-stage/CCR/tool attribution (the `golem stats` shape). */
   readonly savings: StatsReport;
   readonly storage: GolemStorageSizes;
+  /**
+   * DUST2.18 — billed cache + spend and the estimated avoided-token figures, from
+   * the same rollups as `golem stats --cache` / `golem bench cost`. Optional so
+   * an older producer still validates; `collectSessionStateReport` always sets it.
+   */
+  readonly usage?: UsageView;
 }
 
 // --- zod contract (validated at the HTTP boundary; internal code trusts types) ---
@@ -117,6 +128,43 @@ const statsReportSchema = z.object({
   note: z.string(),
 });
 
+const usageViewSchema = z.object({
+  cache: z.object({
+    samples: z.number(),
+    hit_rate: z.number().nullable(),
+    cache_read_tokens: z.number(),
+    cache_creation_tokens: z.number(),
+    uncached_input_tokens: z.number(),
+    billed_input_tokens: z.number(),
+  }),
+  spend: z
+    .object({
+      by_model: z.array(
+        z.object({
+          model: z.string(),
+          requests: z.number(),
+          input_tokens: z.number(),
+          cache_creation_input_tokens: z.number(),
+          cache_read_input_tokens: z.number(),
+          output_tokens: z.number(),
+          usd: z.number().nullable(),
+          priced_from: z.string(),
+        }),
+      ),
+      priced_usd: z.number().nullable(),
+      unattributed_requests: z.number(),
+      unpriced_models: z.array(z.string()),
+      catalog_source: z.string(),
+      catalog_as_of: z.string(),
+    })
+    .nullable(),
+  estimated: z.object({
+    avoided_upstream_input_tokens: z.number(),
+    avoided_upstream_output_tokens: z.number(),
+    drafted_locally_tokens: z.number(),
+  }),
+});
+
 export const sessionStateReportSchema = z.object({
   project_dir: z.string(),
   generated_at: z.string(),
@@ -145,6 +193,7 @@ export const sessionStateReportSchema = z.object({
     telemetry_bytes: z.number(),
     webcache_bytes: z.number(),
   }),
+  usage: usageViewSchema.optional(),
 });
 
 /** Injection seams for tests; all default to the real collectors. */
@@ -165,12 +214,13 @@ export async function collectSessionStateReport(
 ): Promise<SessionStateReport> {
   const nowIso = opts.nowIso ?? new Date().toISOString();
   const collectState = opts.collectState ?? collectGolemState;
-  const [golem, savings, storage, session, autonomyLevel] = await Promise.all([
+  const [golem, savings, storage, session, autonomyLevel, usage] = await Promise.all([
     collectState(dir).catch(() => null),
     collectSavings(dir),
     golemStorageSizes(dir),
     readSessionState(dir).catch(() => null),
     readAutonomyLevel(dir).catch(() => "manual" as AutonomyLevel),
+    collectUsageViewCached(dir).catch(() => undefined),
   ]);
 
   // R11.1: `collectGolemState` (the status line's own reader) already resolves
@@ -203,6 +253,7 @@ export async function collectSessionStateReport(
     blocked,
     savings,
     storage,
+    ...(usage !== undefined ? { usage } : {}),
   };
 }
 

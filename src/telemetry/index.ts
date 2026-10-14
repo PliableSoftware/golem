@@ -69,6 +69,14 @@ export {
   type SemanticForcedReportRow,
   semanticForcedReportRows,
 } from "./usage-report.js";
+export {
+  buildUsageView,
+  collectUsageView,
+  collectUsageViewCached,
+  createUsageViewCache,
+  USAGE_VIEW_TTL_MS,
+  type UsageView,
+} from "./usage-view.js";
 export { type WindowedStats, windowedStatsWithFallback } from "./windowed-stats.js";
 
 /** The durable telemetry store for a project (JSONL backend at P0). */
