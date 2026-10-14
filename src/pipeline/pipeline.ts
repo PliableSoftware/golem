@@ -46,15 +46,20 @@ import {
   conversationKeyOf,
 } from "../proxy/cache-prefix.js";
 import { buildContextLedger, type ContextLedgerCore } from "../proxy/context-ledger.js";
-import type { ProxyRequest, RequestPipeline } from "../proxy/types.js";
+import type { PipelineRunOptions, ProxyRequest, RequestPipeline } from "../proxy/types.js";
 import { isRecord } from "../shared/json.js";
 import { proxyLog } from "../shared/proxy-log.js";
-import { parseJsonBody, redactAnyBody, refuseDuplicateKeys } from "./body-redaction.js";
+import {
+  parseJsonBody,
+  redactAnyBody,
+  redactAnyBodyAsync,
+  refuseDuplicateKeys,
+} from "./body-redaction.js";
 import { applyBrevity } from "./brevity.js";
 import { applyJoinMessages, canInject } from "./join-injection.js";
 import { eligibleLocalAnswerText, synthesizeLocalAnswerResponse } from "./local-answer-response.js";
 import { assertRedactionOn } from "./policy-guard.js";
-import { redactRequestBody } from "./redaction.js";
+import { redactRequestBody, redactRequestBodyAsync } from "./redaction.js";
 
 /**
  * Whether an upstream is known to do Anthropic-style prompt caching (byte-
@@ -403,7 +408,33 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       if (redacted.count === 0 || !isRecord(redacted.value)) return input;
       return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
     },
-    async process(input: ProxyRequest): Promise<ProxyRequest> {
+    // DUSTSEC.23 — `redactOnly` with the walk sliced (see `redactRequestBodyAsync`),
+    // for the proxy's error path: the fail-safe re-walk must not freeze the event
+    // loop for as long as the walk that just failed. Same classification, same
+    // refusals, same bytes as `redactOnly` (a differential test holds it to that).
+    async redactOnlyAsync(
+      input: ProxyRequest,
+      runOptions: PipelineRunOptions = {},
+    ): Promise<ProxyRequest> {
+      const walkOptions = runOptions.signal === undefined ? {} : { signal: runOptions.signal };
+      if (input.body === null) return input;
+      if (!isMessagesRequest(input)) return redactAnyBodyAsync(input, walkOptions);
+      let parsed: unknown;
+      try {
+        parsed = parseJsonBody(input.body);
+      } catch {
+        return redactAnyBodyAsync(input, walkOptions);
+      }
+      if (!isRecord(parsed)) return redactAnyBodyAsync(input, walkOptions);
+      refuseDuplicateKeys(input.body);
+      const redacted = await redactRequestBodyAsync(parsed, walkOptions);
+      if (redacted.count === 0 || !isRecord(redacted.value)) return input;
+      return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
+    },
+    async process(input: ProxyRequest, runOptions: PipelineRunOptions = {}): Promise<ProxyRequest> {
+      // DUSTSEC.23: every redaction walk below yields to the event loop between slices
+      // and stops when the client goes away.
+      const walkOptions = runOptions.signal === undefined ? {} : { signal: runOptions.signal };
       // R10.23 — every stage below runs BEFORE the request is forwarded, so
       // whatever they cost, the user is watching the client say "waiting for
       // API" for exactly that long, with nothing in the log to say Golem is the
@@ -416,7 +447,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         // checked, so a policy that says redaction-off throws (the proxy then falls
         // back to redaction alone) instead of being obeyed.
         assertRedactionOn(await options.policy());
-        return redactAnyBody(input);
+        return redactAnyBodyAsync(input, walkOptions);
       }
 
       let parsed: unknown;
@@ -424,11 +455,11 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         parsed = parseJsonBody(input.body);
       } catch {
         // DUSTSEC.21: not JSON — redact it as text (or forward it if opaque).
-        return redactAnyBody(input);
+        return redactAnyBodyAsync(input, walkOptions);
       }
       if (!isRecord(parsed)) {
         // DUSTSEC.21: an array or bare scalar to the messages route: redaction only.
-        return redactAnyBody(input);
+        return redactAnyBodyAsync(input, walkOptions);
       }
       // DUSTSEC.21: a body with duplicate keys may hide a secret in a shadowed
       // value the parse dropped: refuse it (400, nothing forwarded).
@@ -517,7 +548,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       // Stage 1 — redaction (always first; unconditional since DUST2.23: the policy
       // can no longer say otherwise, see policy-guard.ts).
       {
-        const redacted = redactRequestBody(body);
+        const redacted = await redactRequestBodyAsync(body, walkOptions);
         stageSavings.redaction = redacted.delta;
         if (redacted.count > 0 && isRecord(redacted.value)) {
           body = redacted.value;
@@ -654,7 +685,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         }
         if (touched) changed = true;
         {
-          const reRedacted = redactRequestBody(body);
+          const reRedacted = await redactRequestBodyAsync(body, walkOptions);
           if (reRedacted.count > 0 && isRecord(reRedacted.value)) {
             body = reRedacted.value;
             // An in-place mutation returns the same object, so `touched` is

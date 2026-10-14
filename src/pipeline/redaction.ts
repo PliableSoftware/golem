@@ -379,33 +379,70 @@ export function redactReversibleTexts(texts: readonly string[]): ReversibleRedac
 }
 
 /**
+ * Slicing state for one walk. A sync walk has `slicing: false` and never
+ * yields, so it runs exactly the code the async walk runs, just without pausing.
+ */
+interface WalkState {
+  count: number;
+  slicing: boolean;
+  /** `performance.now()` at which the current slice is spent. */
+  deadline: number;
+}
+
+/** True once an async walk has used up its slice and must yield. */
+function sliceSpent(st: WalkState): boolean {
+  return st.slicing && performance.now() >= st.deadline;
+}
+
+/**
  * Recursively redact every string in a JSON value, sharing one placeholder
  * table across the whole request so the same secret gets the same placeholder
  * everywhere it appears. Object key order is preserved (spread keeps existing
  * keys in place) so re-serialization stays byte-stable.
+ *
+ * DUSTSEC.23: written ONCE, as a generator that yields (only when
+ * `st.slicing`, only between values) once the time slice is spent. The sync
+ * entry point drains it without ever yielding; the async one lets the event
+ * loop run between slices. One walk means the two cannot disagree on a byte.
  */
-function redactValue(value: unknown, table: PlaceholderTable, stats: { count: number }): unknown {
-  if (typeof value === "string") {
-    const result = redactText(value, table);
-    stats.count += result.count;
-    return result.count === 0 ? value : result.text;
-  }
+function redactString(value: string, table: PlaceholderTable, st: WalkState): string {
+  const result = redactText(value, table);
+  st.count += result.count;
+  return result.count === 0 ? value : result.text;
+}
+
+function* redactValueSteps(
+  value: unknown,
+  table: PlaceholderTable,
+  st: WalkState,
+): Generator<undefined, unknown, undefined> {
+  if (typeof value === "string") return redactString(value, table, st);
   if (Array.isArray(value)) {
     let changed = false;
-    const out = value.map((item) => {
-      const next = redactValue(item, table, stats);
+    // Holes stay holes, as with `Array.prototype.map`.
+    const out = new Array<unknown>(value.length);
+    for (let i = 0; i < value.length; i += 1) {
+      if (!(i in value)) continue;
+      const item: unknown = value[i];
+      const next =
+        typeof item === "string"
+          ? redactString(item, table, st)
+          : yield* redactValueSteps(item, table, st);
       if (next !== item) changed = true;
-      return next;
-    });
+      out[i] = next;
+      if (sliceSpent(st)) yield undefined;
+    }
     return changed ? out : value;
   }
   if (isRecord(value)) {
     let changed = false;
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value)) {
-      const next = redactValue(v, table, stats);
+      const next =
+        typeof v === "string" ? redactString(v, table, st) : yield* redactValueSteps(v, table, st);
       if (next !== v) changed = true;
       out[key] = next;
+      if (sliceSpent(st)) yield undefined;
     }
     return changed ? out : value;
   }
@@ -421,19 +458,94 @@ export interface RedactBodyResult {
   readonly delta: TokenDelta;
 }
 
+/** The slice budget of the async walk: wall time between two yields to the event loop. */
+export const REDACTION_SLICE_MS = 20;
+
+/** Thrown by the async walk when its signal aborts (the client went away). Nothing is returned. */
+export class RedactionAborted extends Error {
+  constructor() {
+    super("redaction walk aborted (the request was cancelled); nothing was forwarded");
+    this.name = "RedactionAborted";
+  }
+}
+
+export interface RedactBodyAsyncOptions {
+  /** Aborts the walk between slices; the walk then rejects with {@link RedactionAborted}. */
+  readonly signal?: AbortSignal;
+  /** TEST ONLY: slice budget in ms (default {@link REDACTION_SLICE_MS}). */
+  readonly sliceMs?: number;
+}
+
+/** Hand the event loop one turn: I/O (poll) callbacks run before a setImmediate callback. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 /**
  * Redact a parsed request body in place-preserving fashion. Runs over the
  * ENTIRE JSON: every string value (system prompt, every message, tool
  * definitions, tool_result content). Object keys are not redacted (S9 is
  * open). A secret anywhere must be stripped before it leaves the machine
  * or is handed to compression's CCR store.
+ *
+ * Synchronous: it holds the event loop for the whole walk. Anything on the
+ * proxy's request path uses {@link redactRequestBodyAsync}, which returns the
+ * same bytes without starving other sessions (DUSTSEC.23).
  */
 export function redactRequestBody(body: unknown): RedactBodyResult {
   const table = new PlaceholderTable();
-  const stats = { count: 0 };
+  const st: WalkState = { count: 0, slicing: false, deadline: Number.POSITIVE_INFINITY };
   const tokensBefore = estimateTokens(JSON.stringify(body) ?? "");
-  const value = redactValue(body, table, stats);
-  const tokensAfter =
-    stats.count === 0 ? tokensBefore : estimateTokens(JSON.stringify(value) ?? "");
-  return { value, count: stats.count, delta: { tokensBefore, tokensAfter } };
+  const step = redactValueSteps(body, table, st).next();
+  // A non-slicing walk never yields; a yield here would be a bug, not a value to drop.
+  if (step.done !== true) throw new Error("redaction walk yielded in synchronous mode");
+  const value = step.value;
+  const tokensAfter = st.count === 0 ? tokensBefore : estimateTokens(JSON.stringify(value) ?? "");
+  return { value, count: st.count, delta: { tokensBefore, tokensAfter } };
+}
+
+/**
+ * DUSTSEC.23 — {@link redactRequestBody} that gives the event loop back every
+ * {@link REDACTION_SLICE_MS} ms, so a 32 MiB body of many small strings no longer
+ * freezes every other session's streams for tens of seconds. Same walk, same
+ * rules in the same order, same placeholder table: the result is byte-identical
+ * to the sync one (a differential test holds it to that). Fail closed: a throw
+ * inside any slice rejects the promise, and an abort rejects with
+ * {@link RedactionAborted}; neither ever returns unredacted content.
+ *
+ * Not sliceable, and so still synchronous: `JSON.stringify` of the body for the
+ * token estimate, and one single very long string (a rule scans it whole).
+ */
+export async function redactRequestBodyAsync(
+  body: unknown,
+  options: RedactBodyAsyncOptions = {},
+): Promise<RedactBodyResult> {
+  const { signal } = options;
+  const sliceMs = options.sliceMs ?? REDACTION_SLICE_MS;
+  const aborted = (): boolean => signal?.aborted === true;
+  if (aborted()) throw new RedactionAborted();
+  const table = new PlaceholderTable();
+  const st: WalkState = { count: 0, slicing: true, deadline: 0 };
+  const tokensBefore = estimateTokens(JSON.stringify(body) ?? "");
+  const walk = redactValueSteps(body, table, st);
+  let value: unknown;
+  try {
+    for (;;) {
+      st.deadline = performance.now() + sliceMs;
+      const step = walk.next();
+      if (step.done === true) {
+        value = step.value;
+        break;
+      }
+      await yieldToEventLoop();
+      if (aborted()) throw new RedactionAborted();
+    }
+  } finally {
+    // Unwinds a walk we abandoned (abort); a no-op once it has finished or thrown.
+    walk.return(undefined);
+  }
+  const tokensAfter = st.count === 0 ? tokensBefore : estimateTokens(JSON.stringify(value) ?? "");
+  return { value, count: st.count, delta: { tokensBefore, tokensAfter } };
 }

@@ -149,7 +149,12 @@ export type RouteResolver = (
  */
 export interface RequestPipeline {
   readonly name: string;
-  process(request: ProxyRequest): Promise<ProxyRequest>;
+  /**
+   * `options.signal` aborts when the client goes away: a pipeline that can stop
+   * cheaply (the redaction walk does, between slices) rejects with an error and
+   * the proxy forwards nothing. DUSTSEC.23.
+   */
+  process(request: ProxyRequest, options?: PipelineRunOptions): Promise<ProxyRequest>;
   /**
    * DUSTSEC.1 — redaction alone, run by the proxy on the ORIGINAL request when
    * `process` throws. Must be the same redaction `process` runs. Synchronous and
@@ -158,6 +163,19 @@ export interface RequestPipeline {
    * error then also fails closed.
    */
   redactOnly?(request: ProxyRequest): ProxyRequest;
+  /**
+   * DUSTSEC.23 — the same redaction as {@link redactOnly}, byte for byte, with the
+   * JSON walk yielding to the event loop between slices so the fail-safe re-walk
+   * does not freeze every other session. The proxy prefers it when present and
+   * falls back to the synchronous `redactOnly`. Same fail-closed contract.
+   */
+  redactOnlyAsync?(request: ProxyRequest, options?: PipelineRunOptions): Promise<ProxyRequest>;
+}
+
+/** Per-request options the proxy hands the pipeline. */
+export interface PipelineRunOptions {
+  /** Aborts when the client disconnects before the pipeline finishes. */
+  readonly signal?: AbortSignal;
 }
 
 /** The A1 default: forwards every request byte-for-byte. */
