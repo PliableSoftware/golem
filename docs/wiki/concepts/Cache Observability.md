@@ -30,10 +30,22 @@ is true but silent about cause; the verdict explains but can be wrong at the
 margins. A single "cache health" figure would hide precisely the distinction a
 reader needs.
 
-Only this report is billed usage. The savings figures in `golem stats` and the
+Only the billed block is billed usage. The savings figures in `golem stats` and the
 dashboard (tokens saved, before and after) are estimates at about 4 characters per
 token (`src/compression/tokens.ts:17-21`, `src/cli/stats.ts:128`), not billed counts
 (2026-10-09, `readme-estimates-claim`).
+
+## On the dashboard (DUST2.18)
+
+The dashboard's "Usage and cost" tiles and `/api/state`'s `usage` block are folded by
+`buildUsageView` (`src/telemetry/usage-view.ts`) from the SAME rollups: `aggregateCacheStats`
+(this page) and `buildCostBenchmark` (`golem bench cost`). Billed tiles (cache hit rate,
+billed input tokens, cost = billed tokens x catalog prices, "(partial)" when a model could
+not be priced) carry no qualifier; the avoided-upstream tile is chars/4 and says "(est.)".
+No samples renders as "no usage data yet", never `0%` or `NaN`. Display strings are built
+once in `src/dashboard/usage-tiles.ts`; the page sets them with `textContent`/`escapeHtml`
+only. The LAN/auth behaviour is untouched. See [[Blocked State Read Model]] for the sibling
+`/api/state` block.
 
 ## Verdicts
 
