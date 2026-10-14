@@ -24,17 +24,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
-import {
-  copyFile,
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  utimes,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { finished } from "node:stream/promises";
 import type { Chunk } from "../interfaces/knowledge.js";
@@ -148,20 +138,47 @@ export interface LockOptions {
 }
 
 /**
+ * Refresh the lock's mtime ONLY if the file still carries `token`. A holder whose
+ * lock was broken must not keep a different owner's lock looking fresh (that would
+ * hide a dead owner from the stale check). Check-then-touch is path-based so it
+ * behaves the same on win32; the residual window is a touch of the new owner's
+ * mtime, which only delays staleness detection.
+ */
+export async function touchLockIfOwned(lockPath: string, token: string): Promise<boolean> {
+  try {
+    if ((await readFile(lockPath, "utf8")).trim() !== token) return false;
+    const now = new Date();
+    await utimes(lockPath, now, now);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Exclusive-create lockfile (`wx`) carrying a unique owner token.
  *
  * - Release removes the file only if it still holds OUR token, so a holder whose
  *   lock was broken never deletes the next owner's.
- * - A heartbeat refreshes the mtime while held, so a long flush is never mistaken
- *   for a crashed holder.
- * - A stale lock is broken by RENAMING it to a unique name (atomic: only one
- *   breaker wins the rename), then retrying the exclusive create. If the renamed
- *   file turns out to be fresh (we raced a new owner), it is put back.
+ * - A heartbeat refreshes the mtime while held, only while the file still holds
+ *   our token (see {@link touchLockIfOwned}).
+ * - A stale lock is broken under a short-lived `<lock>.break` sidecar so only one
+ *   breaker acts at a time. Under it the breaker re-reads the lock; unless it is
+ *   still stale AND still the token it judged, it backs off (a live owner got
+ *   there first). It then replaces the stale file in place with a rename of its
+ *   own lock file. The slot is never vacant, so no third process can take it in a
+ *   put-back window and the live owner's lock is never moved aside.
  * - Throws after `waitMs` rather than writing unlocked.
  * - Contention is EEXIST, and on win32 also EPERM/EACCES/EBUSY (an exclusive
  *   create on a file another handle holds, or that is pending delete, fails with
  *   those, not EEXIST). They are retried until the deadline; off win32 they are
- *   real permission errors and throw.
+ *   real permission errors and throw. A takeover rename that hits the same codes
+ *   is retried by {@link renameWithRetry}, then treated as lost contention.
+ *
+ * Residual: between the breaker's final re-check and its rename, a holder that
+ * was merely stalled (not dead) could release and a new owner create; the rename
+ * would then replace that fresh lock. It needs a >staleMs stall plus a
+ * sub-millisecond interleave.
  *
  * Exported for tests only; not part of the knowledge barrel.
  */
@@ -175,63 +192,85 @@ export async function acquireLock(
   const platform = options.platform ?? process.platform;
   const createExclusive =
     options.createExclusive ?? ((file, content) => writeFile(file, content, { flag: "wx" }));
+
+  const own = (): (() => Promise<void>) => {
+    const beat = setInterval(
+      () => {
+        void touchLockIfOwned(lockPath, token);
+      },
+      Math.max(5, Math.floor(staleMs / 3)),
+    );
+    beat.unref();
+    return async () => {
+      clearInterval(beat);
+      try {
+        if ((await readFile(lockPath, "utf8")).trim() === token)
+          await rm(lockPath, { force: true });
+      } catch {
+        // already gone — nothing of ours to release
+      }
+    };
+  };
+
   for (;;) {
     try {
       await createExclusive(lockPath, `${token}\n`);
-      const beat = setInterval(
-        () => {
-          const now = new Date();
-          void utimes(lockPath, now, now).catch(() => {});
-        },
-        Math.max(5, Math.floor(staleMs / 3)),
-      );
-      beat.unref();
-      return async () => {
-        clearInterval(beat);
-        try {
-          if ((await readFile(lockPath, "utf8")).trim() === token)
-            await rm(lockPath, { force: true });
-        } catch {
-          // already gone — nothing of ours to release
-        }
-      };
+      return own();
     } catch (err) {
       if (!isLockContention(err, platform)) throw err;
     }
-    let retryNow = false;
     try {
       const st = await stat(lockPath);
       if (Date.now() - st.mtimeMs > staleMs) {
         const seen = (await readFile(lockPath, "utf8")).trim();
         await options.afterJudgedStale?.();
-        const moved = `${lockPath}.stale.${token}`;
-        await rename(lockPath, moved);
-        // Double-check that what we moved is the very lock we judged stale (same
-        // token). If a new owner slipped in between the stat and the rename we
-        // just took THEIR live lock: put it back, and never proceed on it.
-        const movedContent = (await readFile(moved, "utf8").catch(() => "")).trim();
-        if (movedContent === seen) {
-          await rm(moved, { force: true });
-          retryNow = true;
-        } else {
-          try {
-            await createExclusive(lockPath, `${movedContent}\n`);
-          } catch {
-            process.stderr.write(
-              `golem: vector store lock ${lockPath} was displaced while breaking a stale lock; ` +
-                "a concurrent writer may overlap\n",
-            );
-          }
-          await rm(moved, { force: true });
-        }
+        if (await takeOverStale(lockPath, seen, token, staleMs, platform)) return own();
       }
     } catch {
       // released/broken between the create and the stat, or a transient fs error:
       // fall through to the deadline check and the sleep either way.
     }
-    if (retryNow) continue;
     if (Date.now() > deadline) throw new Error(`vector store lock timeout: ${lockPath}`);
     await new Promise((r) => setTimeout(r, 15 + Math.floor(Math.random() * 25)));
+  }
+}
+
+/**
+ * Replace the stale lock whose token was `seen` with one carrying `token`.
+ * Returns true only when this call now owns the lock.
+ */
+async function takeOverStale(
+  lockPath: string,
+  seen: string,
+  token: string,
+  staleMs: number,
+  platform: NodeJS.Platform,
+): Promise<boolean> {
+  const breaker = `${lockPath}.break`;
+  try {
+    await writeFile(breaker, `${token}\n`, { flag: "wx" });
+  } catch (err) {
+    if (!isLockContention(err, platform)) throw err;
+    // Another breaker holds the sidecar. A crashed one leaves it behind: clear it
+    // once it is itself stale, and let the main loop retry.
+    const bst = await stat(breaker).catch(() => null);
+    if (bst !== null && Date.now() - bst.mtimeMs > staleMs) await rm(breaker, { force: true });
+    return false;
+  }
+  const taking = `${lockPath}.take.${token}`;
+  try {
+    const st = await stat(lockPath);
+    const now = (await readFile(lockPath, "utf8")).trim();
+    // A live owner (or another breaker) got there first: do not touch it.
+    if (now !== seen || Date.now() - st.mtimeMs <= staleMs) return false;
+    await writeFile(taking, `${token}\n`);
+    await renameWithRetry(taking, lockPath, { platform });
+    return (await readFile(lockPath, "utf8")).trim() === token;
+  } catch {
+    return false;
+  } finally {
+    await rm(taking, { force: true }).catch(() => {});
+    await rm(breaker, { force: true }).catch(() => {});
   }
 }
 
