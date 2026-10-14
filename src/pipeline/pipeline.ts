@@ -37,6 +37,7 @@ import type { CompressionService, TokenDelta } from "../interfaces/compression.j
 import type { JoinQueue, JoinQueueMessage } from "../interfaces/join-queue.js";
 import type { LocalAnswerService } from "../interfaces/local-answer.js";
 import { type BrevityLevel, compressionRank, type PipelinePolicy } from "../interfaces/policy.js";
+import { runPluginStage } from "../plugins/stage-runner.js";
 import type { PluginPipelineStage } from "../plugins/types.js";
 import {
   type CacheBustComponent,
@@ -624,20 +625,22 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         const pluginsAt = performance.now();
         let touched = false;
         for (const stage of options.pluginStages) {
-          try {
-            const next = await stage.transform({ body, projectId: options.projectId });
-            if (next !== undefined && isRecord(next) && next !== body) {
-              body = next;
-              touched = true;
+          // A plugin never fails a user's request. A stage that throws, hangs, or
+          // half-edits the body and then throws is skipped and the pre-stage body
+          // (already through built-in redaction) is kept; the fault is counted.
+          const outcome = await runPluginStage(stage, body, options.projectId);
+          body = outcome.body;
+          if (outcome.replaced) touched = true;
+          if (outcome.fault !== null) {
+            const f = outcome.fault;
+            // First fault per stage, then every 100th: loud enough to see, not a
+            // line per request.
+            if (f.total === 1 || f.total % 100 === 0) {
+              proxyLog(
+                `plugin stage ${f.stage} ${f.kind === "threw" ? "threw" : "timed out"} and was skipped ` +
+                  `(${f.reason}); pre-stage body kept, ${f.total} fault(s) from this stage so far`,
+              );
             }
-          } catch (err) {
-            // A plugin never fails a user's request: skip the stage, keep the
-            // pre-stage body, say so once on stderr.
-            proxyLog(
-              `plugin stage ${stage.name} threw and was skipped (${
-                err instanceof Error ? err.message : String(err)
-              })`,
-            );
           }
         }
         if (touched) changed = true;

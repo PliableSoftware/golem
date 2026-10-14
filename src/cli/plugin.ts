@@ -15,7 +15,16 @@
 
 import { loadEffectiveConfig } from "../config/index.js";
 import { loadPlugins } from "../plugins/index.js";
-import type { LoadedPlugins } from "../plugins/types.js";
+import { runPluginStage } from "../plugins/stage-runner.js";
+import type { LoadedPlugins, PluginProblem } from "../plugins/types.js";
+
+export interface PluginProblemCounts {
+  readonly total: number;
+  readonly errors: number;
+  readonly warnings: number;
+  /** Problems by `kind`; a problem with no kind counts as `other`. */
+  readonly byKind: Readonly<Record<string, number>>;
+}
 
 export interface PluginReport {
   readonly projectDir: string;
@@ -23,6 +32,58 @@ export interface PluginReport {
   /** Specifiers from `plugins.load`, verbatim. */
   readonly configured: readonly string[];
   readonly loaded: LoadedPlugins;
+  /**
+   * EVERY problem found: the loader's, plus anything the stage probe found.
+   * Render and count from this, not from `loaded.problems`.
+   */
+  readonly problems: readonly PluginProblem[];
+  readonly counts: PluginProblemCounts;
+}
+
+/** Warnings are `severity: "warning"`; everything else is an error. */
+export function countProblems(problems: readonly PluginProblem[]): PluginProblemCounts {
+  const byKind: Record<string, number> = {};
+  let warnings = 0;
+  for (const p of problems) {
+    const kind = p.kind ?? "other";
+    byKind[kind] = (byKind[kind] ?? 0) + 1;
+    if (p.severity === "warning") warnings++;
+  }
+  return { total: problems.length, errors: problems.length - warnings, warnings, byKind };
+}
+
+/** A small, secret-free body for probing a stage. */
+const PROBE_BODY = {
+  model: "golem-plugin-probe",
+  messages: [{ role: "user", content: "golem plugin probe" }],
+};
+const PROBE_TIMEOUT_MS = 2_000;
+
+/**
+ * Run every loaded stage once against a tiny synthetic body, through the same
+ * runner the proxy uses, so a stage that throws or hangs is found here and not
+ * on a user's first request. A throw on a synthetic body can be a stage that is
+ * simply picky about input, so it is a warning, not an error.
+ */
+async function probeStages(loaded: LoadedPlugins): Promise<PluginProblem[]> {
+  const found: PluginProblem[] = [];
+  for (const stage of loaded.stages) {
+    const outcome = await runPluginStage(
+      stage,
+      structuredClone(PROBE_BODY),
+      "plugin-probe",
+      PROBE_TIMEOUT_MS,
+    );
+    if (outcome.fault !== null) {
+      found.push({
+        subject: stage.name,
+        kind: "stage-probe-failed",
+        severity: "warning",
+        reason: `stage ${outcome.fault.kind === "threw" ? "threw" : "timed out"} on a probe request (${outcome.fault.reason}); in the proxy a failing stage is skipped and the pre-stage body kept`,
+      });
+    }
+  }
+  return found;
 }
 
 /**
@@ -44,11 +105,14 @@ export async function collectPlugins(
     projectDir,
     golemVersion,
   });
+  const problems = [...loaded.problems, ...(await probeStages(loaded))];
   return {
     projectDir,
     enabled: settings.plugins.enabled,
     configured: settings.plugins.load,
     loaded,
+    problems,
+    counts: countProblems(problems),
   };
 }
 
@@ -121,11 +185,17 @@ export function renderPlugins(report: PluginReport, verbose = false): string {
   );
   for (const spec of unloaded) out.push(`  [failed]  ${spec}`);
 
-  if (report.loaded.problems.length > 0) {
+  if (report.problems.length > 0) {
     out.push("");
-    out.push("Problems (each one is a no-op, never an error path):");
-    for (const problem of report.loaded.problems) {
-      const lines = wrap(`${problem.subject}: ${problem.reason}`, 74);
+    out.push(
+      `Problems: ${report.counts.total} (${report.counts.errors} error(s), ` +
+        `${report.counts.warnings} warning(s)) — each is a no-op or advisory, never an error path:`,
+    );
+    for (const problem of report.problems) {
+      const tag = problem.severity === "warning" ? "warn" : "error";
+      const kind = problem.kind ?? "other";
+      const times = problem.count !== undefined && problem.count > 1 ? ` (x${problem.count})` : "";
+      const lines = wrap(`[${tag}/${kind}] ${problem.subject}: ${problem.reason}${times}`, 74);
       for (const [i, line] of lines.entries()) out.push(`  ${i === 0 ? "·" : " "} ${line}`);
     }
   }
@@ -150,11 +220,29 @@ export function renderPlugins(report: PluginReport, verbose = false): string {
 
   out.push("");
   out.push(
-    `${report.loaded.plugins.length} loaded · ${report.loaded.problems.length} problem(s) · ` +
+    `${report.loaded.plugins.length} loaded · ${report.counts.total} problem(s) ` +
+      `(${report.counts.errors} error, ${report.counts.warnings} warning) · ` +
       `${report.loaded.redactionRules.length} redaction rule(s) · ` +
       `${report.loaded.stages.length} stage(s) · ${report.loaded.mcpTools.length} tool(s)`,
   );
   out.push("");
   for (const line of wrap(NO_SANDBOX_NOTICE, 78)) out.push(line);
   return `${out.join("\n")}\n`;
+}
+
+/**
+ * `golem plugin` exit code. Default 0, always: the command is informational and
+ * existing scripts parse its output. `--check` turns it into a gate: 1 when any
+ * ERROR-severity problem exists (something was dropped or did not run). `--strict`
+ * implies `--check` and also fails on warnings (regex-backtracking shape, dead
+ * rules, missing metadata, probe failures). A disabled or empty plugin list has
+ * no problems, so it passes.
+ */
+export function pluginExitCode(
+  report: PluginReport,
+  opts: { readonly check?: boolean; readonly strict?: boolean },
+): 0 | 1 {
+  if (opts.strict === true) return report.counts.total > 0 ? 1 : 0;
+  if (opts.check === true) return report.counts.errors > 0 ? 1 : 0;
+  return 0;
 }

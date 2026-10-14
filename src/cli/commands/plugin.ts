@@ -11,7 +11,7 @@ import type { Command } from "commander";
 import { findProjectDir } from "../../config/index.js";
 import { VERSION } from "../../version.js";
 import { InitError } from "../init.js";
-import { collectPlugins, renderPlugins } from "../plugin.js";
+import { collectPlugins, pluginExitCode, renderPlugins } from "../plugin.js";
 
 const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 
@@ -34,33 +34,46 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .option("--verbose", "also list every rule, stage and tool contributed", false)
-    .action(async (opts: { dir: string; json: boolean; verbose: boolean }) => {
-      try {
-        const report = await collectPlugins(opts.dir, VERSION);
-        if (opts.json) {
-          // Functions do not serialize, so the JSON view carries the facts a
-          // machine can act on rather than a lossy half-render of the handlers.
-          process.stdout.write(
-            `${JSON.stringify(
-              {
-                projectDir: report.projectDir,
-                enabled: report.enabled,
-                configured: report.configured,
-                plugins: report.loaded.plugins,
-                problems: report.loaded.problems,
-                redactionRuleIds: report.loaded.redactionRules.map((r) => r.id),
-                stageNames: report.loaded.stages.map((s) => s.name),
-                mcpToolNames: report.loaded.mcpTools.map((t) => t.name),
-              },
-              null,
-              2,
-            )}\n`,
-          );
-          return;
+    .option("--check", "exit 1 when any error-level problem was found (default: always 0)", false)
+    .option("--strict", "exit 1 on ANY problem, warnings included (implies --check)", false)
+    .action(
+      async (opts: {
+        dir: string;
+        json: boolean;
+        verbose: boolean;
+        check: boolean;
+        strict: boolean;
+      }) => {
+        try {
+          const report = await collectPlugins(opts.dir, VERSION);
+          if (opts.json) {
+            // Functions do not serialize, so the JSON view carries the facts a
+            // machine can act on rather than a lossy half-render of the handlers.
+            process.stdout.write(
+              `${JSON.stringify(
+                {
+                  projectDir: report.projectDir,
+                  enabled: report.enabled,
+                  configured: report.configured,
+                  plugins: report.loaded.plugins,
+                  problems: report.problems,
+                  problemCounts: report.counts,
+                  redactionRuleIds: report.loaded.redactionRules.map((r) => r.id),
+                  stageNames: report.loaded.stages.map((s) => s.name),
+                  mcpToolNames: report.loaded.mcpTools.map((t) => t.name),
+                },
+                null,
+                2,
+              )}\n`,
+            );
+            process.exitCode = pluginExitCode(report, opts);
+            return;
+          }
+          process.stdout.write(renderPlugins(report, opts.verbose));
+          process.exitCode = pluginExitCode(report, opts);
+        } catch (err) {
+          _fail(err);
         }
-        process.stdout.write(renderPlugins(report, opts.verbose));
-      } catch (err) {
-        _fail(err);
-      }
-    });
+      },
+    );
 }
