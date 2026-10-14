@@ -20,3 +20,23 @@ A denial-of-service shape rather than a leak, but it is reachable by any client 
 
 - Making redaction faster by changing the rules (rule order and rule behaviour must not change).
 - Object keys are never redacted (the S9 gap) and the `__proto__` key handling (separate, tracked).
+
+## Decision (2026-10-14): A, yield between time-budgeted slices
+
+Measured on this machine (Linux, 4 cores, Node 24.21, 31.9 MB JSON, one object per message holding one short string, about 700,000 strings). The sync walk is the baseline; a ticking `setInterval(5)` and `monitorEventLoopDelay` watch the loop.
+
+| Variant | Wall time | Longest loop stall | Notes |
+|---|---|---|---|
+| sync walk (today) | 10.5 s | about 10.5 s (timers never fire) | every other session frozen for the whole walk |
+| A, yield every 5 ms | 10.8 s (+2.7%) | 13 ms | p99 loop delay 5.8 ms |
+| A, yield every 20 ms | 10.7 s (+2.2%) | 22 ms | p99 21.5 ms |
+| A, yield every 50 ms | 10.6 s (+1.3%) | 57 ms | p99 51 ms |
+| B, worker thread | 11.8 s (+12%) | 142 ms | main thread still stalls to structured-clone the body in (and the result out); 2 full copies resident; worker spawn plus a crash path to make fail-closed |
+
+Parts that cannot be sliced, measured on the same body: `structuredClone` 464 ms, `JSON.stringify` 104 ms, `JSON.parse` 147 ms.
+
+**Choice: A.** One thread, no clone, no crash mode, no second copy of the body, wall time within 3% of sync. B is slower overall and its main-thread stall (the clone, 142 ms) is no better than a 20 ms slice.
+
+**Slice budget: 20 ms of wall time**, checked with `performance.now()` after each string (time-based, so a slice is bounded whatever the string sizes are). Between slices the walk awaits `setImmediate`, which runs after the poll phase, so socket I/O of other sessions is served every slice; it behaves the same on Windows. The stated bound is therefore about 20 ms plus the longest single string, plus the parts that are not sliceable (parse, stringify, one very large single string, which still cost what they cost per call).
+
+**Design.** One walk, written once as a generator (`redactValueSteps`) that yields when the slice budget is spent. The sync `redactRequestBody` drains it with an infinite budget (so it never yields and its output is the same code's output); the async `redactRequestBodyAsync` drives it with the slice budget and an AbortSignal. A differential test checks the two byte for byte anyway.
