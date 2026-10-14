@@ -22,7 +22,7 @@
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { versionTsContent } from "./sync-version.mjs";
+import { isEntryPoint, versionTsContent } from "./sync-version.mjs";
 
 const EXPLICIT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -179,6 +179,6 @@ async function main() {
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   await main();
 }
