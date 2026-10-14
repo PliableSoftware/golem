@@ -45,6 +45,14 @@ the code only partly delivers. Evidence: DUST1.1 rows 37, 39, 42.
   on a hung stage (child-process test); a timed-out probe is error-level so `--check` fails;
   thrown-value conversion is exception-safe, redacted and truncated; circuit breaker (3
   timeouts, 60s cool-off); detector uses exact code-point intervals plus a work budget.
+- **Second review (2026-10-14):** detector sees repeats inside inner groups (variants of
+  unquantified groups are inlined); literal comparison and atom creation are charged to the
+  step budget; warnings dedupe per plugin+kind+text; error text is redacted whole before the
+  300-char cut; `setup()` has a 10s timeout (`setup-timeout`); `golem plugin` has a 30s
+  deadline (`command-deadline`) and exits explicitly after flushing; breaker counts by
+  invocation start with generations and a monotonic clock. A stage that scrubs fails open
+  during the cool-off: write scrubbing as a redaction rule. `golem plugin` cannot show the
+  proxy's breaker state (separate process).
 - **Known, accepted:** a stage's late write after a timeout can still reach `parsed` (the
   parsed request object; skews telemetry `tokensBefore` only, never the forwarded body).
   The timeout and breaker are injectable on the pipeline (`pluginStageRun`).

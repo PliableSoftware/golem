@@ -65,8 +65,7 @@ const PROBE_TIMEOUT_MS = 2_000;
  * on a user's first request. A throw on a synthetic body can be a stage that is
  * simply picky about input, so it is a warning; a timeout is an error.
  */
-async function probeStages(loaded: LoadedPlugins): Promise<PluginProblem[]> {
-  const found: PluginProblem[] = [];
+async function probeStages(loaded: LoadedPlugins, found: PluginProblem[]): Promise<void> {
   for (const stage of loaded.stages) {
     const outcome = await runPluginStage(stage, structuredClone(PROBE_BODY), "plugin-probe", {
       timeoutMs: PROBE_TIMEOUT_MS,
@@ -82,8 +81,26 @@ async function probeStages(loaded: LoadedPlugins): Promise<PluginProblem[]> {
       });
     }
   }
-  return found;
 }
+
+/** Overall wall-clock limit for `golem plugin`; see {@link collectPlugins}. */
+export const PLUGIN_COMMAND_DEADLINE_MS = 30_000;
+
+export interface CollectPluginsOptions {
+  /** Per-plugin `setup()` limit; default is the loader's. */
+  readonly setupTimeoutMs?: number;
+  /** Overall deadline in ms; default {@link PLUGIN_COMMAND_DEADLINE_MS}. */
+  readonly deadlineMs?: number;
+}
+
+const NOT_LOADED: LoadedPlugins = {
+  plugins: [],
+  redactionRules: [],
+  stages: [],
+  mcpTools: [],
+  problems: [],
+  attempted: false,
+};
 
 /**
  * Actually load the configured plugins and report what happened.
@@ -92,23 +109,77 @@ async function probeStages(loaded: LoadedPlugins): Promise<PluginProblem[]> {
  * what a plugin registers without asking it — a manifest would be a claim, and
  * this surface exists to report facts. It is the same code path the proxy runs,
  * but it is a fresh load, so it can differ from what the running proxy holds.
+ *
+ * Bounded: each `setup()` has its own timeout, each probed stage has one, and the
+ * whole run has a deadline. When the deadline passes, the report is what had been
+ * learned so far plus an error-level `command-deadline` problem (a deadline during
+ * the load itself leaves nothing more than that). Code that blocks the event loop
+ * synchronously cannot be interrupted from inside the process.
  */
 export async function collectPlugins(
   projectDir: string,
   golemVersion: string,
+  options: CollectPluginsOptions = {},
 ): Promise<PluginReport> {
-  const { settings } = await loadEffectiveConfig({ projectDir });
-  const loaded = await loadPlugins({
-    specifiers: settings.plugins.load,
-    enabled: settings.plugins.enabled,
-    projectDir,
-    golemVersion,
+  const deadlineMs = options.deadlineMs ?? PLUGIN_COMMAND_DEADLINE_MS;
+  const state: {
+    enabled?: boolean;
+    configured?: readonly string[];
+    loaded?: LoadedPlugins;
+    probe: PluginProblem[];
+  } = { probe: [] };
+
+  const work = (async (): Promise<PluginReport> => {
+    const { settings } = await loadEffectiveConfig({ projectDir });
+    state.enabled = settings.plugins.enabled;
+    state.configured = settings.plugins.load;
+    const loaded = await loadPlugins({
+      specifiers: settings.plugins.load,
+      enabled: settings.plugins.enabled,
+      projectDir,
+      golemVersion,
+      ...(options.setupTimeoutMs !== undefined ? { setupTimeoutMs: options.setupTimeoutMs } : {}),
+    });
+    state.loaded = loaded;
+    await probeStages(loaded, state.probe);
+    const problems = [...loaded.problems, ...state.probe];
+    return {
+      projectDir,
+      enabled: settings.plugins.enabled,
+      configured: settings.plugins.load,
+      loaded,
+      problems,
+      counts: countProblems(problems),
+    };
+  })();
+
+  const deadline = Symbol("deadline");
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<typeof deadline>((resolve) => {
+    timer = setTimeout(() => resolve(deadline), deadlineMs);
   });
-  const problems = [...loaded.problems, ...(await probeStages(loaded))];
+  try {
+    const result = await Promise.race([work, expired]);
+    if (result !== deadline) return result;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+  // The abandoned work may still reject later; it is deliberately ignored.
+  work.catch(() => {});
+  const loaded = state.loaded ?? NOT_LOADED;
+  const problems: PluginProblem[] = [
+    ...loaded.problems,
+    ...state.probe,
+    {
+      subject: "golem plugin",
+      kind: "command-deadline",
+      reason: `plugin command deadline exceeded (${deadlineMs}ms); this is what was learned before it`,
+    },
+  ];
   return {
     projectDir,
-    enabled: settings.plugins.enabled,
-    configured: settings.plugins.load,
+    enabled: state.enabled ?? true,
+    configured: state.configured ?? [],
     loaded,
     problems,
     counts: countProblems(problems),

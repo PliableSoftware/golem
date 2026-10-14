@@ -147,9 +147,9 @@ nothing more. Two details worth keeping:
 Stage 1 (built-in redaction) runs before the plugin stages (stage 1.7,
 `src/pipeline/pipeline.ts`), so the body a stage receives has already been through
 every built-in rule. Restoring "the pre-stage body" after a failure therefore
-fails toward keeping built-in redaction applied. This holds only while
-`policy.stages.redaction` is on; `proxy.bypass_all` is the one documented
-exception (ADR-0004) and nothing a plugin does can turn it on.
+fails toward keeping built-in redaction applied. Redaction is unconditional
+(DUST2.23); `proxy.bypass_all` is the one documented exception (ADR-0004) and
+nothing a plugin does can turn it on.
 
 `runPluginStage` (`src/plugins/stage-runner.ts`) makes the claim true in three
 cases the old try/catch did not cover:
@@ -173,6 +173,21 @@ options) but not user-configurable: there is no `plugins.*` setting for it, and
 adding one touches the schema, UI model and drift tests, so it is a follow-up
 (see DUST2.11).
 
+*Breaker semantics.* "Consecutive" is counted in invocation-start order, because
+requests overlap: it opens when the first of the last three timeouts started after
+the last completed non-timeout, so three concurrent hung requests with no success
+in between do open it, while a success in the middle prevents it. Opening starts a
+new generation; requests already in flight at that moment cannot re-open it when
+the cool-off ends. The cool-off uses a monotonic clock (`performance.now`), so a
+wall-clock step cannot end it early. The breaker state is per process: `golem
+plugin` is a separate process and cannot show the proxy's cool-offs.
+
+**A stage that scrubs content fails OPEN during the cool-off**: while a stage is
+skipped (or after any single skip), whatever it would have scrubbed passes
+through. Scrubbing belongs in a redaction RULE, which the built-in machinery
+applies and the breaker never touches; use a stage for transformations that are
+allowed to be skipped.
+
 Known limit: a stage's late write after a timeout can still reach `parsed`, the
 object the original request was parsed into (it only skews the telemetry
 `tokensBefore` estimate); it cannot reach the body that is forwarded.
@@ -195,6 +210,8 @@ name. Nothing the loader detects is dropped silently. Kinds:
 | `unresolved`, `import-failed`, `invalid-module`, `duplicate-plugin`, `setup-threw` | error | the plugin did not load |
 | `invalid-registration` | error | a rule, stage or tool was rejected (bad id, no `g` flag, duplicate, shadows a built-in tool) |
 | `late-registration` | error | `api.add*` called after `setup()` settled; used to vanish silently |
+| `setup-timeout` | error | `setup()` did not settle within 10s (`--setup-timeout`); the plugin contributes nothing, in the proxy as well as the CLI |
+| `command-deadline` | error | `golem plugin` hit its overall deadline (30s, `--deadline`); the report is what was learned before it |
 | `empty-match` | warning | pattern can match `""`; rule stays active |
 | `dead-rule` | warning | `group` exceeds the pattern's capture groups, so it can never redact |
 | `validate-threw` | warning | a `validate` threw at runtime (treated as not-a-secret) |
@@ -210,7 +227,7 @@ missing file shows up as `import-failed`.
 
 `src/plugins/regex-risk.ts` statically flags four shapes in each plugin rule's
 regex: a repeated group holding a variable repeat with no distinct delimiter
-(`(a+)+`), an unbounded repeat of a group that can match empty (`(a?)*`),
+(`(a+)+`, including when the repeat sits in an inner group, `((a+))+`), an unbounded repeat of a group that can match empty (`(a?)*`),
 overlapping alternation under an unbounded repeat (`(\w|\d)+`, `(a|aa)+`), and
 adjacent overlapping unbounded repeats (`\d+\d+`, polynomial). It never rejects a
 rule: dropping a working redaction would be the worse failure. A delimited
@@ -233,14 +250,15 @@ golem plugin --verbose    # every rule, stage and tool contributed
 golem plugin --json       # machine-readable; problems + problemCounts
 golem plugin --check      # exit 1 if any ERROR-level problem was found
 golem plugin --strict     # exit 1 on any problem, warnings included
+golem plugin --deadline 5000 --setup-timeout 2000   # tighter limits
 ```
 
-Hook and CLI processes log loader problems at start: errors as `plugin problem (skipped, no-op)`, warnings as `plugin warning (rule stays active)`, each warning once per process per plugin and kind, with the text redacted and truncated.
+Hook and CLI processes log loader problems at start: errors as `plugin problem (skipped, no-op)`, warnings as `plugin warning (rule stays active)`, each distinct warning (plugin + kind + text) once per process. Plugin text is redacted as a WHOLE (up to 64 KB; larger text is omitted and only its length logged) and only then truncated to 300 characters, dropping a partial trailing token: cutting first would let a secret straddling the cut shrink below its rule's minimum length and survive.
 
 Exit code: **0 by default**, always — the command is informational and scripts
 already parse its output. `--check` makes it a gate on errors (something was
 dropped or did not run); `--strict` also fails on warnings. Use `--check` in CI
-and `--strict` to keep a repo's plugin rules free of advisories. It also runs each
+and `--strict` to keep a repo's plugin rules free of advisories. The command always exits explicitly after printing, so a plugin that leaves a timer or socket open cannot keep it alive. A synchronously blocking `setup()` or stage (`while (true) {}`) cannot be interrupted from inside the process and remains a documented limitation. It also runs each
 loaded stage once against a small synthetic request, so a throwing or hanging
 stage is found before a user's first request.
 

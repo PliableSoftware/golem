@@ -150,6 +150,8 @@ export type PluginProblemKind =
   | "invalid-module"
   | "duplicate-plugin"
   | "setup-threw"
+  | "setup-timeout"
+  | "command-deadline"
   | "invalid-registration"
   | "late-registration"
   | "empty-match"

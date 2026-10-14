@@ -56,7 +56,13 @@ export const BUILTIN_MCP_TOOL_NAMES: readonly string[] = [
   "wiki_upsert",
 ];
 
+/** How long one plugin's `setup()` may take (startup must not hang on third-party code). */
+export const PLUGIN_SETUP_TIMEOUT_MS = 10_000;
+const SETUP_TIMED_OUT = Symbol("plugin-setup-timed-out");
+
 export interface LoadPluginsOptions {
+  /** Per-plugin `setup()` limit. Default {@link PLUGIN_SETUP_TIMEOUT_MS}. */
+  readonly setupTimeoutMs?: number;
   /** Specifiers from `plugins.load`, in order. Order is load order. */
   readonly specifiers: readonly string[];
   /** `plugins.enabled` — false means do not even try. */
@@ -466,9 +472,26 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
       },
     };
 
+    let setupTimer: NodeJS.Timeout | undefined;
     try {
-      await plugin.setup(api);
+      const setupLimit = opts.setupTimeoutMs ?? PLUGIN_SETUP_TIMEOUT_MS;
+      const timedOut = new Promise<typeof SETUP_TIMED_OUT>((resolve) => {
+        setupTimer = setTimeout(() => resolve(SETUP_TIMED_OUT), setupLimit);
+      });
+      const result = await Promise.race([
+        Promise.resolve().then(() => plugin.setup(api)),
+        timedOut,
+      ]);
       setupSettled = true;
+      if (result === SETUP_TIMED_OUT) {
+        problems.push({
+          subject: specifier,
+          kind: "setup-timeout",
+          reason: `setup() did not finish within ${setupLimit}ms; the plugin contributes nothing (a setup that blocks synchronously cannot be interrupted)`,
+        });
+        for (const tool of pendingTools) seenToolNames.delete(tool.name);
+        continue;
+      }
     } catch (err) {
       setupSettled = true;
       problems.push({
@@ -479,6 +502,8 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<LoadedPlugi
       // Drop every pending registration — see the buffer comment above.
       for (const tool of pendingTools) seenToolNames.delete(tool.name);
       continue;
+    } finally {
+      if (setupTimer !== undefined) clearTimeout(setupTimer);
     }
 
     problems.push(...advisories);

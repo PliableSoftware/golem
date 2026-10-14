@@ -190,6 +190,34 @@ describe("loader diagnostics", () => {
     expect(loaded.problems[0]).toMatchObject({ kind: "regex-backtracking", severity: "warning" });
   });
 
+  it("bounds setup(): a timed-out setup is an error, contributes nothing, and later plugins still load", async () => {
+    const mods: Record<string, unknown> = {
+      stuck: {
+        default: {
+          name: "stuck",
+          setup(api: GolemPluginApi) {
+            api.addRedactionRule({ id: "r", description: "d", pattern: /x/g });
+            return new Promise<void>(() => {});
+          },
+        },
+      },
+      fine: { default: { name: "fine", setup() {} } },
+    };
+    const loaded = await loadPlugins({
+      specifiers: ["stuck", "fine"],
+      projectDir: "/project",
+      golemVersion: "1",
+      setupTimeoutMs: 20,
+      resolve: (s) => s,
+      importModule: async (s) => mods[s],
+    });
+    expect(loaded.plugins.map((p) => p.name)).toEqual(["fine"]);
+    expect(loaded.redactionRules).toEqual([]);
+    expect(loaded.problems).toHaveLength(1);
+    expect(loaded.problems[0]).toMatchObject({ kind: "setup-timeout", subject: "stuck" });
+    expect(loaded.problems[0]?.severity).toBeUndefined();
+  });
+
   it("countProblems treats a problem with no severity as an error", () => {
     expect(countProblems([{ subject: "a", reason: "r" }]).errors).toBe(1);
   });
