@@ -44,7 +44,14 @@ billed input tokens, cost = billed tokens x catalog prices, "(partial)" when a m
 not be priced) carry no qualifier; the avoided-upstream tile is chars/4 and says "(est.)".
 No samples renders as "no usage data yet", never `0%` or `NaN`. Display strings are built
 once in `src/dashboard/usage-tiles.ts`; the page sets them with `textContent`/`escapeHtml`
-only. The LAN/auth behaviour is untouched. See [[Blocked State Read Model]] for the sibling
+only. The LAN/auth behaviour is untouched.
+
+Cost and scope: the view is read through `collectUsageViewCached` (10 s TTL, keyed by project
+dir, single-flight, a failure serves the last good view or the empty state), so ~2 s polls
+do not each re-read the event log. Scope matches the page it sits on: `golem stats --cache`
+without `--project` aggregates every project recorded in this directory's telemetry, and the
+dashboard's other tiles (`collectStats` with no project id) do the same, so the usage tiles
+are likewise unscoped and all-time rather than per-project. See [[Blocked State Read Model]] for the sibling
 `/api/state` block.
 
 ## Verdicts

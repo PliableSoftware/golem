@@ -23,7 +23,7 @@ import { AUTONOMY_LEVELS, type AutonomyLevel, readAutonomyLevel } from "../auton
 import { readSessionState, resolveBlock } from "../hooks/index.js";
 import { compressionName } from "../interfaces/policy.js";
 import {
-  collectUsageView,
+  collectUsageViewCached,
   openTelemetryStore,
   type ToolUsageStats,
   type UsageView,
@@ -220,7 +220,7 @@ export async function collectSessionStateReport(
     golemStorageSizes(dir),
     readSessionState(dir).catch(() => null),
     readAutonomyLevel(dir).catch(() => "manual" as AutonomyLevel),
-    collectUsageView(dir).catch(() => undefined),
+    collectUsageViewCached(dir).catch(() => undefined),
   ]);
 
   // R11.1: `collectGolemState` (the status line's own reader) already resolves

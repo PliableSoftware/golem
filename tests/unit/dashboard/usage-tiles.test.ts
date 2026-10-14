@@ -26,7 +26,7 @@ import { aggregateCacheStats } from "../../../src/telemetry/cache-report.js";
 import { buildCostBenchmark } from "../../../src/telemetry/cost-benchmark.js";
 import { BUILTIN_MODEL_CATALOG } from "../../../src/telemetry/model-catalog.js";
 import type { TelemetryEvent } from "../../../src/telemetry/types.js";
-import { buildUsageView } from "../../../src/telemetry/usage-view.js";
+import { buildUsageView, createUsageViewCache } from "../../../src/telemetry/usage-view.js";
 
 const NOW = Date.parse("2026-10-14T00:00:00.000Z");
 
@@ -253,3 +253,96 @@ function snapBase(): DashboardSnapshot {
     generated_at: "2026-10-14T00:00:00.000Z",
   };
 }
+
+describe("createUsageViewCache", () => {
+  const empty = buildUsageView([], { nowMs: NOW });
+  const full = buildUsageView([usage("claude-opus-5", 900, 100, 0)], { nowMs: NOW });
+
+  it("two polls inside the TTL compute once; one after it recomputes", async () => {
+    let t = 0;
+    let calls = 0;
+    const get = createUsageViewCache({
+      ttlMs: 10_000,
+      now: () => t,
+      compute: async () => {
+        calls += 1;
+        return full;
+      },
+    });
+    await get("/p");
+    t = 9_999;
+    await get("/p");
+    expect(calls).toBe(1);
+    t = 10_000;
+    await get("/p");
+    expect(calls).toBe(2);
+  });
+
+  it("keys by project dir", async () => {
+    let calls = 0;
+    const get = createUsageViewCache({
+      compute: async () => {
+        calls += 1;
+        return full;
+      },
+    });
+    await get("/a");
+    await get("/b");
+    expect(calls).toBe(2);
+  });
+
+  it("concurrent polls single-flight", async () => {
+    let calls = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const get = createUsageViewCache({
+      compute: async () => {
+        calls += 1;
+        await gate;
+        return full;
+      },
+    });
+    const all = [get("/p"), get("/p"), get("/p")];
+    release();
+    const views = await Promise.all(all);
+    expect(calls).toBe(1);
+    expect(views.every((v) => v === full)).toBe(true);
+  });
+
+  it("a failure serves the last good value, else the empty state, and never throws", async () => {
+    let t = 0;
+    let fail = false;
+    const get = createUsageViewCache({
+      ttlMs: 10,
+      now: () => t,
+      compute: async () => {
+        if (fail) throw new Error("boom");
+        return full;
+      },
+    });
+    fail = true;
+    expect((await get("/p")).cache.samples).toBe(empty.cache.samples);
+    fail = false;
+    t = 100;
+    expect(await get("/p")).toBe(full);
+    fail = true;
+    t = 200;
+    expect(await get("/p")).toBe(full);
+  });
+
+  it("a failed computation does not wedge later polls", async () => {
+    let n = 0;
+    const get = createUsageViewCache({
+      ttlMs: 0,
+      compute: async () => {
+        n += 1;
+        if (n === 1) throw new Error("x");
+        return full;
+      },
+    });
+    await get("/p");
+    expect(await get("/p")).toBe(full);
+  });
+});

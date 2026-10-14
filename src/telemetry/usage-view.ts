@@ -84,3 +84,54 @@ export async function collectUsageView(dir: string): Promise<UsageView> {
     ...(catalog !== undefined ? { catalog } : {}),
   });
 }
+
+/** How long a computed view is reused. Polls arrive every ~2s; the view moves slower than that. */
+export const USAGE_VIEW_TTL_MS = 10_000;
+
+export interface UsageViewCacheOptions {
+  readonly ttlMs?: number;
+  /** Injectable clock (ms) for tests. */
+  readonly now?: () => number;
+  /** The expensive computation; defaults to {@link collectUsageView}. */
+  readonly compute?: (key: string) => Promise<UsageView>;
+}
+
+/**
+ * TTL + single-flight cache keyed by project dir. Concurrent callers share one
+ * in-flight computation; within the TTL the stored value is returned; a failed
+ * computation serves the last good value, or the empty view when there is none,
+ * and never rejects into the caller.
+ */
+export function createUsageViewCache(
+  opts: UsageViewCacheOptions = {},
+): (key: string) => Promise<UsageView> {
+  const ttlMs = opts.ttlMs ?? USAGE_VIEW_TTL_MS;
+  const now = opts.now ?? Date.now;
+  const compute = opts.compute ?? collectUsageView;
+  const good = new Map<string, { at: number; view: UsageView }>();
+  const inflight = new Map<string, Promise<UsageView>>();
+
+  return (key) => {
+    const hit = good.get(key);
+    if (hit !== undefined && now() - hit.at < ttlMs) return Promise.resolve(hit.view);
+    const running = inflight.get(key);
+    if (running !== undefined) return running;
+    const started = (async () => {
+      try {
+        const view = await compute(key);
+        good.set(key, { at: now(), view });
+        return view;
+      } catch {
+        // Stale beats empty; empty beats an error on a read-only status page.
+        return good.get(key)?.view ?? buildUsageView([], { nowMs: now() });
+      } finally {
+        inflight.delete(key);
+      }
+    })();
+    inflight.set(key, started);
+    return started;
+  };
+}
+
+/** Process-wide cached reader the dashboard and `/api/state` share. */
+export const collectUsageViewCached: (dir: string) => Promise<UsageView> = createUsageViewCache();

@@ -111,14 +111,14 @@ export default function register(program: Command): void {
             const { getDialInfo } = await import("../dials.js");
             const { blockedView } = await import("../blocked-view.js");
             const { readSessionState, resolveBlock } = await import("../../hooks/session-state.js");
-            const { collectUsageView } = await import("../../telemetry/index.js");
+            const { collectUsageViewCached } = await import("../../telemetry/index.js");
             const [dial, stats, session, usage] = await Promise.all([
               getDialInfo("compression", { projectDir: opts.dir }),
               // Resolved per poll: the source flips from the in-memory live one to
               // durable telemetry once the proxy records its first request.
               statsSourceForCli(opts.dir).then((source) => collectStats(source)),
               readSessionState(opts.dir),
-              collectUsageView(opts.dir),
+              collectUsageViewCached(opts.dir),
             ]);
             return {
               project_dir: opts.dir,
