@@ -4,7 +4,7 @@ type: concept
 tags: [ci, release, branches, npm, github-actions, portal, webhook]
 sources: [.github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/release-prepare.yml, scripts/release.mjs, src/cli/commands/config.ts, "https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow"]
 created: 2026-09-04
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # Release Pipeline
@@ -97,8 +97,17 @@ reviewing it needs to see. `auto-bump.yml` was deleted rather than disabled: two
 mechanisms writing the same version is exactly the drift this repo keeps
 rediscovering.
 
-`scripts/release.mjs` moves `package.json`, `vscode-extension/package.json` and
-the compiled-in `VERSION` constant together, so all three move or none do.
+`scripts/release.mjs` moves `package.json`, `vscode-extension/package.json`,
+`package-lock.json` and the compiled-in `VERSION` constant together, so they all
+move or none do (DUST2.21). It computes and validates every edit in memory first
+(a corrupt file or malformed explicit version aborts before anything is written),
+writes each result to a temp file beside its target, then renames them into place.
+A failure at any step restores the targets already replaced (deleting a
+`src/version.ts` that did not exist before) and removes the temps. The failure
+path is tested with injected write and rename failures against temp copies of the
+layout (`tests/unit/release-script-atomic.test.ts`). The renames are sequential,
+not one OS-level transaction: a crash of the process itself between renames
+(kill -9, power loss) can still leave a mix, which `git checkout` repairs.
 
 **Merge the release PR with a merge commit, not a squash.** A squash rewrites the
 history `development` is built on, and the branches then diverge permanently —
@@ -189,7 +198,12 @@ Every one of these is load-bearing for `golem.run`, which redirects to
 | `config-schema.json` | the portal, to validate team settings |
 
 The release job **asserts** every required asset is present after uploading,
-rather than trusting the upload.
+rather than trusting the upload. The list covers the installers, the schema, all
+six binaries, `SHA256SUMS`, and the npm tarball under its `@pliable/golem` name
+(`pliable-golem-${VERSION}.tgz`, from the `resolve` job's `version` output; DUST2.21).
+That the assertion actually fails on a missing asset can only be proven by a real
+release run (it needs `gh release view` against a published tag); locally only the
+list's text is tested.
 
 **Publishing to npm always runs** — no opt-in gate, as of v0.54.3. It used to be
 `vars.NPM_PUBLISH == 'true'` **and** a non-empty `NPM_TOKEN`, learned the hard

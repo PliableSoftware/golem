@@ -20,8 +20,11 @@ Bump all of them at once:
 npm run release -- patch      # or: minor | major | 1.2.3
 ```
 
-This edits both `package.json` files, regenerates `src/version.ts`, and prints
-the remaining steps. It does **not** commit, tag, or publish.
+This edits both `package.json` files, `package-lock.json` and `src/version.ts` as
+one unit and prints the remaining steps. It computes and validates every edit in
+memory, writes temp files, then renames them into place; if any step fails
+part-way the files already replaced are restored, so a failed run leaves the tree
+unchanged. It does **not** commit, tag, or publish.
 
 ## Cut a release (automated)
 
