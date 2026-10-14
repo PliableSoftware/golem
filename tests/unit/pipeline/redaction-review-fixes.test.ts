@@ -150,11 +150,14 @@ describe("DUSTSEC.24 review (1) connection-password has no leading boundary", ()
       const before = groupSpans(OLD_CONN, text);
       const after = groupSpans(rule("connection-password").pattern, text);
       oldHits += before.length;
-      for (const [s, e] of before) {
-        expect(
-          after.some(([s2, e2]) => s2 === s && e2 === e),
-          JSON.stringify(text),
-        ).toBe(true);
+      // A password that is itself an already-produced placeholder is exempt by design (idempotence).
+      if (!text.includes(MARK)) {
+        for (const [s, e] of before) {
+          expect(
+            after.some(([s2, e2]) => s2 === s && e2 === e),
+            JSON.stringify(text),
+          ).toBe(true);
+        }
       }
       extra += after.length - before.length;
       const once = redactIdentifierText(text);
@@ -430,5 +433,210 @@ describe("DUSTSEC.24 review (6) scanEnd is clamped toward more redaction", () =>
     }
     expect(clampScanEnd(undefined as unknown as number, 10)).toBe(10);
     expect(clampScanEnd("3" as unknown as number, 10)).toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Second review: a scheme of any length, and idempotence across rules.
+// ---------------------------------------------------------------------------
+
+const KINDS = [
+  "private-key",
+  "aws-key",
+  "aws-secret-key",
+  "github-token",
+  "anthropic-key",
+  "openai-key",
+  "slack-token",
+  "google-api-key",
+  "stripe-key",
+  "gcp-oauth-token",
+  "jwt",
+  "connection-password",
+  "azure-account-key",
+  "credit-card",
+  "email",
+  "nostr-secret-key",
+  "high-entropy",
+];
+
+describe("DUSTSEC.24 second review (1) a scheme of any length still has its password redacted", () => {
+  const pw = base62("pw2", 12);
+  const heads: [string, string][] = [
+    ["a + 200 digits", `a${"1".repeat(200)}`],
+    ["a + 130 dots", `a${".".repeat(130)}`],
+    ["a + 300 plus", `a${"+".repeat(300)}`],
+    ["a + 500 hyphens", `a${"-".repeat(500)}`],
+    ["a + 600 mixed", `a${"1.+-".repeat(150)}`],
+    ["a letter then 129 digits", `x${"9".repeat(129)}`],
+  ];
+  for (const [name, head] of heads) {
+    it(`${name}: the original caught it and so does the rule`, () => {
+      const text = `${head}://u:${pw}@h`;
+      const before = groupSpans(OLD_CONN, text);
+      expect(before).toHaveLength(1);
+      expect(groupSpans(rule("connection-password").pattern, text)).toEqual(before);
+      expect(redactIdentifierText(text)).toBe(`${head}://u:${MARK}connection-password:1]@h`);
+    });
+  }
+
+  it("fuzz: 12,000 texts with scheme runs up to 600 characters: zero passwords the original caught are missed", () => {
+    const rand = rng(6001);
+    const schemeChars = "abcXYZ019.+-";
+    let oldHits = 0;
+    let extra = 0;
+    let longHits = 0;
+    for (let i = 0; i < 12_000; i++) {
+      const len = Math.floor(rand() < 0.5 ? rand() * 600 : rand() * 40);
+      let scheme = "";
+      const chars = rand() < 0.5 ? "019.+-" : schemeChars;
+      for (let k = 0; k < len; k++) scheme += chars[Math.floor(rand() * chars.length)];
+      if (chars.length === 6) scheme = `a${scheme}`;
+      const glue = ["", " ", "_", "(", "deadbeef", "x ", "\n"][Math.floor(rand() * 7)] as string;
+      const user = ["u", "admin", "", "u.v", "a b"][Math.floor(rand() * 5)] as string;
+      const tail = ["@h", "@h/db", "@@", "@", " @h"][Math.floor(rand() * 5)] as string;
+      const text = `${glue}${scheme}://${user}:${base62(`p${i}`, 1 + Math.floor(rand() * 20))}${tail}${rand() < 0.3 ? ` ${scheme}://u:pw@h` : ""}`;
+      const before = groupSpans(OLD_CONN, text);
+      const after = groupSpans(rule("connection-password").pattern, text);
+      oldHits += before.length;
+      if (before.length > 0 && /[A-Za-z0-9+.-]{129,}:\/\//.test(text)) longHits += before.length;
+      for (const [s, e] of before) {
+        expect(
+          after.some(([s2, e2]) => s2 === s && e2 === e),
+          JSON.stringify(text),
+        ).toBe(true);
+      }
+      extra += after.length - before.length;
+    }
+    expect(oldHits).toBeGreaterThan(1500);
+    expect(longHits).toBeGreaterThan(300);
+    expect(extra).toBeGreaterThanOrEqual(0);
+  });
+
+  it("stays linear on every shape that could make the lookbehind walk far", () => {
+    const shapes: [string, (bytes: number) => string][] = [
+      ["one colon after a digit run", (n) => `${"1".repeat(n)}:`],
+      ["127 digits + colon", (n) => `${"1".repeat(127)}:`.repeat(n / 128)],
+      ["999 digits + colon", (n) => `${"1".repeat(999)}:`.repeat(n / 1000)],
+      ["a:", (n) => "a:".repeat(n / 2)],
+      ["1:", (n) => "1:".repeat(n / 2)],
+      ["a1:", (n) => "a1:".repeat(n / 3)],
+      ["colons", (n) => ":".repeat(n)],
+      ["://", (n) => "://".repeat(n / 3)],
+      ["a://", (n) => "a://".repeat(n / 4)],
+      ["a://u:", (n) => "a://u:".repeat(n / 6)],
+    ];
+    for (const [name, make] of shapes) {
+      const tSmall = timed(() => redactIdentifierText(make(262_144)));
+      const tBig = timed(() => redactIdentifierText(make(2_097_152)));
+      expect(tBig / Math.max(tSmall, 1), name).toBeLessThan(24);
+      expect(tBig, name).toBeLessThan(10_000);
+    }
+  }, 240_000);
+});
+
+describe("DUSTSEC.24 second review (2) a second pass never re-redacts another rule's placeholder", () => {
+  it("a password-position placeholder of any built-in kind is left alone, an unknown kind is not", () => {
+    const ph = (kind: string, n: number) => `${MARK}${kind}:${n}]`;
+    for (const kind of KINDS) {
+      const text = `postgres://u:${ph(kind, 5)}@h`;
+      expect(redactIdentifierText(text), kind).toBe(text);
+    }
+    // The kind is the only free text in a placeholder, so only the fixed vocabulary is
+    // exempt: a made-up kind (which could carry a secret) is a password like any other.
+    const hidden = `postgres://u:${ph(base62("kind", 10), 3)}@h`;
+    expect(redactIdentifierText(hidden)).toBe(`postgres://u:${ph("connection-password", 1)}@h`);
+  });
+
+  it("a placeholder in the user position: a real password after it is redacted, a lone placeholder is left", () => {
+    const ph = (kind: string, n: number) => `${MARK}${kind}:${n}]`;
+    const pw = base62("pw3", 12);
+    // earlier rules' placeholders really do land in the user position of a URL
+    expect(redactIdentifierText(`pg://${ph("aws-key", 1)}:${pw}@h`)).toBe(
+      `pg://${ph("aws-key", 1)}:${ph("connection-password", 1)}@h`,
+    );
+    for (const text of [
+      `pg://${ph("credit-card", 1)}:${ph("connection-password", 2)}@h`,
+      `pg://${ph("credit-card", 1)}@h`,
+      `pg://u:${ph("email", 3)}@h`,
+    ]) {
+      expect(redactIdentifierText(text), text).toBe(text);
+    }
+    // No password follows the placeholder, so nothing is hidden by the exemption; text that
+    // merely LOOKS like the start of a placeholder is still a password.
+    expect(redactIdentifierText(`pg://u:${pw}@h`)).toBe(`pg://u:${ph("connection-password", 1)}@h`);
+    expect(redactIdentifierText(`pg://u:${MARK}${pw}@h`)).toBe(
+      `pg://u:${ph("connection-password", 1)}@h`,
+    );
+  });
+
+  it("the kinds listed here are exactly the built-in rule ids plus the entropy sweep", () => {
+    expect([...KINDS].sort()).toEqual([...REDACTION_RULES.map((r) => r.id), "high-entropy"].sort());
+  });
+
+  it("the review's glued shapes are idempotent", () => {
+    const card = withCheckDigit("411111111111111");
+    const spaced = (card.match(/.{1,4}/g) ?? []).join(" ");
+    for (const text of [
+      `deadbeef_postgres://]${card}@@`,
+      `x postgres://${spaced}@h`,
+      `x postgres://u:${card}@h`,
+      `a${"1".repeat(200)}://${card}:${card}@h`,
+    ]) {
+      const once = redactIdentifierText(text);
+      expect(redactIdentifierText(once), text).toBe(once);
+      const whole = redactStandaloneText(text);
+      expect(redactStandaloneText(whole), text).toBe(whole);
+    }
+  });
+
+  it("whole-stage fuzz (rules AND the entropy sweep): 20,000 texts, second pass changes nothing", () => {
+    const rand = rng(777);
+    const card = withCheckDigit("411111111111111");
+    // Generator note: no space-grouped card here. The connection-password rule runs BEFORE the
+    // card rule, so a password that only loses its spaces once the card is replaced is matched on
+    // the second pass, before and after this change (rule order is part of the contract).
+    // Also:  a token ends in a letter and a space so it cannot run into a card's digits.
+    // (A card preceded by digits and a space, `12 4111 1111 1111 1111`, is swallowed whole by the
+    // card rule's pattern and rejected as irregular grouping, before AND after this change.)
+    const pieces = [
+      "://",
+      ":",
+      "@",
+      "@@",
+      "/",
+      "]",
+      "[",
+      "x://u:",
+      "pg+a.b://user:",
+      "u:pw@h",
+      "postgres",
+      "deadbeef",
+      "deadbeef_",
+      " ",
+      "\n",
+      "-",
+      ".",
+      "+",
+      "_",
+      card,
+      `${card}:${card}@`,
+      "ghp_",
+      `${base62("e1", 40)}x `,
+      `${base62("e2", 90)}x `,
+      `${MARK}credit-card:1]`,
+      `${MARK}email:2]`,
+      `${MARK}high-entropy:3]`,
+      `${MARK}connection-password:4]`,
+      "a@b.com",
+    ];
+    let changed = 0;
+    for (let i = 0; i < 20_000; i++) {
+      const text = randomText(rand, pieces, "abc019:/@.-_ ");
+      const once = redactStandaloneText(text);
+      if (once !== text) changed += 1;
+      expect(redactStandaloneText(once), JSON.stringify(text)).toBe(once);
+    }
+    expect(changed).toBeGreaterThan(4000);
   });
 });
