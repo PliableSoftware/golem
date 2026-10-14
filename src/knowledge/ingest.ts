@@ -84,7 +84,10 @@ export function projectBaseDir(
 /** `realpath` of `p`, falling back to `path.resolve` when it cannot be resolved. */
 function realOrResolved(p: string): string {
   try {
-    return realpathSync(p);
+    // The native call canonicalises like the async `realpath` (expands Windows 8.3
+    // short names, fixes the case on case-insensitive filesystems); the JS one does not,
+    // so the same directory could compare unequal across the two spellings.
+    return realpathSync.native(p);
   } catch {
     return path.resolve(p);
   }
