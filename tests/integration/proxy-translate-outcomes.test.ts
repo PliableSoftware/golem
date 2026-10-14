@@ -19,7 +19,7 @@ import {
 const translator: UpstreamTranslator = {
   path: "/v1/chat/completions",
   translateRequest: (body) => ({ body, stream: false }),
-  translateResponse: (body) => body,
+  translateResponse: (body) => body ?? Buffer.alloc(0),
   createStreamTranslator: () => {
     throw new Error("not streaming");
   },
