@@ -279,7 +279,7 @@ export interface GolemPipelineOptions {
     readonly minChars?: number;
   };
   /**
-   * R2.3 (spec Decision 24 sub-mode 2 / Decision 33): OPT-IN local-answer
+   * R2.3 (spec Decision 24 sub-mode 2 / Decision 33): local-answer
    * sub-mode. When present, runs right after redaction (stage 1) and before
    * any compression stage — only for requests {@link eligibleLocalAnswerText}
    * accepts (single-turn, plain-text user message). A confident result
@@ -516,7 +516,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         }
       }
 
-      // Stage 1.5 — local-answer sub-mode (R2.3, opt-in, independent of
+      // Stage 1.5 — local-answer sub-mode (R2.3, on by default via knowledge.local_answer_enabled, independent of
       // compression level). Runs on the already-redacted body — the redaction
       // hard rule applies here same as anywhere else. Only attempted for
       // requests eligibleLocalAnswerText() accepts; a confident result
