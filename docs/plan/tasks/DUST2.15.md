@@ -25,3 +25,26 @@ cannot return full text for some hit kinds.
 ## Out of scope
 
 - K2 title-collision precedence (doc follows code, DUST2.5).
+
+## Contract amendment
+
+`src/interfaces/wiki.ts` gained optional `WikiFrontmatter.aliases?: readonly string[]`
+(AMENDMENT 2026-10-14 in that file's header). Pinned by
+`tests/contract/wiki-aliases.contract.test.ts`: optional readonly list, absent when a page
+declares none, not part of `WikiUpsertInput`, never written by `upsertPage` (a hand-authored
+line is kept verbatim on rewrite). `FileWikiStore.upsertPage` now builds its input
+frontmatter from explicit fields instead of spreading, so a smuggled `aliases` is not echoed.
+
+Consumers of `WikiFrontmatter` (grep of `src`, `vscode-extension`, `docs`, `scripts`, `tests`):
+
+| Consumer | Use | Status |
+|---|---|---|
+| `src/interfaces/index.ts` | re-export | unaffected |
+| `src/wiki/frontmatter.ts` | parses (now sets `aliases`), serializes, `lineHolds` | updated (parse); serialize keeps unknown `aliases` line verbatim |
+| `src/wiki/file-wiki-store.ts` | builds literal on rewrite; spreads input on create | create path made explicit (no spread); rewrite literal unaffected (optional) |
+| `src/wiki/federated-wiki-reader.ts` | spreads pages (`prefixPage`) | unaffected, carries `aliases` through |
+| `src/knowledge/distill-store.ts` | three `WikiFrontmatter` literals, `owns` predicate | unaffected (optional field) |
+| `src/mcp/wiki-tools.ts` | copies tags/sources into tool output | unaffected |
+| `src/mcp/search.ts` | reads `aliases` for graph-first lookup | updated (new reader) |
+| `vscode-extension`, `scripts` | no `WikiFrontmatter` use | unaffected |
+| `docs/wiki/debriefs/2026-07-12-R3.5.md` | prose mention | unaffected |

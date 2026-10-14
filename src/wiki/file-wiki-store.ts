@@ -157,7 +157,7 @@ export class FileWikiStore implements WikiStore {
     const input: WikiUpsertInput = {
       relPath: withMdSuffix(rawInput.relPath),
       frontmatter: {
-        ...rawInput.frontmatter,
+        type: rawInput.frontmatter.type,
         title: redact(rawInput.frontmatter.title),
         tags: rawInput.frontmatter.tags.map(redact),
         sources: rawInput.frontmatter.sources.map(redact),
