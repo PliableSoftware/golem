@@ -20,3 +20,16 @@ from the asserted list. X5: macOS stays advisory by design (doc follows code) â€
 ## Out of scope
 
 - Cutting a release (owner: user flow). Branch protection settings.
+
+## Delivered (2026-10-14, branch fix/dust2-21-release-lockstep)
+
+- `scripts/release.mjs`: plan all edits in memory (package.json, vscode-extension/package.json,
+  package-lock.json, src/version.ts), validate, write temps, rename, restore on any failure.
+  `scripts/sync-version.mjs` exports `versionTsContent` so the template is not duplicated.
+- `release.yml` required-asset loop now includes `SHA256SUMS` and `pliable-golem-${VERSION}.tgz`.
+- Tests: `tests/unit/release-script-atomic.test.ts` (injected write/rename failures on temp copies).
+
+**Not locally testable:** the workflow assertion actually failing on a missing asset, and the
+`version` output feeding the tarball name, run only inside a real release (the user's act). Local
+coverage is a text check of the list plus YAML parse. Residual: a process kill between renames can
+still leave a mix; `git checkout` repairs it.

@@ -269,14 +269,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
           # The portal's routes are only as good as this list. Assert rather than
           # trust the upload: a missing asset here is a 404 on the front door.
+          # `npm pack` names @pliable/golem as pliable-golem-<version>.tgz.
           NAMES="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
           echo "$NAMES"
           for required in \
-            install.sh install.ps1 config-schema.json \
+            install.sh install.ps1 config-schema.json SHA256SUMS \
+            "pliable-golem-${VERSION}.tgz" \
             golem-linux-x64 golem-linux-arm64 \
             golem-darwin-x64 golem-darwin-arm64 \
             golem-windows-x64.exe golem-windows-arm64.exe
