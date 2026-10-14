@@ -226,24 +226,6 @@ function emailLocalStart(text: string, at: number, floor: number): number {
 }
 
 /**
- * The placeholder kinds that can appear in a password position on a SECOND pass
- * without the connection-password rule having seen them on the first: its own, and
- * those of the rules that run AFTER it (azure-account-key, credit-card, email,
- * nostr-secret-key) and the entropy sweep. An EARLIER rule's placeholder in that
- * position is renamed to a connection-password one on the first pass (pinned by
- * redaction.test.ts), so it never survives to be re-read. A test pins this list to
- * the rule table.
- */
-const PLACEHOLDER_KINDS: readonly string[] = [
-  "connection-password",
-  "azure-account-key",
-  "credit-card",
-  "email",
-  "nostr-secret-key",
-  "high-entropy",
-];
-
-/**
  * The rule table. Order is load-bearing and part of the audit surface:
  * multi-line PEM blocks first (their base64 body would otherwise be shredded
  * by narrower rules), provider-specific key shapes next (most specific
@@ -345,32 +327,26 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "(scheme://user:password@host). Only the password is redacted so the " +
       "scheme, user, and host stay legible to the model.",
     // DUSTSEC.24: anchored on the `:` before `//`. The scheme is checked by an UNBOUNDED
-    // look-behind (a letter, then any run of scheme characters, then the colon), which is
-    // the original's `\b[a-zA-Z][a-zA-Z0-9+.-]*:` minus the `\b`: a scheme of any length
+    // look-behind (a letter, then any run of scheme characters, then the colon): the
+    // original's `\b[a-zA-Z][a-zA-Z0-9+.-]*:` minus the `\b`, so a scheme of any length
     // qualifies, and so does one glued onto other word characters. The colon is outside
     // the scheme class, so each look-behind walks only its own run and the cost stays
-    // linear (measured on 10 MB of digits, of `1:`, of `a1:`, of `:`, of `://`). A start
-    // at every letter was quadratic on `a.a.a.`; a `\b` or a bounded look-behind let a
-    // password leak that the original redacted. Only the password is redacted, so where
-    // the match starts changes nothing: every password span the original matched is
-    // matched with the same span, and a few more are (a scheme glued onto word characters).
-    // A placeholder contains `:`, so one sitting in the user position (a card number or
-    // key used as the user name, redacted by an earlier rule) splits into user `[REDACTED`
-    // and a password that starts `kind:n]`. Two clauses keep a second pass from re-reading
-    // that: `(?:(?<=\[REDACTED:)KIND:\d+\]:)?` steps over such a placeholder remainder
-    // when a real password follows it (`[key]:pw@` redacts `pw`), and the lookahead
-    // `(?!(?<=\[REDACTED:)KIND:\d+\])` refuses a match that would start on one (nothing
-    // follows to be a password). The other lookahead skips a password that is EXACTLY one
-    // placeholder, anchored on `]@` (S10: no renumbering). KIND is connection-password, the rules
-    // that run after this one, and the entropy sweep (an earlier rule's placeholder is renamed
-    // on the first pass, as before); the kind is the only free text in a placeholder, so only
-    // the fixed vocabulary is exempt and a made-up kind (which could carry a secret) is
-    // still a password. The number is any digits, as it always was. A plugin rule's kind
-    // is not known here and is not exempt.
-    pattern: new RegExp(
-      String.raw`:(?<=[a-zA-Z][a-zA-Z0-9+.-]*:)\/\/[^\s:@/]+:(?:(?<=\[REDACTED:)(?:${PLACEHOLDER_KINDS.join("|")}):\d+\]:)?(?!\[REDACTED:(?:${PLACEHOLDER_KINDS.join("|")}):\d+\]@)(?!(?<=\[REDACTED:)(?:${PLACEHOLDER_KINDS.join("|")}):\d+\])([^\s@/]+)@`,
-      "g",
-    ),
+    // linear. A start at every letter was quadratic on `a.a.a.`; a `\b` or a bounded
+    // look-behind let a password leak that the original redacted. Only the password is
+    // redacted, so where the match starts changes nothing. The rest is the original's:
+    // every `scheme://user:password@` it matched is matched here with the same password
+    // span (this pattern matches a SUPERSET of it, never fewer).
+    // The lookahead skips a group that is EXACTLY one connection-password
+    // placeholder, so a second pass over already-redacted text cannot re-match
+    // (and renumber) it (S10). It names that ONE kind and anchors on `]@`: a
+    // password shaped like any other placeholder (attacker-chosen kind text, or
+    // another rule's placeholder) is still redacted, as before. DELIBERATELY no wider:
+    // a wider exemption (any known kind, or "starts with a placeholder") hides a real
+    // password that follows placeholder-looking text (`email:1]hunter2`), and a leak
+    // loses to idempotence. The cost is that a glued scheme can be re-redacted on a
+    // second pass (over-redaction only).
+    pattern:
+      /:(?<=[a-zA-Z][a-zA-Z0-9+.-]*:)\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
     group: 1,
   },
   {
