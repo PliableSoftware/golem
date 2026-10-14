@@ -18,6 +18,8 @@ export type {
   PluginMcpTool,
   PluginPipelineStage,
   PluginProblem,
+  PluginProblemKind,
+  PluginProblemSeverity,
   PluginRedactionRule,
   PluginSeam,
   PluginStageInput,

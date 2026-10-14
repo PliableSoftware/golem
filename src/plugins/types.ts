@@ -139,11 +139,43 @@ export interface LoadedPlugin {
   readonly seams: Readonly<Record<PluginSeam, number>>;
 }
 
+/**
+ * What sort of problem it is, so `golem plugin` can count by kind and a script
+ * can match on it. `regex-backtracking` and `unanalysed-regex` come from the
+ * static check in `regex-risk.ts` and are advisory (DUST2.11).
+ */
+export type PluginProblemKind =
+  | "unresolved"
+  | "import-failed"
+  | "invalid-module"
+  | "duplicate-plugin"
+  | "setup-threw"
+  | "setup-timeout"
+  | "command-deadline"
+  | "invalid-registration"
+  | "late-registration"
+  | "empty-match"
+  | "dead-rule"
+  | "validate-threw"
+  | "regex-backtracking"
+  | "unanalysed-regex"
+  | "missing-metadata"
+  | "stage-probe-failed";
+
+/**
+ * `error`: something was dropped or did not run (the plugin or registration is a
+ * no-op). `warning`: it is active, but something about it deserves a look.
+ */
+export type PluginProblemSeverity = "error" | "warning";
+
 /** Something that did not work. Never an error path — always a recorded fact. */
 export interface PluginProblem {
   /** The specifier at fault, or the plugin name for a per-registration problem. */
   readonly subject: string;
   readonly reason: string;
+  readonly kind?: PluginProblemKind;
+  /** Absent means `error`. */
+  readonly severity?: PluginProblemSeverity;
   /**
    * How many times this exact problem occurred, when it can repeat at runtime
    * (a throwing `validate`). Absent means once.

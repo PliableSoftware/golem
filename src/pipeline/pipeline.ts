@@ -37,6 +37,7 @@ import type { CompressionService, TokenDelta } from "../interfaces/compression.j
 import type { JoinQueue, JoinQueueMessage } from "../interfaces/join-queue.js";
 import type { LocalAnswerService } from "../interfaces/local-answer.js";
 import { type BrevityLevel, compressionRank, type PipelinePolicy } from "../interfaces/policy.js";
+import { type PluginStageRunOptions, runPluginStage } from "../plugins/stage-runner.js";
 import type { PluginPipelineStage } from "../plugins/types.js";
 import {
   type CacheBustComponent,
@@ -305,6 +306,8 @@ export interface GolemPipelineOptions {
    * so an install with no plugins behaves exactly as it did before R8.11.
    */
   readonly pluginStages?: readonly PluginPipelineStage[];
+  /** Timeout, clock and breaker settings for plugin stages. Tests inject short values. */
+  readonly pluginStageRun?: PluginStageRunOptions;
 }
 
 // Match the Anthropic Messages endpoint as the tail of the path — NOT anchored
@@ -624,20 +627,29 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         const pluginsAt = performance.now();
         let touched = false;
         for (const stage of options.pluginStages) {
-          try {
-            const next = await stage.transform({ body, projectId: options.projectId });
-            if (next !== undefined && isRecord(next) && next !== body) {
-              body = next;
-              touched = true;
+          // A plugin never fails a user's request. A stage that throws, hangs, or
+          // half-edits the body and then throws is skipped and the pre-stage body
+          // (already through built-in redaction) is kept; the fault is counted.
+          const outcome = await runPluginStage(
+            stage,
+            body,
+            options.projectId,
+            options.pluginStageRun,
+          );
+          body = outcome.body;
+          if (outcome.replaced) touched = true;
+          if (outcome.fault !== null) {
+            const f = outcome.fault;
+            // First fault per stage, every 100th, and the one that opens the
+            // breaker: loud enough to see, not a line per request.
+            if (f.total === 1 || f.total % 100 === 0 || f.tripped === true) {
+              const verb =
+                f.kind === "threw" ? "threw" : f.kind === "timed-out" ? "timed out" : "is disabled";
+              proxyLog(
+                `plugin stage ${f.stage} ${verb} and was skipped (${f.reason}); ` +
+                  `pre-stage body kept, ${f.total} fault(s) from this stage so far`,
+              );
             }
-          } catch (err) {
-            // A plugin never fails a user's request: skip the stage, keep the
-            // pre-stage body, say so once on stderr.
-            proxyLog(
-              `plugin stage ${stage.name} threw and was skipped (${
-                err instanceof Error ? err.message : String(err)
-              })`,
-            );
           }
         }
         if (touched) changed = true;

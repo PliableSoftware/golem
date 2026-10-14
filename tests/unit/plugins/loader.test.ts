@@ -119,7 +119,8 @@ describe("loadPlugins — every failure is a recorded no-op", () => {
     });
     expect(loaded.plugins.map((p) => p.name)).toEqual(["aaa", "ccc"]);
     expect(loaded.stages.map((s) => s.name)).toEqual(["aaa/ok", "ccc/also-ok"]);
-    expect(loaded.problems[0]?.reason).toContain("setup() threw");
+    // Advisory warnings (e.g. a stage with no description) may precede the error.
+    expect(loaded.problems.some((p) => p.reason.includes("setup() threw"))).toBe(true);
   });
 
   it("discards a half-registered plugin entirely rather than keeping the good half", async () => {
