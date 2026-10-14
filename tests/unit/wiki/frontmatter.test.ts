@@ -149,3 +149,50 @@ describe("frontmatter list items containing commas", () => {
     expect(parseFrontmatter(raw).frontmatter).toEqual(fm);
   });
 });
+
+describe("serializeFrontmatter with the original block (DUST3 leftover 8)", () => {
+  const ORIGINAL = [
+    "---",
+    "title: T",
+    "type: concept",
+    'tags: ["a", b]',
+    'sources: ["x/y.ts", "z (R1)"]',
+    "updated: 2026-07-01",
+    "created: 2026-06-01",
+    "---",
+  ].join("\n");
+
+  it("round-trips an untouched block byte-for-byte, key order and quoting included", () => {
+    const { frontmatter } = parseFrontmatter(`${ORIGINAL}\n\nbody`);
+    expect(serializeFrontmatter(frontmatter, ORIGINAL)).toBe(ORIGINAL);
+  });
+
+  it("regenerates only a line whose value changed", () => {
+    const { frontmatter } = parseFrontmatter(`${ORIGINAL}\n\nbody`);
+    const out = serializeFrontmatter({ ...frontmatter, tags: ["a", "b", "c"] }, ORIGINAL);
+    expect(out).toBe(ORIGINAL.replace('tags: ["a", b]', "tags: [a, b, c]"));
+  });
+
+  it("falls back to canonical output with no original", () => {
+    const { frontmatter } = parseFrontmatter(`${ORIGINAL}\n\nbody`);
+    expect(serializeFrontmatter(frontmatter)).toContain("sources: [x/y.ts, z (R1)]");
+  });
+});
+
+describe("serializeFrontmatter keeps keys the schema does not know (DUST3 leftover 8)", () => {
+  it("does not drop an extra frontmatter key when given the original block", () => {
+    const original = [
+      "---",
+      "task: some-task",
+      "title: T",
+      "type: debrief",
+      "tags: []",
+      "sources: []",
+      "created: 2026-09-07",
+      "updated: 2026-09-07",
+      "---",
+    ].join("\n");
+    const { frontmatter } = parseFrontmatter(`${original}\n\nbody`);
+    expect(serializeFrontmatter(frontmatter, original)).toBe(original);
+  });
+});

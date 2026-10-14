@@ -137,18 +137,72 @@ export function parseFrontmatter(raw: string): ParsedFrontmatter {
   return { frontmatter, body };
 }
 
-/** Serialize frontmatter back to the `---`-delimited block (no trailing newline). */
-export function serializeFrontmatter(fm: WikiFrontmatter): string {
-  return [
-    FRONTMATTER_DELIMITER,
-    `title: ${fm.title}`,
-    `type: ${fm.type}`,
-    `tags: [${fm.tags.map(serializeListItem).join(", ")}]`,
-    `sources: [${fm.sources.map(serializeListItem).join(", ")}]`,
-    `created: ${fm.created}`,
-    `updated: ${fm.updated}`,
-    FRONTMATTER_DELIMITER,
-  ].join("\n");
+function canonicalLines(fm: WikiFrontmatter): Record<(typeof REQUIRED_KEYS)[number], string> {
+  return {
+    title: `title: ${fm.title}`,
+    type: `type: ${fm.type}`,
+    tags: `tags: [${fm.tags.map(serializeListItem).join(", ")}]`,
+    sources: `sources: [${fm.sources.map(serializeListItem).join(", ")}]`,
+    created: `created: ${fm.created}`,
+    updated: `updated: ${fm.updated}`,
+  };
+}
+
+/**
+ * Does this original line still say what `fm` says for its key? Compared by
+ * parsing the line, so `["a", b]` and `[a, b]` are the same value and the
+ * author's quoting survives.
+ */
+function lineHolds(key: string, line: string, fm: WikiFrontmatter): boolean {
+  const value = line.slice(line.indexOf(":") + 1).trim();
+  try {
+    if (key === "tags" || key === "sources") {
+      const want = fm[key];
+      const got = parseListValue(value);
+      return got.length === want.length && got.every((item, i) => item === want[i]);
+    }
+    return value === fm[key as "title" | "type" | "created" | "updated"];
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Serialize frontmatter back to the `---`-delimited block (no trailing newline).
+ *
+ * With `original` (the block as it was read), a line whose value is unchanged is
+ * kept exactly as written, and keys keep the original's order, so rewriting a
+ * page does not churn quoting or ordering the author chose. Only lines whose
+ * value changed are regenerated; keys the original lacks follow, canonically. Lines for keys the schema does not
+ * know are kept verbatim rather than dropped.
+ */
+export function serializeFrontmatter(fm: WikiFrontmatter, original?: string): string {
+  const canonical = canonicalLines(fm);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  if (original !== undefined) {
+    const lines = original.split("\n").map((l) => l.replace(/\r$/, ""));
+    for (const line of lines) {
+      if (line.trim() === FRONTMATTER_DELIMITER || line.trim() === "") continue;
+      const key = line.slice(0, Math.max(line.indexOf(":"), 0)).trim();
+      if (!(REQUIRED_KEYS as readonly string[]).includes(key)) {
+        out.push(line); // a key the schema does not know: the author's, so kept verbatim
+        continue;
+      }
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(lineHolds(key, line, fm) ? line : canonical[key as keyof typeof canonical]);
+    }
+  }
+  for (const key of REQUIRED_KEYS) if (!seen.has(key)) out.push(canonical[key]);
+  return [FRONTMATTER_DELIMITER, ...out, FRONTMATTER_DELIMITER].join("\n");
+}
+
+/** The leading `---` block of a raw page, as written (for {@link serializeFrontmatter}). */
+export function frontmatterBlock(raw: string): string {
+  const lines = raw.split("\n");
+  const end = lines.findIndex((l, i) => i >= 1 && l.trim() === FRONTMATTER_DELIMITER);
+  return lines.slice(0, end + 1).join("\n");
 }
 
 const WIKILINK_PATTERN = /\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g;
