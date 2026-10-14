@@ -40,6 +40,13 @@ export interface WikiFrontmatter {
   readonly created: string;
   /** YYYY-MM-DD */
   readonly updated: string;
+  /**
+   * Optional alternate names (frontmatter `aliases`). Graph-first lookup matches
+   * a query or `[[wikilink]]` against these as well as `title`. Absent when the
+   * page declares none; never written by `upsertPage` (a hand-authored line is
+   * preserved verbatim on rewrite).
+   */
+  readonly aliases?: readonly string[];
 }
 
 /** One wiki page: parsed frontmatter plus the markdown body that follows it. */

@@ -2,9 +2,9 @@
 title: Knowledge Base
 type: concept
 tags: [rag, vector, search, knowledge, embeddings]
-sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/search.ts, src/cli/auto-index.ts, src/knowledge/driver.ts, docs/golem-spec.md#3.1]
+sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/search.ts, src/cli/auto-index.ts, src/knowledge/driver.ts, src/wiki/frontmatter.ts, docs/golem-spec.md#3.1]
 created: 2026-07-25
-updated: 2026-08-22
+updated: 2026-10-14
 ---
 
 # Knowledge Base
@@ -49,13 +49,13 @@ flowchart LR
 
 `assembleHits` (`src/mcp/search.ts:207`, module-local; moved out of `server.ts` by the R8.28 split) is the one place hit assembly lives, shared by
 the `search` tool and the `coder` tool's grounding. It tries a cheap, precise
-**wiki title match** (and one hop along that page's `[[wikilinks]]`) with **no
+**wiki title or alias match** (and one hop along that page's `[[wikilinks]]`) with **no
 embedding call**, then always runs vector search too, de-dupes, boosts wiki hits
 above other sources, and optionally reranks with a local chat-judge.
 
 ```mermaid
 flowchart TB
-  Q["search(query)"] --> GF["Graph-first wiki lookup<br/>exact title match → one-hop wikilinks (no embedding)"]
+  Q["search(query)"] --> GF["Graph-first wiki lookup<br/>exact title / alias match → one-hop wikilinks (no embedding)"]
   GF --> VEC["Vector search<br/>embed query → cosine top-k"]
   VEC --> DEDUP["De-dupe vs graph hits"]
   DEDUP --> BOOST["Boost wiki hits above other sources"]
@@ -65,8 +65,18 @@ flowchart TB
   JUDGE --> OUT
 ```
 
-`graphFirstWikiHits` (`src/mcp/search.ts:164`) is re-exported from `src/mcp/server.ts`
-but lives in `search.ts`. On a title collision between the project wiki and the
+`graphFirstWikiHits` (`src/mcp/search.ts`) is re-exported from `src/mcp/server.ts`
+but lives in `search.ts`.
+
+**Aliases (DUST2.15).** A page's frontmatter `aliases: [PC, Cache Warmup]` (a bracketed
+list or one bare scalar; optional, parsed by `src/wiki/frontmatter.ts`, never written by
+`wiki_upsert` but kept verbatim on rewrite) is matched like a title: case-insensitive,
+trimmed, blanks and repeats ignored. Order is deterministic: the title match first, then
+every alias match in `relPath` order — an alias shared by two pages surfaces **both**.
+A `[[wikilink]]` in the one-hop step may name an alias too (a title wins over an alias,
+the first `relPath` wins between aliases). Tables are built in one pass, so a large wiki
+costs O(pages + links). An alias hit scores 1.9, under an exact title (2) and over a
+linked page (1.6). The title-collision rule below is unchanged. On a title collision between the project wiki and the
 user-scope wiki, graph-first builds its title map with `Map.set` over a page list that
 puts user pages last, so the **user page wins** (`search.ts:172-173`,
 `federated-wiki-reader.ts:39`); `readPage`/`resolveLink` still prefer the project page.
@@ -109,6 +119,23 @@ Cost side: [[Auto-Index Cost]].
 Hits from every active scope are merged, sorted by score, and truncated to *k*. Full
 text for any hit comes back through `fetch` (`getChunk`), so Claude pulls ~2–5K
 tokens of relevant chunks instead of reading whole directories.
+
+## `fetch` coverage and safety
+
+`fetch(chunk_id)` resolves every hit kind `search` returns:
+
+- **Stored chunks** (ingested trees, cached web pages) — `getChunk` on the vector store,
+  looked up by the opaque id only. A chunk's `source_path` may be `external:<abs path>`
+  (an index target outside the project); it is data, never joined to a base or read from
+  disk by `fetch`.
+- **Graph-first wiki hits** (`wiki:<relPath>`, `user:`-prefixed for the user wiki) —
+  read from the wiki store. An id with `..`, an absolute or drive path, a backslash or NUL is
+  refused before the store sees it, and the store refuses anything escaping the wiki dir.
+- **Memory-scope hits** (`memory:<id>`) — Headroom has no lookup by id, so the server keeps
+  the last 200 memory hits `search` returned and serves the full text from that; an id
+  `search` never returned is a clear error.
+
+Anything missing or refused answers `Unknown chunk "<id>"` as an error result, never a crash.
 
 See [[Architecture]] for how the KB sits beside the proxy and inference router, and
 [[Distillation Pipeline]] for how raw captures become durable, linkable pages.
