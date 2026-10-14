@@ -143,6 +143,8 @@ export interface LockOptions {
   readonly platform?: NodeJS.Platform;
   /** Test seam: the exclusive create. Defaults to `writeFile(..., { flag: "wx" })`. */
   readonly createExclusive?: (file: string, content: string) => Promise<void>;
+  /** Test seam: runs right after a lock is judged stale, before the breaker acts on it. */
+  readonly afterJudgedStale?: () => Promise<void>;
 }
 
 /**
@@ -201,6 +203,7 @@ export async function acquireLock(
       const st = await stat(lockPath);
       if (Date.now() - st.mtimeMs > staleMs) {
         const seen = (await readFile(lockPath, "utf8")).trim();
+        await options.afterJudgedStale?.();
         const moved = `${lockPath}.stale.${token}`;
         await rename(lockPath, moved);
         // Double-check that what we moved is the very lock we judged stale (same

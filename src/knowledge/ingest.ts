@@ -81,6 +81,11 @@ export function toPosix(p: string): string {
   return p.split(path.sep).join("/");
 }
 
+/** The stored `sourcePath` key for `abs` when indexing relative to `baseDir`. */
+export function sourcePathFor(baseDir: string, abs: string): string {
+  return sourcePathFor(baseDir, abs);
+}
+
 /**
  * Read a file's content as chunkable plain text: `.pdf` gets its text layer
  * extracted (binary read), `.html` gets tags/scripts/styles stripped (utf8
@@ -177,7 +182,7 @@ export async function planIngest(root: string, options: IngestOptions = {}): Pro
       filesSkipped += 1;
       continue;
     }
-    const sourcePath = toPosix(path.relative(baseDir, file));
+    const sourcePath = sourcePathFor(baseDir, file);
     for (const raw of await chunkFileContent(file, content, options)) {
       chunks.push({ ...raw, sourcePath });
     }
@@ -220,7 +225,7 @@ export async function scanFiles(root: string, baseDirOverride?: string): Promise
       const st = await stat(abs);
       out.push({
         abs,
-        sourcePath: toPosix(path.relative(baseDir, abs)),
+        sourcePath: sourcePathFor(baseDir, abs),
         mtimeMs: st.mtimeMs,
         size: st.size,
       });
@@ -249,7 +254,7 @@ export async function chunkFilesRelativeTo(
     } catch {
       continue;
     }
-    const sourcePath = toPosix(path.relative(baseDir, file));
+    const sourcePath = sourcePathFor(baseDir, file);
     for (const raw of await chunkFileContent(file, content, options)) {
       chunks.push({ ...raw, sourcePath });
     }

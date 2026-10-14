@@ -1,0 +1,94 @@
+/**
+ * An index target OUTSIDE the project root must not share source-path keys with
+ * the project's own files. Before the fix both were keyed relative to their own
+ * directory, so a watched outside `README.md` edit/delete replaced or dropped the
+ * project's `README.md` chunks. The watcher is mocked so batches are delivered
+ * deterministically (no fs events, no debounce).
+ */
+
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FileChangeBatch } from "../../../src/knowledge/file-watcher.js";
+import { useTempDirs } from "../../helpers/tmp.js";
+
+let deliver: ((b: FileChangeBatch) => void) | undefined;
+vi.mock("../../../src/knowledge/file-watcher.js", () => ({
+  watchPath: async (_root: string, cb: (b: FileChangeBatch) => void) => {
+    deliver = cb;
+    return { close: () => {} };
+  },
+}));
+
+const { GolemKnowledgeBase, hashingEmbedFn, InMemoryVectorDriver } = await import(
+  "../../../src/knowledge/index.js"
+);
+const { projectBaseDir, sourcePathFor } = await import("../../../src/knowledge/ingest.js");
+
+const newTempDir = useTempDirs("golem-outside-watch-");
+let project: string;
+let outside: string;
+let kb: InstanceType<typeof GolemKnowledgeBase>;
+
+beforeEach(async () => {
+  const root = await newTempDir();
+  project = path.join(root, "project");
+  outside = path.join(root, "outside");
+  await mkdir(project, { recursive: true });
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(project, "README.md"), "# projectMarker alpha\n");
+  await writeFile(path.join(outside, "README.md"), "# outsideMarker beta\n");
+  kb = new GolemKnowledgeBase(new InMemoryVectorDriver(), { embed: hashingEmbedFn() });
+  deliver = undefined;
+});
+
+afterEach(() => {
+  kb.closeWatchers();
+});
+
+async function texts(query: string): Promise<string[]> {
+  return (await kb.search(query, project, 20)).map((h) => h.chunk.text);
+}
+const has = async (marker: string) => (await texts(marker)).some((t) => t.includes(marker));
+
+async function waitUntil(pred: () => Promise<boolean>): Promise<void> {
+  const start = Date.now();
+  while (!(await pred())) {
+    if (Date.now() - start > 5000) throw new Error("timed out waiting for condition");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+describe("outside-project index target", () => {
+  it("uses a source-path namespace distinct from the project's", async () => {
+    const base = projectBaseDir(project, outside, false);
+    const key = sourcePathFor(base, path.join(outside, "README.md"));
+    expect(key).not.toBe("README.md");
+    expect(sourcePathFor(base, path.join(project, "README.md"))).toBe("README.md");
+    expect(key.startsWith("external:")).toBe(true);
+    expect(key.includes("\\")).toBe(false);
+  });
+
+  it("editing a watched outside README.md leaves the project's README.md chunks intact", async () => {
+    await kb.ingest(project, project);
+    await kb.ingest(outside, project, true);
+    expect(await has("projectMarker")).toBe(true);
+    expect(await has("outsideMarker")).toBe(true);
+
+    await writeFile(path.join(outside, "README.md"), "# outsideMarker gamma edited\n");
+    deliver?.({ changed: [path.join(outside, "README.md")], removed: [] });
+    await waitUntil(() => has("gamma edited"));
+
+    expect(await has("projectMarker")).toBe(true);
+  });
+
+  it("deleting a watched outside README.md leaves the project's README.md chunks intact", async () => {
+    await kb.ingest(project, project);
+    await kb.ingest(outside, project, true);
+    await rm(path.join(outside, "README.md"));
+    deliver?.({ changed: [], removed: [path.join(outside, "README.md")] });
+    await waitUntil(async () => !(await has("outsideMarker")));
+
+    expect(await has("projectMarker")).toBe(true);
+  });
+});
