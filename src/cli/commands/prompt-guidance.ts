@@ -310,6 +310,8 @@ export default function register(program: Command): void {
   const hookCmd = buildHookCommand({
     buildKnowledge: async (projectDir) => {
       try {
+        // DUST2.13: fetched pages are ingested only while the KB is enabled.
+        if (!(await loadEffectiveConfig({ projectDir })).settings.knowledge.enabled) return null;
         return (await buildKnowledgeStack({ projectDir })).knowledge;
       } catch {
         return null;

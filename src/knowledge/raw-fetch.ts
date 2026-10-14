@@ -23,6 +23,10 @@ export interface RawPageHeaders {
   readonly lastModified?: string;
   readonly cacheControl?: string;
   readonly expires?: string;
+  /** Response `Date` (clock-skew correction for `expires`). */
+  readonly date?: string;
+  /** The response carried `Set-Cookie`: per-user state, never cached or ingested. */
+  readonly setCookie?: boolean;
 }
 
 /** A fetched raw page: extracted text plus the response's cache headers. */
@@ -89,7 +93,10 @@ export async function fetchRawPage(
   const lastModified = res.headers.get("last-modified") ?? undefined;
   const cacheControl = res.headers.get("cache-control") ?? undefined;
   const expires = res.headers.get("expires") ?? undefined;
+  const date = res.headers.get("date") ?? undefined;
   const headers: RawPageHeaders = {
+    ...(date !== undefined ? { date } : {}),
+    ...(res.headers.has("set-cookie") ? { setCookie: true } : {}),
     ...(etag !== undefined ? { etag } : {}),
     ...(lastModified !== undefined ? { lastModified } : {}),
     ...(cacheControl !== undefined ? { cacheControl } : {}),
