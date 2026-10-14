@@ -16,6 +16,14 @@
  * read nowhere in src), and the `"low_relevance"` member of
  * `SemanticCompression` (no level produced it). Contract tests updated in
  * tests/contract/policy.contract.test.ts. Redaction rows are unchanged.
+ *
+ * AMENDMENT 2026-10-14 (DUST2.23): `StageConfig.redaction` is now the literal type
+ * `true`, not `boolean`. A caller-built policy could set `false` and the pipeline
+ * obeyed it; only `proxy.bypass_all` (ADR-0004) may turn redaction off, and that
+ * path never builds a policy. The pipeline also checks it at runtime
+ * (`src/pipeline/policy-guard.ts`, throws, fail closed). No value in any row
+ * changed. Dependents: every `StageConfig` literal must say `redaction: true`
+ * (none in src/ or tests/ said otherwise).
  */
 
 /**
@@ -131,7 +139,7 @@ export type SemanticCompression = "off" | "stale_turns" | "aggressive";
  * bypasses the pipeline entirely and never reaches this table.
  */
 export interface StageConfig {
-  readonly redaction: boolean;
+  readonly redaction: true;
   readonly losslessCompression: boolean;
   readonly toolResultCache: boolean;
   readonly semanticCompression: SemanticCompression;

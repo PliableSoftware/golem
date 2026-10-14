@@ -7,7 +7,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { beforeEach, describe, expect, it } from "vitest";
 import { NativeLosslessCompression } from "../../src/compression/index.js";
-import { policyFor } from "../../src/interfaces/policy.js";
+import { type PipelinePolicy, policyFor } from "../../src/interfaces/policy.js";
 import { createGolemPipeline } from "../../src/pipeline/index.js";
 import { useTempDirs } from "../helpers/tmp.js";
 import { rawRequest, startProxy, startUpstream } from "./helpers/test-servers.js";
@@ -101,6 +101,47 @@ describe("no redaction-off side doors", () => {
         body: sent,
       });
       expect(s.received[0]?.body).toBe(sent);
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  });
+
+  // DUST2.23: a caller-built policy with redaction off is refused by the pipeline
+  // (it throws), and the proxy answers a pipeline throw with redaction ALONE.
+  it.each([
+    "/v1/messages",
+    "/v1/messages/count_tokens",
+  ])("a policy with redaction:false is not obeyed on %s: upstream still gets it redacted", async (path) => {
+    const s = setup();
+    const upstream = await startUpstream(s.handler);
+    const errors: unknown[] = [];
+    const bad = {
+      ...policyFor(1),
+      stages: { ...policyFor(1).stages, redaction: false },
+    } as unknown as PipelinePolicy;
+    const proxy = await startProxy({
+      upstreamBaseUrl: upstream.origin,
+      pipeline: createGolemPipeline({
+        compression: NativeLosslessCompression.forProjectDir(projectDir),
+        policy: () => bad,
+        projectId: projectDir,
+      }),
+      onPipelineError: (err: unknown) => {
+        errors.push(err);
+      },
+    });
+    try {
+      await rawRequest(proxy.origin, path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: body(),
+      });
+      expect(errors).toHaveLength(1);
+      expect(String(errors[0])).toContain("redaction cannot be turned off");
+      const got = s.received.find((r) => r.path === path);
+      expect(got?.body).not.toContain(SECRET);
+      expect(got?.body).toContain("[REDACTED:aws-key:1]");
     } finally {
       await proxy.close();
       await upstream.close();

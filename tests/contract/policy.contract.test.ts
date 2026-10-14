@@ -22,6 +22,7 @@ import {
   compressionName,
   compressionRank,
   policyFor,
+  type StageConfig,
   stagesForCompression,
 } from "../../src/interfaces/policy.js";
 
@@ -44,6 +45,18 @@ describe("PipelinePolicy level table", () => {
       for (const brevity of BREVITY_LEVELS) {
         expect(policyFor(level, { brevity }).stages.redaction).toBe(true);
       }
+    }
+  });
+
+  it("a StageConfig cannot be built with redaction off (2026-10-14 amendment, DUST2.23)", () => {
+    // Compile-time half: the field is the literal `true`, so `false` is a tsc error.
+    // @ts-expect-error redaction: false is unrepresentable
+    const off: StageConfig = { ...stagesForCompression("off"), redaction: false };
+    // Runtime half lives in src/pipeline/policy-guard.ts (tests/unit/pipeline/policy-guard.test.ts).
+    expect(off.redaction).toBe(false); // the cast-free object exists at runtime; the pipeline refuses it
+    for (const level of ALL_LEVELS) {
+      expect(stagesForCompression(level).redaction).toBe(true);
+      expect(Object.isFrozen(stagesForCompression(level))).toBe(true);
     }
   });
 
