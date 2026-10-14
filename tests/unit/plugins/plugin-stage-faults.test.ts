@@ -124,7 +124,8 @@ describe("pipeline — a failing stage cannot undo built-in redaction", () => {
       `key ${key} here`,
     );
     expect(text).not.toContain(key);
-    expect(text).toContain("[REDACTED:");
+    expect(text).toMatch(/^key \S+ here$/);
+    expect(text).toContain("REDACTED");
     expect(logs.join("")).toContain("plugin stage p/boom threw and was skipped (kaboom)");
     expect(logs.join("")).toContain("pre-stage body kept");
   });
