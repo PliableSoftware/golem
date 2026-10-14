@@ -2,9 +2,9 @@
 title: Redaction Stage
 type: concept
 tags: [security, pipeline, redaction, t-c3, r1-batch]
-sources: [src/pipeline/redaction-rules.ts, src/pipeline/redaction.ts, docs/plan/verification-notes.md, docs/plan/verification-notes.md#§55, docs/plan/verification-notes.md#§56, docs/plan/verification-notes.md#§140]
+sources: [src/pipeline/redaction-rules.ts, src/pipeline/redaction.ts, src/pipeline/body-redaction.ts, docs/plan/tasks/DUSTSEC.23.md, docs/plan/verification-notes.md, docs/plan/verification-notes.md#§55, docs/plan/verification-notes.md#§56, docs/plan/verification-notes.md#§140]
 created: 2026-07-10
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # Redaction Stage
@@ -79,7 +79,9 @@ path:
   (`redactOnly`, `src/pipeline/pipeline.ts:383`) and forwards that; if redaction
   itself throws, or the pipeline has no `redactOnly`, it fails closed with a
   **502** and forwards nothing (`src/proxy/server.ts:329-353`; DUSTSEC.1, USER
-  decision R1/S3). `redactOnly` leaves a body that is not a rewritable
+  decision R1/S3). The proxy prefers `redactOnlyAsync`, the same redaction with
+  the walk sliced (DUSTSEC.23, below), so the re-walk does not freeze the event
+  loop either; `redactOnly` is kept for callers that cannot await. `redactOnly` leaves a body that is not a rewritable
   Messages JSON request unchanged, the same verdict `process` reaches.
 - `bypass_all` is guarded against agents by a PreToolUse hook
   (`src/hooks/bypass-guard.ts`, DUSTSEC.3) that denies `golem off`,
@@ -130,6 +132,43 @@ triggering character, per the hard rule against weakening redaction — every
 negative case added to guard a false positive is paired with a positive case
 proving real secrets of that shape still redact
 (`tests/unit/pipeline/redaction-audit.test.ts`).
+
+## Resolved: the request walk yields to the event loop (DUSTSEC.23, 2026-10-14)
+
+The JSON walk used to run every rule over every string synchronously: about 0.7 s
+per MiB of many small strings on the review machine (about 0.33 s per MiB on the
+measuring machine), so a 32 MiB body (the `proxy.max_request_body_bytes` default)
+held the event loop for 10 to 26 s and stalled every other session's streams. The
+size limit bounds what is admitted, not how long redaction takes.
+
+- **One walk, two drivers.** `redactValueSteps` in `src/pipeline/redaction.ts` is a
+  generator that yields between values once a time slice is spent. `redactRequestBody`
+  (sync, for hooks and the conversation store) drains it without ever yielding;
+  `redactRequestBodyAsync` (the proxy request path: `process`, `redactOnlyAsync`,
+  `redactAnyBodyAsync`) yields to the event loop with `setImmediate` every
+  `REDACTION_SLICE_MS` (20 ms of wall time, checked with `performance.now()` after
+  each value, so a slice is bounded whatever the string sizes are). Same rules, same
+  order, same placeholder table: output is **byte-identical** to the sync walk, held
+  by a differential test (400 random JSON bodies, every recorded shape at every turn
+  length, the non-JSON and refused body classes, idempotence).
+- **Measured** (31.9 MB, about 700,000 short strings): sync 10.6 s wall and a 10.6 s
+  stall; async 10.9 s wall (about 1.02x) with 20 ms slices, p99 loop delay 20 ms and
+  a longest stall of 123 to 137 ms. A worker thread was measured and rejected: 11.8 s
+  wall, a 142 ms main-thread stall to structured-clone the body anyway, two resident
+  copies, and a crash path to make fail-closed.
+- **What still blocks.** `JSON.stringify` of the body for the token estimate (about
+  105 ms per 32 MiB, run before and, if anything was redacted, after the walk),
+  `JSON.parse` (about 150 ms), and one single very long string (a rule scans it
+  whole, so a 32 MiB text body is still one synchronous scan). The bound is
+  therefore about 20 ms per slice plus those one-off calls.
+- **Fail closed, unchanged.** A throw inside any slice rejects; `process` then falls
+  back to `redactOnlyAsync` exactly as it fell back to `redactOnly`, and a failure
+  there is a 502 with nothing forwarded.
+- **Cancellation.** The proxy passes the request's abort signal to the pipeline. A
+  client that hangs up mid-walk makes the walk reject between slices, nothing is
+  forwarded, the redact-only re-walk is skipped (nobody would read the answer), the
+  outcome is reported as `client_gone`, and the in-flight reservation is released by
+  the response close as on every other path.
 
 ## Open, not yet fixed
 

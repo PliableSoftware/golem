@@ -40,3 +40,17 @@ Parts that cannot be sliced, measured on the same body: `structuredClone` 464 ms
 **Slice budget: 20 ms of wall time**, checked with `performance.now()` after each string (time-based, so a slice is bounded whatever the string sizes are). Between slices the walk awaits `setImmediate`, which runs after the poll phase, so socket I/O of other sessions is served every slice; it behaves the same on Windows. The stated bound is therefore about 20 ms plus the longest single string, plus the parts that are not sliceable (parse, stringify, one very large single string, which still cost what they cost per call).
 
 **Design.** One walk, written once as a generator (`redactValueSteps`) that yields when the slice budget is spent. The sync `redactRequestBody` drains it with an infinite budget (so it never yields and its output is the same code's output); the async `redactRequestBodyAsync` drives it with the slice budget and an AbortSignal. A differential test checks the two byte for byte anyway.
+
+## Implemented (2026-10-14, branch awaiting independent review)
+
+- `src/pipeline/redaction.ts`: the walk is one generator, `redactValueSteps`; `redactRequestBody` (sync) drains it, `redactRequestBodyAsync` slices it (`REDACTION_SLICE_MS` = 20, `setImmediate`, `AbortSignal`, `RedactionAborted`). Strings are handled inline (no generator per string); sparse arrays keep their holes as `Array.prototype.map` did.
+- `src/pipeline/body-redaction.ts`: `redactAnyBodyAsync` beside the unchanged-behaviour `redactAnyBody`; the non-JSON classification is a shared helper, so both take the same refusals.
+- `src/pipeline/pipeline.ts`: `process` uses the async walks (stage 1, the post-plugin re-redaction, the non-messages and non-JSON fallbacks); new `redactOnlyAsync`; sync `redactOnly` kept.
+- `src/proxy/types.ts` (not `src/interfaces/`, so no frozen contract changed): optional `options.signal` on `process`, optional `redactOnlyAsync`, new `PipelineRunOptions`.
+- `src/proxy/server.ts`: passes the abort signal, prefers `redactOnlyAsync`, and on a client abort during the pipeline or the fallback replies nothing, skips the fallback walk and reports `client_gone`.
+- Callers left synchronous on purpose: `src/session/conversation-store.ts` (an interface method that is sync), hooks, `redactStandaloneText`. None is on the proxy request path.
+- Tests: `tests/unit/pipeline/redaction-async.test.ts` (differential, abort, throw, no leaked timers, stall with the sync version failing the same bound, fairness), `tests/integration/dustsec23-async-redaction.test.ts` (through the proxy: stall, two bodies in flight, hang-up mid-walk, `redactOnlyAsync` preference, fail closed). `tests/contract/` untouched.
+
+Re-measured on the real code (32 MiB body): sync 10.6 s wall, 10.6 s stall; async 10.9 s wall (1.02x), p99 loop delay 20 ms, longest stall 123 to 137 ms (the unsliceable `JSON.stringify` of the token estimate, about 105 ms, plus a slice).
+
+Residual: the stall is bounded by one slice plus `JSON.stringify` / `JSON.parse` / one very long string, not by 100 ms flat; a single large non-JSON text body is still one synchronous scan.
