@@ -4,7 +4,7 @@
  * redaction (stage 1 runs before stage 1.7), so keeping it keeps redaction.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NativeLosslessCompression } from "../../../src/compression/index.js";
 import { LocalDirBlobStore } from "../../../src/compression/local-blob-store.js";
 import { policyFor } from "../../../src/interfaces/policy.js";
@@ -326,5 +326,62 @@ describe("redactForLog — redact the whole text, then truncate", () => {
     expect(out.endsWith("...")).toBe(true);
     expect(out).not.toContain("abcdefghijkl");
     expect(redactForLog("z".repeat(70_000))).toBe("(70000 chars of error text omitted)");
+  });
+});
+
+describe("circuit breaker — concurrency, generations and the clock", () => {
+  const scripted = (name: string, plan: ("hang" | "ok")[]): PluginPipelineStage => {
+    let i = 0;
+    return stage(name, () => (plan[i++] === "hang" ? new Promise<never>(() => {}) : undefined));
+  };
+
+  it("three concurrent hung requests with no success in between trip it", async () => {
+    const s = scripted("p/burst", ["hang", "hang", "hang"]);
+    const r = await Promise.all(
+      [0, 1, 2].map(() => runPluginStage(s, {}, "proj", { timeoutMs: 5 })),
+    );
+    expect(r.some((x) => x.fault?.tripped === true)).toBe(true);
+  });
+
+  it("does not trip when a request succeeded after the first timed-out one started", async () => {
+    // Starts: hang, hang, ok (completes at once), hang. The success completes
+    // after the first start, so the window is not unbroken.
+    const s = scripted("p/mixed", ["hang", "hang", "ok", "hang"]);
+    const r = await Promise.all(
+      [0, 1, 2, 3].map(() => runPluginStage(s, {}, "proj", { timeoutMs: 10 })),
+    );
+    expect(r.some((x) => x.fault?.tripped === true)).toBe(false);
+  });
+
+  it("in-flight requests from before the trip cannot re-trip it after the cool-off", async () => {
+    let clock = 0;
+    const opts: PluginStageRunOptions = { timeoutMs: 5, now: () => clock, breakerCoolOffMs: 1_000 };
+    const s = scripted("p/carry", Array(10).fill("hang"));
+    // Five concurrent: the first three trip it, the other two were already in flight.
+    const burst = await Promise.all([0, 1, 2, 3, 4].map(() => runPluginStage(s, {}, "proj", opts)));
+    expect(burst.filter((x) => x.fault?.tripped === true)).toHaveLength(1);
+    clock += 1_001;
+    // One new timeout after the cool-off must NOT trip it (the two stragglers do not count).
+    const next = await runPluginStage(s, {}, "proj", opts);
+    expect(next.fault?.kind).toBe("timed-out");
+    expect(next.fault?.tripped).toBeUndefined();
+    // It takes a full fresh run of three to trip it again.
+    await runPluginStage(s, {}, "proj", opts);
+    const third = await runPluginStage(s, {}, "proj", opts);
+    expect(third.fault?.tripped).toBe(true);
+  });
+
+  it("the default clock is monotonic: a wall-clock step forward does not end the cool-off early", async () => {
+    const s = scripted("p/mono", Array(10).fill("hang"));
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      await runPluginStage(s, {}, "proj", { timeoutMs: 5 });
+    }
+    const spy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3_600_000);
+    try {
+      const skipped = await runPluginStage(s, {}, "proj", { timeoutMs: 5 });
+      expect(skipped.fault?.kind).toBe("disabled");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

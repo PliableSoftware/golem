@@ -55,14 +55,33 @@ export const BREAKER_COOL_OFF_MS = 60_000;
 export interface PluginStageRunOptions {
   /** Per-stage timeout. Default {@link PLUGIN_STAGE_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
-  /** Clock for the breaker's cool-off. Default `Date.now`. */
+  /** Clock for the breaker's cool-off. Default: a monotonic clock (`performance.now`). */
   readonly now?: () => number;
   readonly breakerThreshold?: number;
   readonly breakerCoolOffMs?: number;
 }
 
+/**
+ * Breaker bookkeeping, per stage. "Consecutive" is defined over invocation
+ * START order, because requests overlap:
+ *
+ *  - a tick counter orders starts and completions;
+ *  - each timeout records the tick at which its invocation STARTED;
+ *  - the breaker opens when the first of the last N timeouts started after the
+ *    last completed non-timeout (no success since it started);
+ *  - opening bumps `generation`. An invocation remembers the generation it
+ *    started in and only counts toward the breaker if that is still current, so
+ *    requests that were already in flight when it opened cannot re-trip it the
+ *    moment the cool-off ends.
+ *
+ * Three CONCURRENT hung requests with no success in between do trip it: with no
+ * abort signal that is indistinguishable from a hang, and is the point.
+ */
 interface BreakerState {
-  consecutiveTimeouts: number;
+  generation: number;
+  tick: number;
+  lastSuccessTick: number;
+  timeoutStarts: number[];
   disabledUntil: number;
 }
 
@@ -82,6 +101,16 @@ export function resetPluginStageFaultsForTests(): void {
   breakers.clear();
 }
 
+/** Monotonic milliseconds: immune to wall-clock steps (NTP, DST, manual changes). */
+function monotonicNow(): number {
+  return performance.now();
+}
+
+/** Stages currently skipped by the breaker, for status surfaces. */
+export function pluginStagesInCoolOff(now: () => number = monotonicNow): readonly string[] {
+  return [...breakers].filter(([, b]) => b.disabledUntil > now()).map(([name]) => name);
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -95,11 +124,17 @@ export async function runPluginStage(
   options: PluginStageRunOptions = {},
 ): Promise<PluginStageOutcome> {
   const timeoutMs = options.timeoutMs ?? PLUGIN_STAGE_TIMEOUT_MS;
-  const now = options.now ?? Date.now;
+  const now = options.now ?? monotonicNow;
   const threshold = options.breakerThreshold ?? BREAKER_THRESHOLD;
   const coolOffMs = options.breakerCoolOffMs ?? BREAKER_COOL_OFF_MS;
 
-  const state = breakers.get(stage.name) ?? { consecutiveTimeouts: 0, disabledUntil: 0 };
+  const state = breakers.get(stage.name) ?? {
+    generation: 0,
+    tick: 0,
+    lastSuccessTick: 0,
+    timeoutStarts: [],
+    disabledUntil: 0,
+  };
   breakers.set(stage.name, state);
   if (state.disabledUntil > now()) {
     return {
@@ -112,6 +147,9 @@ export async function runPluginStage(
       ),
     };
   }
+
+  const startTick = ++state.tick;
+  const startGeneration = state.generation;
 
   // Snapshot BEFORE the stage can touch anything. Plain JSON, so this is exact.
   let snapshot: Record<string, unknown>;
@@ -139,11 +177,16 @@ export async function runPluginStage(
       timeout,
     ]);
     if (result === TIMED_OUT) {
-      state.consecutiveTimeouts++;
-      const tripped = state.consecutiveTimeouts >= threshold;
-      if (tripped) {
-        state.disabledUntil = now() + coolOffMs;
-        state.consecutiveTimeouts = 0;
+      let tripped = false;
+      if (startGeneration === state.generation) {
+        state.timeoutStarts.push(startTick);
+        const firstOfWindow = state.timeoutStarts[state.timeoutStarts.length - threshold];
+        tripped = firstOfWindow !== undefined && state.lastSuccessTick < firstOfWindow;
+        if (tripped) {
+          state.disabledUntil = now() + coolOffMs;
+          state.generation++;
+          state.timeoutStarts = [];
+        }
       }
       return {
         body: snapshot,
@@ -158,13 +201,14 @@ export async function runPluginStage(
         ),
       };
     }
-    state.consecutiveTimeouts = 0;
+    state.lastSuccessTick = ++state.tick;
     if (result !== undefined && isRecord(result) && result !== body) {
       return { body: result, replaced: true, fault: null };
     }
     return { body, replaced: false, fault: null };
   } catch (err) {
-    state.consecutiveTimeouts = 0;
+    // It came back promptly, so it is responsive: not a hang.
+    state.lastSuccessTick = ++state.tick;
     return {
       body: snapshot,
       replaced: false,
