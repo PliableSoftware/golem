@@ -1,50 +1,16 @@
 /**
- * DUST2.23 probe 1 — `=` and `+` in path-like tokens (DUST1.1 headline 9).
+ * DUST2.23 probe 1 (DUST1.1 headline 9) — `=`/`+` in path-like tokens.
  *
- * The rule under test (redaction-rules.ts, `isPathLikeToken`): `=`/`+` split chunks
- * like `/_-`, but a token that contains one needs >= 3 chunks and word-shaped
- * letters-only chunks. Both sides are pinned here:
- *   - realistic paths / URLs / base64 query values / API ids pass through byte-identical;
- *   - a secret embedded in (or standing next to) such a token is still redacted;
- *   - tokens with no `=`/`+` behave exactly as before (differential against a frozen
- *     copy of the pre-change function);
- *   - no random secret that the old rule redacted escapes the new one (property).
- * Every secret-shaped value is generated at runtime from a seeded PRNG.
+ * DECISION: finding 9 is over-redaction, not a leak, and stays as it is under the
+ * never-weaken rule. `isPathLikeToken` is unchanged. These tests pin the SAFE
+ * direction: a secret in or next to a token carrying `=`/`+` is redacted, and the
+ * known false positive is recorded as accepted. Stopping it would loosen redaction
+ * and change output for existing inputs; that needs its own USER decision and a
+ * differential test. Every secret-shaped value is generated at runtime.
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  ENTROPY_THRESHOLD_BITS,
-  isHighEntropyToken,
-  redactStandaloneText,
-  shannonEntropy,
-} from "../../../src/pipeline/index.js";
-
-// --- frozen copy of the pre-DUST2.23 exemption, the differential's reference -------
-const INTEGRITY = /^(sha1|sha224|sha256|sha384|sha512|md5)-/i;
-function legacyIsPathLike(token: string): boolean {
-  const chunks = token.split(/[/_-]/).filter((c) => c.length > 0);
-  if (chunks.length < 2) return false;
-  let mixedHex = false;
-  for (const c of chunks) {
-    if (/^[A-Za-z]+$/.test(c) || /^[0-9]+$/.test(c)) continue;
-    if (/^[0-9a-fA-F]+$/.test(c)) {
-      mixedHex = true;
-      continue;
-    }
-    return false;
-  }
-  return !(mixedHex && chunks.length < 3);
-}
-function legacyIsHighEntropy(token: string): boolean {
-  if (INTEGRITY.test(token)) return false;
-  if (/^[0-9a-fA-F]*$/.test(token.replace(/[-_]/g, ""))) return false;
-  if (legacyIsPathLike(token)) return false;
-  const classes =
-    (/[a-z]/.test(token) ? 1 : 0) + (/[A-Z]/.test(token) ? 1 : 0) + (/[0-9]/.test(token) ? 1 : 0);
-  if (classes < 2) return false;
-  return shannonEntropy(token) >= ENTROPY_THRESHOLD_BITS;
-}
+import { redactStandaloneText } from "../../../src/pipeline/index.js";
 
 // --- seeded PRNG + runtime alphabets ------------------------------------------------
 function prng(seed: number): () => number {
@@ -142,37 +108,28 @@ function pathLikeToken(r: () => number): string {
   }
 }
 
-describe("`=`/`+` in path-like tokens: realistic values are untouched", () => {
+describe("`=`/`+` in path-like tokens: current behaviour", () => {
   const j = (...p: string[]): string => p.join("/");
-  const REALISTIC: Record<string, string> = {
-    "flag with =path": `--out=${j("", "home", "Users", "Projects", "MyProject", "src", "Components", "Header")}`,
-    "env assignment": `OUT_DIR=${j("", "Users", "Alice", "Projects", "WebApp", "node_modules", "typescript", "lib")}`,
-    "assignment, mixed-case path": `path=${j("", "Users", "Alice", "Projects", "FileWatcher", "UserProfile", "GettingStarted")}`,
-    "url with + in query": `https://${j("shop.example.com", "Products", "Category", "Shoes")}?Brand=Nike+AirMax&Size=Eleven`,
-    "git ref assignment": `ref=${j("refs", "heads", "Feature", "UserProfilePictureUpload-Final")}`,
-    "sort query": `sort=Name+Desc+${j("Users", "Alice", "Projects", "WebApp", "Components")}`,
-    "worktree path with uuid": `OUT=${j("", "root", "golem", "worktrees", "agent-f70383e6-a18c-4b2d-9c3e-12ab34cd56ef", "scratchpad")}`,
-  };
-  for (const [name, text] of Object.entries(REALISTIC)) {
-    it(`${name}: byte-identical`, () => {
-      expect(redactStandaloneText(text)).toBe(text);
-    });
-  }
-
-  it("DUSTSEC.20/22 shapes keep their behaviour: API ids and base64 in a query string", () => {
-    const r = prng(7);
-    const id = `srvtoolu_01${base62(r, 22)}`; // 33-char API id: exempt as a whole token
-    expect(redactStandaloneText(`id ${id}`)).toBe(`id ${id}`);
-    // a base64 query value with `=` padding is NOT a path: still judged by entropy
-    const q = base62(r, 43);
-    expect(redactStandaloneText(`https://example.com/cb?state=${q}=`)).not.toContain(q);
+  it("accepted over-redaction: DUST1.1 headline 9 (long varied paths with `=`/`+` are redacted, safe direction)", () => {
+    const env = `OUT_DIR=${j("", "Users", "Alice", "Projects", "WebApp", "node_modules", "typescript", "lib")}`;
+    const sort = `sort=Name+Desc+${j("Users", "Alice", "Projects", "WebApp", "Components")}`;
+    for (const text of [env, sort]) {
+      const out = redactStandaloneText(text);
+      expect(out).not.toBe(text);
+      expect(out).toContain("[REDACTED:high-entropy:");
+    }
   });
 
-  it("the old rule really did redact several of these (the over-redaction the probe fixes)", () => {
-    const flagged = Object.values(REALISTIC).filter((t) =>
-      t.split(/[^A-Za-z0-9+/=_-]/).some((tok) => tok.length >= 32 && legacyIsHighEntropy(tok)),
-    );
-    expect(flagged.length).toBeGreaterThanOrEqual(2);
+  it("short and low-entropy values with `=`/`+` still pass untouched", () => {
+    const flag = `--out=${j("", "home", "Users", "Projects", "MyProject", "src", "Components", "Header")}`;
+    const url = `https://${j("shop.example.com", "Products", "Category", "Shoes")}?Brand=Nike+AirMax&Size=Eleven`;
+    for (const text of [
+      flag,
+      url,
+      `ref=${j("refs", "heads", "Feature", "UserProfilePictureUpload-Final")}`,
+    ]) {
+      expect(redactStandaloneText(text)).toBe(text);
+    }
   });
 });
 
@@ -208,58 +165,18 @@ describe("`=`/`+` in path-like tokens: a secret in or next to one is redacted", 
   }
 });
 
-describe("differential against the pre-change exemption", () => {
-  it("tokens with no `=`/`+`: identical verdict to the old rule (30000 random tokens)", () => {
-    const r = prng(1234);
+describe("random base64 secrets carrying `=`/`+` are redacted", () => {
+  it("4000 seeded tokens of 48-100 chars, with `+`, `/` and `=` padding", () => {
+    const r = prng(2026);
     let n = 0;
-    for (let i = 0; i < 30000; i++) {
-      const len = 32 + Math.floor(r() * 96);
-      const alphabet =
-        i % 3 === 0
-          ? [...UPPER, ...LOWER, ...DIGITS, "-", "_"]
-          : i % 3 === 1
-            ? [...LOWER, ...DIGITS, "-", "_", "/"]
-            : B64.filter((c) => c !== "+");
-      const t = randomFrom(r, alphabet, len);
-      expect(isHighEntropyToken(t)).toBe(legacyIsHighEntropy(t));
+    for (let i = 0; i < 4000; i++) {
+      let t = randomFrom(r, B64, 48 + Math.floor(r() * 52));
+      t = `${t.replace(/^[+/]+|[+/]+$/g, "")}${i % 2 === 0 ? "=" : "+x9"}`;
+      if (!/[=+]/.test(t) || t.length > 128) continue;
+      const out = redactStandaloneText(`value ${t} end`);
+      expect(out, `seed ${i}`).not.toContain(t.slice(0, 32));
       n++;
     }
-    expect(n).toBe(30000);
-  });
-
-  it("path-like tokens with `=`/`+` and no secret: never redacted, 20000 random tokens", () => {
-    const r = prng(555);
-    let oldRedacted = 0;
-    for (let i = 0; i < 20000; i++) {
-      const t = pathLikeToken(r);
-      if (legacyIsHighEntropy(t)) oldRedacted++;
-      // the new rule is only ever MORE permissive on these than the old one: it never
-      // flags a word-shaped path that the old rule left alone
-      if (!legacyIsHighEntropy(t)) expect(isHighEntropyToken(t), t).toBe(false);
-    }
-    // the corpus must actually exercise the fixed over-redaction, or the test proves nothing
-    expect(oldRedacted).toBeGreaterThan(500);
-  });
-
-  it("random base64 secrets containing `=`/`+`: old-redacted implies new-redacted (200000 tokens)", () => {
-    const r = prng(2026);
-    let withDelim = 0;
-    let oldRedacted = 0;
-    for (let i = 0; i < 200000; i++) {
-      const len = 32 + Math.floor(r() * 96);
-      let t = randomFrom(r, B64, len);
-      if (i % 2 === 0) t += "=".repeat(1 + Math.floor(r() * 2)); // padding
-      if (i % 5 === 0) t = `${pick(r, WORDS)}=${t}`.slice(0, 128);
-      if (!/[=+]/.test(t) || t.length > 128) continue;
-      withDelim++;
-      if (legacyIsHighEntropy(t)) {
-        oldRedacted++;
-        // THE no-weakening property: nothing the old rule redacted is now exempt
-        if (!isHighEntropyToken(t))
-          throw new Error(`secret-shaped token newly exempt: len ${t.length}`);
-      }
-    }
-    expect(withDelim).toBeGreaterThan(100000);
-    expect(oldRedacted).toBeGreaterThan(80000);
+    expect(n).toBeGreaterThan(3500);
   });
 });

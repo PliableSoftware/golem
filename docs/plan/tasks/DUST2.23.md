@@ -28,33 +28,37 @@ policy turn redaction off; only `bypass_all` should.
 
 - S9 object keys, S10 idempotence — Phase 3.
 
-## Decisions (2026-10-14, agent draft, pending independent review)
+## Decisions (2026-10-14, orchestrator-directed, pending independent review)
 
-**Reading of probe 1.** DUST1.1 headline 9 is over-redaction: a chunk with `=`/`+` failed the
-alpha/numeric/hex test, the token lost the exemption, and long varied ordinary paths
-(`OUT_DIR=/Users/Alice/.../lib`, `sort=Name+Desc+/Users/...`) were redacted. Secrets were never
-leaked by it. So the fix necessarily EXEMPTS more (a narrow, accepted behaviour change: fewer false
-positives), and the work is making that exemption unable to hide a secret.
-
-**Exemption rule** (`isPathLikeToken`, `src/pipeline/redaction-rules.ts`):
-- `=` and `+` are chunk delimiters, like `/ _ -`. A token without them takes exactly the old path.
-- A token containing `=` or `+` ("strict mode") is path-like only if it has >= 3 chunks (so
-  `key=<one run>` never qualifies) and every letters-only chunk longer than 3 characters is
-  word-shaped: lower, UPPER, Capitalized or CamelCase with every hump >= 3 letters
-  (`STRICT_WORD_RE`). Numeric chunks and the hex allowance (>= 3 chunks) are unchanged.
-- Rule order, ids, the 32-128 candidate window, the pure-hex and 2-of-3-class exclusions: unchanged.
-
-**Evidence** (`tests/unit/pipeline/redaction-path-delimiters.test.ts`): 7 realistic values
-byte-identical; 8 secret shapes x 25 seeds redacted; differential vs a frozen copy of the old
-function: 30000 random tokens without `=`/`+` give identical verdicts; 20000 random word-path tokens
-with `=`/`+` never redacted (old rule redacted > 500 of them); 200000 random base64 tokens with
-`=`/`+`, every one the old rule redacted is still redacted (0 newly exempt).
+**Probe 1: no change to redaction.** DUST1.1 headline 9 is over-redaction, not a leak: a chunk with
+`=`/`+` fails the alpha/numeric/hex test, so a long varied path such as `OUT_DIR=/Users/.../lib` is
+redacted. That is the safe direction, and under "redaction never weakened" and "output for unchanged
+inputs must not change" it is LEFT AS IS. `isPathLikeToken` is byte-identical to `development`. A first
+draft that exempted `=`/`+` tokens under a stricter rule was reverted. If a future change wants to stop
+this over-redaction it needs its own USER decision and a differential test against the old behaviour.
+Pinned in `tests/unit/pipeline/redaction-path-delimiters.test.ts`: the test named "accepted
+over-redaction: DUST1.1 headline 9" asserts the current (redacted) output; 8 secret-in-path shapes x
+25 seeds and 4000 seeded base64 secrets with `=`/`+` are all redacted.
 
 **Probe 2 design.** `StageConfig.redaction` is the literal `true` (frozen-contract amendment dated
 2026-10-14 in `src/interfaces/policy.ts`, tests in `tests/contract/policy.contract.test.ts`). The
 runtime check `assertRedactionOn` (`src/pipeline/policy-guard.ts`) THROWS `RedactionPolicyError`
-when `stages.redaction !== true`; it does not coerce, so a bug is loud. Fail closed: the proxy
-answers a pipeline throw by running `redactOnly` (which never reads a policy) on the original
-request, and 5xx if that fails (`src/proxy/server.ts` ~358-390). Both former redaction-off branches
-(`pipeline.ts` non-Messages and stage 1/re-run) now redact unconditionally. `proxy.bypass_all`
-is untouched.
+when `stages.redaction !== true`; it does not coerce, so a bug is loud. Both former redaction-off
+branches in `pipeline.ts` (non-Messages, and stage 1 plus the post-plugin re-run) now redact
+unconditionally. `proxy.bypass_all` is untouched.
+
+**Fail-closed paths checked** (a thrown `RedactionPolicyError` never reaches a raw forward):
+- `GolemProxy` has ONE call site of `pipeline.process`, `src/proxy/server.ts:365`, for every route
+  (messages, count_tokens, batches, anything else). It sits in a try/catch: the catch runs
+  `redactOnly` on the original request (never reads a policy), or answers 502 if that throws or is
+  absent. Only `RequestBodyRefusal` is answered directly (4xx, nothing forwarded).
+- Translating upstream path: translation runs AFTER that block (`forward` is already the
+  redacted result), so it cannot see the raw body.
+- Shim (`src/cli/proxy-runtime.ts`): `SHIM_POLICY = policyFor("off")` goes through the same proxy
+  and pipeline; its `redaction` is `true`.
+- `proxy.bypass_all`: `pipelineEnabled: false` skips the block entirely (the single, deliberate,
+  CLI-only redaction-off path); existing "constructor pipelineEnabled:false" test still passes.
+- No other caller of `process`/`redactOnly` exists under `src/` (grep).
+- Tests: `tests/unit/pipeline/policy-guard.test.ts` (pipeline level, messages and non-messages) and
+  `tests/integration/proxy-no-redaction-off-doors.test.ts` (through the proxy, messages and
+  count_tokens, upstream body asserted redacted).

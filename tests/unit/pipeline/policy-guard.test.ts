@@ -25,13 +25,13 @@ const redactionOffPolicy = (): PipelinePolicy =>
     stages: { ...policyFor(1).stages, redaction: false },
   }) as unknown as PipelinePolicy;
 
-function req(path: string, body: string): ProxyRequest {
+function req(url: string, body: string): ProxyRequest {
   return {
     method: "POST",
-    path,
+    url,
     headers: { "content-type": "application/json" },
     body: Buffer.from(body, "utf8"),
-  } as unknown as ProxyRequest;
+  };
 }
 const messages = (): string =>
   JSON.stringify({ model: "m", messages: [{ role: "user", content: `key ${SECRET}` }] });
