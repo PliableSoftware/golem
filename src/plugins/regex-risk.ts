@@ -230,6 +230,7 @@ class Parser {
   }
 
   private mk(set: CpSet, lit: string | null, src: string, foldable = true): Node {
+    spend(1);
     return { t: "atom", set: this.ignoreCase && foldable ? fold(set) : set, lit, src };
   }
 
@@ -537,6 +538,7 @@ function describe(n: Node): string {
 }
 
 function literalOf(seq: readonly Node[]): string | null {
+  if (seq.length > 4096) return null;
   let out = "";
   for (const n of seq) {
     if (n.t !== "atom" || n.lit === null) return null;
@@ -597,33 +599,52 @@ function walk(seq: readonly Node[], out: RegexRiskFinding[]): void {
   }
 }
 
-function checkRepeatedGroup(
+/** Flattened variants kept per repeated alternative; beyond this the group stays opaque. */
+const MAX_VARIANTS = 32;
+
+/**
+ * The sequences a branch can be read as once UNQUANTIFIED groups are inlined, so
+ * `((a+)b?)` is seen as `a+ b?`. A repeat inside such a group is still inside the
+ * outer repeat, which is the whole point. Multi-branch inner groups multiply the
+ * variants; past {@link MAX_VARIANTS} the inner group is left as one element.
+ */
+function flattenVariants(seq: readonly Node[]): Node[][] {
+  let variants: Node[][] = [[]];
+  for (const el of seq) {
+    let options: Node[][] = [[el]];
+    if (el.t === "group") {
+      const inner = el.alts.flatMap((alt) => flattenVariants(alt));
+      if (inner.length > 0 && inner.length <= MAX_VARIANTS) options = inner;
+    }
+    if (variants.length * options.length > MAX_VARIANTS) {
+      variants = variants.map((v) => [...v, el]);
+      continue;
+    }
+    spend(variants.length * options.length);
+    variants = variants.flatMap((v) => options.map((o) => [...v, ...o]));
+  }
+  return variants;
+}
+
+/** Groups with 2+ branches reachable from `group` through unquantified nesting. */
+function branchGroups(group: Extract<Node, { t: "group" }>): Extract<Node, { t: "group" }>[] {
+  const found: Extract<Node, { t: "group" }>[] = [];
+  const visit = (g: Extract<Node, { t: "group" }>): void => {
+    if (g.alts.length >= 2) found.push(g);
+    for (const alt of g.alts) for (const el of alt) if (el.t === "group") visit(el);
+  };
+  visit(group);
+  return found;
+}
+
+/** Longest literal compared for the repetition check; longer branches are skipped. */
+const MAX_LITERAL_COMPARE = 256;
+
+function checkBranches(
   rep: Extract<Node, { t: "rep" }>,
   group: Extract<Node, { t: "group" }>,
   out: RegexRiskFinding[],
 ): void {
-  const loopStart = first(group);
-  let flaggedNested = false;
-
-  for (const alt of group.alts) {
-    for (const [j, el] of alt.entries()) {
-      if (!isVariable(el)) continue;
-      if (delimited(alt, j, loopStart)) continue;
-      flaggedNested = true;
-      out.push({
-        kind: "nested-quantifier",
-        detail: `\`${rep.src}\`: \`${describe(el)}\` inside a repeated group has no distinct delimiter after it, so one input can be split exponentially many ways`,
-      });
-    }
-  }
-
-  if (!flaggedNested && minLen(group) === 0) {
-    out.push({
-      kind: "nullable-repeat",
-      detail: `\`${rep.src}\`: the repeated group can match the empty string, so iterations can multiply without consuming input`,
-    });
-  }
-
   if (group.alts.length > MAX_BRANCHES) {
     out.push({
       kind: "unanalysed",
@@ -631,7 +652,11 @@ function checkRepeatedGroup(
     });
     return;
   }
-
+  // Literal text of each branch, computed once and charged by length.
+  const literals = group.alts.map((alt) => {
+    spend(alt.length);
+    return literalOf(alt);
+  });
   for (let a = 0; a < group.alts.length; a++) {
     for (let b = a + 1; b < group.alts.length; b++) {
       const A = group.alts[a] as Node[];
@@ -642,11 +667,16 @@ function checkRepeatedGroup(
       if (sa !== null && sb !== null) {
         if (intersects(sa, sb)) why = "two branches can match the same character";
       } else {
-        const la = literalOf(A);
-        const lb = literalOf(B);
+        const la = literals[a] ?? null;
+        const lb = literals[b] ?? null;
         if (la !== null && lb !== null) {
+          spend(Math.min(la.length, lb.length) + 1);
           if (la === lb) why = "two branches are identical";
-          else if (isRepeatOf(la, lb) || isRepeatOf(lb, la)) {
+          else if (
+            la.length <= MAX_LITERAL_COMPARE &&
+            lb.length <= MAX_LITERAL_COMPARE &&
+            (isRepeatOf(la, lb) || isRepeatOf(lb, la))
+          ) {
             why = "one branch is a repetition of another";
           }
         }
@@ -659,6 +689,38 @@ function checkRepeatedGroup(
       }
     }
   }
+}
+
+function checkRepeatedGroup(
+  rep: Extract<Node, { t: "rep" }>,
+  group: Extract<Node, { t: "group" }>,
+  out: RegexRiskFinding[],
+): void {
+  const loopStart = first(group);
+  let flaggedNested = false;
+
+  for (const alt of group.alts) {
+    for (const seq of flattenVariants(alt)) {
+      for (const [j, el] of seq.entries()) {
+        if (!isVariable(el)) continue;
+        if (delimited(seq, j, loopStart)) continue;
+        flaggedNested = true;
+        out.push({
+          kind: "nested-quantifier",
+          detail: `\`${rep.src}\`: \`${describe(el)}\` inside a repeated group has no distinct delimiter after it, so one input can be split exponentially many ways`,
+        });
+      }
+    }
+  }
+
+  if (!flaggedNested && minLen(group) === 0) {
+    out.push({
+      kind: "nullable-repeat",
+      detail: `\`${rep.src}\`: the repeated group can match the empty string, so iterations can multiply without consuming input`,
+    });
+  }
+
+  for (const g of branchGroups(group)) checkBranches(rep, g, out);
 }
 
 /**

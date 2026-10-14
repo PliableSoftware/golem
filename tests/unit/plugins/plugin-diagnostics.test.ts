@@ -182,6 +182,14 @@ describe("loader diagnostics", () => {
     });
   });
 
+  it("warns about a nested repeat hidden inside a group of its own", async () => {
+    const loaded = await load((a) =>
+      a.addRedactionRule({ id: "r", description: "d", pattern: /((c+))+$/g }),
+    );
+    expect(loaded.redactionRules).toHaveLength(1);
+    expect(loaded.problems[0]).toMatchObject({ kind: "regex-backtracking", severity: "warning" });
+  });
+
   it("countProblems treats a problem with no severity as an error", () => {
     expect(countProblems([{ subject: "a", reason: "r" }]).errors).toBe(1);
   });

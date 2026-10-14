@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { ENTROPY_CANDIDATE_RE, REDACTION_RULES } from "../../../src/pipeline/redaction-rules.js";
 import { analyzeRegexRisk } from "../../../src/plugins/regex-risk.js";
 
 const kinds = (src: string, flags = "g"): string[] =>
@@ -20,6 +21,11 @@ describe("analyzeRegexRisk — known-bad shapes are flagged", () => {
     ["(\\d+)+", "nested-quantifier"],
     ["(.*a){12}", "nested-quantifier"],
     ["(?:\\w+\\s?)+$", "nested-quantifier"],
+    ["((a+))+$", "nested-quantifier"],
+    ["(?:(?:a+))+$", "nested-quantifier"],
+    ["((a+)b?)+$", "nested-quantifier"],
+    ["((\\w+)\\s*)+", "nested-quantifier"],
+    ["(?:(?:a|a))+", "overlapping-alternation"],
     ["(a?)*", "nullable-repeat"],
     ["(|a)+", "nullable-repeat"],
     ["(a|a)*", "overlapping-alternation"],
@@ -128,5 +134,25 @@ describe("analyzeRegexRisk — never throws, never silent", () => {
   it("handles escapes, classes, unicode and named groups without error", () => {
     const src = "(?<k>\\p{L}+)\\u{1F600}[\\d\\-_]\\x41\\cJ\\1\\k<k>";
     expect(kinds(src, "u")).not.toContain("unanalysed");
+  });
+});
+
+describe("analyzeRegexRisk — Golem's own rules are clean", () => {
+  it.each(REDACTION_RULES.map((r) => [r.id, r.pattern] as const))("built-in rule %s", (_id, re) => {
+    expect(analyzeRegexRisk(re.source, re.flags)).toEqual([]);
+  });
+  it("the entropy candidate pattern", () => {
+    expect(analyzeRegexRisk(ENTROPY_CANDIDATE_RE.source, ENTROPY_CANDIDATE_RE.flags)).toEqual([]);
+  });
+});
+
+describe("analyzeRegexRisk — literal comparison is budgeted", () => {
+  it("64 branches of 100k characters finish fast and report the gap", () => {
+    const branch = "a".repeat(100_000);
+    const src = `(?:${Array.from({ length: 64 }, () => branch).join("|")})+`;
+    const t0 = performance.now();
+    const found = analyzeRegexRisk(src, "g");
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(found.map((f) => f.kind)).toContain("unanalysed");
   });
 });
