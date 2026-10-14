@@ -48,8 +48,41 @@ describe("analyzeRegexRisk — known-bad shapes are flagged", () => {
   });
 });
 
+describe("analyzeRegexRisk — non-Latin scripts are compared exactly (intervals, not samples)", () => {
+  it("flags overlapping CJK branches", () => {
+    expect(kinds("(\u4e01|[\u4e00-\u4e10])+$")).toContain("overlapping-alternation");
+  });
+  it("flags the Cyrillic nested shape like the Latin one", () => {
+    expect(kinds("(\u0430+\u0430)+$")).toContain("nested-quantifier");
+    expect(kinds("(a+a)+$")).toContain("nested-quantifier");
+  });
+  it("keeps disjoint non-Latin branches quiet", () => {
+    expect(kinds("(\u4e01|\u4e02)+")).toEqual([]);
+  });
+  it("folds case outside ASCII under the i flag", () => {
+    expect(kinds("(\u0430|\u0410)+", "gi")).toContain("overlapping-alternation");
+  });
+});
+
+describe("analyzeRegexRisk — work is budgeted", () => {
+  const wide = (n: number): string =>
+    `(?:${Array.from({ length: n }, (_, i) => String.fromCharCode(97 + (i % 26)) + (i >= 26 ? String(i) : "")).join("|")})+`;
+  it.each([500, 2000])("%i single-character branches with /i finish quickly", (n) => {
+    const src = `(?:${Array.from({ length: n }, (_, i) => String.fromCodePoint(0x4e00 + i)).join("|")})+`;
+    const t0 = performance.now();
+    const found = analyzeRegexRisk(src, "gi");
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(found.map((f) => f.kind)).toEqual(["unanalysed"]);
+  });
+  it("still compares a normal-width alternation", () => {
+    expect(kinds(wide(20))).toEqual([]);
+  });
+});
+
 describe("analyzeRegexRisk — known-good shapes stay quiet", () => {
   it.each([
+    "\\b(?:\\d[ -]*?){13,16}\\b", // card number: delimited by the digit
+    "(?:\\s*,\\s*\\w+)+",
     "AKIA[0-9A-Z]{16}",
     "\\bsk-[A-Za-z0-9]{20,}\\b",
     "[A-Za-z0-9+/]{40,}={0,2}",

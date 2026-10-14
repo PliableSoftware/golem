@@ -63,22 +63,21 @@ const PROBE_TIMEOUT_MS = 2_000;
  * Run every loaded stage once against a tiny synthetic body, through the same
  * runner the proxy uses, so a stage that throws or hangs is found here and not
  * on a user's first request. A throw on a synthetic body can be a stage that is
- * simply picky about input, so it is a warning, not an error.
+ * simply picky about input, so it is a warning; a timeout is an error.
  */
 async function probeStages(loaded: LoadedPlugins): Promise<PluginProblem[]> {
   const found: PluginProblem[] = [];
   for (const stage of loaded.stages) {
-    const outcome = await runPluginStage(
-      stage,
-      structuredClone(PROBE_BODY),
-      "plugin-probe",
-      PROBE_TIMEOUT_MS,
-    );
+    const outcome = await runPluginStage(stage, structuredClone(PROBE_BODY), "plugin-probe", {
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
     if (outcome.fault !== null) {
       found.push({
         subject: stage.name,
         kind: "stage-probe-failed",
-        severity: "warning",
+        // A throw on a synthetic body may just be a picky stage (warning); a hang
+        // costs every real request the full timeout (error, so --check fails).
+        severity: outcome.fault.kind === "timed-out" ? "error" : "warning",
         reason: `stage ${outcome.fault.kind === "threw" ? "threw" : "timed out"} on a probe request (${outcome.fault.reason}); in the proxy a failing stage is skipped and the pre-stage body kept`,
       });
     }

@@ -10,6 +10,9 @@ import { LocalDirBlobStore } from "../../../src/compression/local-blob-store.js"
 import { policyFor } from "../../../src/interfaces/policy.js";
 import { createGolemPipeline } from "../../../src/pipeline/index.js";
 import {
+  BREAKER_THRESHOLD,
+  MAX_REASON_CHARS,
+  type PluginStageRunOptions,
   pluginStageFaultCounts,
   resetPluginStageFaultsForTests,
   runPluginStage,
@@ -30,7 +33,11 @@ function secretKey(): string {
   return `AKIA${"Q7ZK3XMPLE4DEMOZ".slice(0, 16)}`;
 }
 
-async function run(stages: PluginPipelineStage[], content: string) {
+async function run(
+  stages: PluginPipelineStage[],
+  content: string,
+  pluginStageRun?: PluginStageRunOptions,
+) {
   const logs: string[] = [];
   const restore = setProxyLogForTesting({ sink: (l) => logs.push(l) });
   try {
@@ -39,6 +46,7 @@ async function run(stages: PluginPipelineStage[], content: string) {
       policy: () => policyFor(1),
       projectId: "proj",
       pluginStages: stages,
+      ...(pluginStageRun !== undefined ? { pluginStageRun } : {}),
     });
     const req: ProxyRequest = {
       method: "POST",
@@ -84,7 +92,7 @@ describe("runPluginStage", () => {
       }),
       body,
       "proj",
-      20,
+      { timeoutMs: 20 },
     );
     expect(out.fault).toMatchObject({ kind: "timed-out" });
     if (captured !== undefined) captured.injected = "late";
@@ -158,5 +166,135 @@ describe("pipeline — a failing stage cannot undo built-in redaction", () => {
       "hello",
     );
     expect(text).toBe("tagged");
+  });
+});
+
+describe("runPluginStage — hostile thrown values", () => {
+  const nullProto = (): never => {
+    throw Object.create(null);
+  };
+  const badMessage = (): never => {
+    const e = new Error("x");
+    Object.defineProperty(e, "message", {
+      get() {
+        throw new TypeError("getter exploded");
+      },
+    });
+    throw e;
+  };
+
+  it.each([
+    ["Object.create(null)", nullProto],
+    ["an Error whose message getter throws", badMessage],
+  ])("a stage throwing %s is a fault, not an escape", async (_n, thrower) => {
+    const out = await runPluginStage(stage("p/h", thrower), { a: 1 }, "proj");
+    expect(out.fault?.kind).toBe("threw");
+    expect(out.fault?.reason).toBe("(unprintable error)");
+    expect(out.body).toEqual({ a: 1 });
+  });
+
+  it.each([
+    ["Object.create(null)", nullProto],
+    ["an Error whose message getter throws", badMessage],
+  ])("the pipeline survives a stage throwing %s and keeps compression", async (_n, thrower) => {
+    const { text } = await run([stage("p/h", thrower)], "hello");
+    expect(text).toBe("hello");
+  });
+
+  it("truncates a long message and redacts a secret in it before it is stored", async () => {
+    const key = secretKey();
+    const out = await runPluginStage(
+      stage("p/long", () => {
+        throw new Error(`${key} ${"x".repeat(5000)}`);
+      }),
+      {},
+      "proj",
+    );
+    expect(out.fault?.reason).not.toContain(key);
+    expect((out.fault?.reason ?? "").length).toBeLessThanOrEqual(MAX_REASON_CHARS + 3);
+  });
+
+  it("the proxy log line carries the redacted, truncated reason", async () => {
+    const key = secretKey();
+    const { logs } = await run(
+      [
+        stage("p/leaky", () => {
+          throw new Error(`${key} ${"y".repeat(5000)}`);
+        }),
+      ],
+      "hello",
+    );
+    const line = logs.join("");
+    expect(line).not.toContain(key);
+    expect(line.length).toBeLessThan(MAX_REASON_CHARS + 300);
+  });
+});
+
+describe("runPluginStage — a stage returning the string 'timeout' is not a timeout", () => {
+  it("is just an ignored non-record result", async () => {
+    const out = await runPluginStage(
+      stage("p/str", () => "timeout" as unknown as Record<string, unknown>),
+      {},
+      "proj",
+    );
+    expect(out.fault).toBeNull();
+  });
+});
+
+describe("circuit breaker for hung stages", () => {
+  const hang = stage("p/hang", () => new Promise<never>(() => {}));
+
+  it("disables a stage after N consecutive timeouts, then retries after the cool-off", async () => {
+    let clock = 1_000;
+    const opts: PluginStageRunOptions = {
+      timeoutMs: 5,
+      now: () => clock,
+      breakerCoolOffMs: 60_000,
+    };
+    const results = [];
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      results.push(await runPluginStage(hang, {}, "proj", opts));
+    }
+    expect(results.map((r) => r.fault?.kind)).toEqual(["timed-out", "timed-out", "timed-out"]);
+    expect(results[BREAKER_THRESHOLD - 1]?.fault?.tripped).toBe(true);
+    expect(results[BREAKER_THRESHOLD - 1]?.fault?.reason).toContain(
+      "disabled after repeated timeouts",
+    );
+
+    // During the cool-off the stage is not run at all (instant, no timeout wait).
+    let ran = false;
+    const probe = stage("p/hang", () => {
+      ran = true;
+      return undefined;
+    });
+    const skipped = await runPluginStage(probe, {}, "proj", opts);
+    expect(skipped.fault?.kind).toBe("disabled");
+    expect(ran).toBe(false);
+
+    clock += 60_001;
+    const after = await runPluginStage(probe, {}, "proj", opts);
+    expect(after.fault).toBeNull();
+    expect(ran).toBe(true);
+  });
+
+  it("a success in between resets the count", async () => {
+    let hangNext = true;
+    const flaky = stage("p/flaky", () => (hangNext ? new Promise<never>(() => {}) : undefined));
+    const opts = { timeoutMs: 5 };
+    await runPluginStage(flaky, {}, "proj", opts);
+    await runPluginStage(flaky, {}, "proj", opts);
+    hangNext = false;
+    await runPluginStage(flaky, {}, "proj", opts);
+    hangNext = true;
+    await runPluginStage(flaky, {}, "proj", opts);
+    const third = await runPluginStage(flaky, {}, "proj", opts);
+    expect(third.fault?.tripped).toBeUndefined();
+  });
+
+  it("the pipeline applies an injected timeout and reports the breaker", async () => {
+    const { text, logs } = await run([hang], "hello", { timeoutMs: 5 });
+    expect(text).toBe("hello");
+    expect(logs.join("")).toContain("timed out and was skipped");
+    expect(logs.join("")).toContain("did not finish within 5ms");
   });
 });

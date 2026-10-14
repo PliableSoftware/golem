@@ -38,9 +38,16 @@
  *  - Alternation ambiguity beyond identical / single-atom / repeated-literal
  *    branches, e.g. `(a|ab|b)*`.
  *  - Bounded repeats of 10 or fewer (`(a+){3}`), polynomial and small.
- *  - Case folding is approximated by comparing a character with its upper- and
- *    lower-case forms under the `i` flag; character sets are compared over code
- *    points up to U+017F plus a few sentinels.
+ *  - Case folding under the `i` flag uses `toUpperCase`/`toLowerCase` of each
+ *    code point and only for code points below U+2000 or in the fullwidth Latin
+ *    block; exotic folds (the Kelvin sign) are not modelled.
+ *  - `\p{..}` is treated as matching anything, so it can only over-report.
+ *  - Work is budgeted (a step counter and a cap of 64 branches per repeated
+ *    alternation). Past either, the result is an `unanalysed` finding rather
+ *    than a stall: a plugin's regex must not be able to slow startup.
+ *
+ * Character sets are sorted code-point INTERVALS, so overlap is exact for every
+ * script (no sampling).
  */
 
 export type RegexRiskKind =
@@ -56,10 +63,11 @@ export interface RegexRiskFinding {
   readonly detail: string;
 }
 
-type Test = (cp: number) => boolean;
+/** Sorted, disjoint, inclusive code-point ranges. */
+type CpSet = readonly (readonly [number, number])[];
 
 type Node =
-  | { readonly t: "atom"; readonly test: Test; readonly lit: string | null; readonly src: string }
+  | { readonly t: "atom"; readonly set: CpSet; readonly lit: string | null; readonly src: string }
   | { readonly t: "zero" }
   | { readonly t: "group"; readonly alts: readonly Node[][]; readonly src: string }
   | {
@@ -73,48 +81,119 @@ type Node =
 /** Repeat counts above this are treated as "many" for the nested/alternation checks. */
 const MANY = 10;
 const MAX_DEPTH = 40;
-const SAMPLE_LIMIT = 0x17f;
-const SENTINELS = [0x2028, 0x4e00, 0x1f600];
+/** Repeated alternations wider than this are not compared pairwise. */
+const MAX_BRANCHES = 64;
+/** Total set-operation budget per analysis. */
+const MAX_STEPS = 200_000;
+const MAX_CP = 0x10ffff;
 
 class Unanalysable extends Error {}
 
-const isDigit: Test = (c) => c >= 48 && c <= 57;
-const isWord: Test = (c) => isDigit(c) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
-const isSpace: Test = (c) =>
-  c === 32 ||
-  (c >= 9 && c <= 13) ||
-  c === 0xa0 ||
-  c === 0x1680 ||
-  (c >= 0x2000 && c <= 0x200a) ||
-  c === 0x2028 ||
-  c === 0x2029 ||
-  c === 0x202f ||
-  c === 0x205f ||
-  c === 0x3000 ||
-  c === 0xfeff;
-const not =
-  (t: Test): Test =>
-  (c) =>
-    !t(c);
-const anyChar: Test = () => true;
+let steps = 0;
+function spend(n: number): void {
+  steps += n;
+  if (steps > MAX_STEPS) throw new Unanalysable("analysis budget exceeded");
+}
 
-function overlaps(a: Test, b: Test): boolean {
-  for (let c = 0; c <= SAMPLE_LIMIT; c++) if (a(c) && b(c)) return true;
-  for (const c of SENTINELS) if (a(c) && b(c)) return true;
+function norm(ranges: readonly (readonly [number, number])[]): CpSet {
+  spend(ranges.length + 1);
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [];
+  for (const [lo, hi] of sorted) {
+    const last = out[out.length - 1];
+    if (last !== undefined && lo <= last[1] + 1) last[1] = Math.max(last[1], hi);
+    else out.push([lo, hi]);
+  }
+  return out;
+}
+
+const union = (a: CpSet, b: CpSet): CpSet => norm([...a, ...b]);
+
+function complement(a: CpSet): CpSet {
+  spend(a.length + 1);
+  const out: [number, number][] = [];
+  let next = 0;
+  for (const [lo, hi] of a) {
+    if (lo > next) out.push([next, lo - 1]);
+    next = hi + 1;
+  }
+  if (next <= MAX_CP) out.push([next, MAX_CP]);
+  return out;
+}
+
+function intersects(a: CpSet, b: CpSet): boolean {
+  spend(a.length + b.length + 1);
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const x = a[i] as readonly [number, number];
+    const y = b[j] as readonly [number, number];
+    if (x[1] < y[0]) i++;
+    else if (y[1] < x[0]) j++;
+    else return true;
+  }
   return false;
 }
 
-function caseFold(t: Test): Test {
-  return (c) => {
-    if (t(c)) return true;
-    const ch = String.fromCodePoint(c);
-    const up = ch.toUpperCase();
-    const lo = ch.toLowerCase();
-    return (
-      (up.length === ch.length && t(up.codePointAt(0) ?? c)) ||
-      (lo.length === ch.length && t(lo.codePointAt(0) ?? c))
-    );
-  };
+const single = (cp: number): CpSet => [[cp, cp]];
+const DIGIT: CpSet = [[48, 57]];
+const WORD: CpSet = [
+  [48, 57],
+  [65, 90],
+  [95, 95],
+  [97, 122],
+];
+const SPACE: CpSet = norm([
+  [9, 13],
+  [32, 32],
+  [160, 160],
+  [0x1680, 0x1680],
+  [0x2000, 0x200a],
+  [0x2028, 0x2029],
+  [0x202f, 0x202f],
+  [0x205f, 0x205f],
+  [0x3000, 0x3000],
+  [0xfeff, 0xfeff],
+]);
+const ANY: CpSet = [[0, MAX_CP]];
+const NOT_NEWLINE: CpSet = complement([
+  [10, 10],
+  [13, 13],
+  [0x2028, 0x2029],
+]);
+
+/** Code points whose case variants are modelled (see the module header). */
+const FOLD_ZONES: CpSet = [
+  [0, 0x1fff],
+  [0xff21, 0xff5a],
+];
+const foldCache = new Map<number, readonly number[]>();
+
+function caseVariants(cp: number): readonly number[] {
+  const hit = foldCache.get(cp);
+  if (hit !== undefined) return hit;
+  const ch = String.fromCodePoint(cp);
+  const out: number[] = [];
+  for (const v of [ch.toUpperCase(), ch.toLowerCase()]) {
+    const vc = v.codePointAt(0);
+    if (v.length === ch.length && vc !== undefined && vc !== cp) out.push(vc);
+  }
+  foldCache.set(cp, out);
+  return out;
+}
+
+function fold(set: CpSet): CpSet {
+  const extra: [number, number][] = [];
+  for (const [lo, hi] of set) {
+    for (const [zl, zh] of FOLD_ZONES) {
+      const from = Math.max(lo, zl);
+      const to = Math.min(hi, zh);
+      if (from > to) continue;
+      spend(to - from + 1);
+      for (let c = from; c <= to; c++) for (const v of caseVariants(c)) extra.push([v, v]);
+    }
+  }
+  return extra.length === 0 ? set : norm([...set, ...extra]);
 }
 
 class Parser {
@@ -150,8 +229,8 @@ class Parser {
     return alts;
   }
 
-  private mk(test: Test, lit: string | null, src: string): Node {
-    return { t: "atom", test: this.ignoreCase ? caseFold(test) : test, lit, src };
+  private mk(set: CpSet, lit: string | null, src: string, foldable = true): Node {
+    return { t: "atom", set: this.ignoreCase && foldable ? fold(set) : set, lit, src };
   }
 
   private atom(depth: number): Node {
@@ -162,11 +241,7 @@ class Parser {
       case "$":
         return { t: "zero" };
       case ".":
-        return this.mk(
-          this.dotAll ? anyChar : (c) => c !== 10 && c !== 13 && c !== 0x2028 && c !== 0x2029,
-          null,
-          ".",
-        );
+        return this.mk(this.dotAll ? ANY : NOT_NEWLINE, null, ".", false);
       case "(":
         return this.group(depth, start);
       case "[":
@@ -177,7 +252,7 @@ class Parser {
         const cp = this.s.codePointAt(this.i - 1) as number;
         if (cp > 0xffff) this.i++;
         const lit = String.fromCodePoint(cp);
-        return this.mk((c) => c === cp, lit, lit);
+        return this.mk(single(cp), lit, lit);
       }
     }
   }
@@ -225,17 +300,17 @@ class Parser {
     const src = this.s.slice(start, this.i);
     switch (e) {
       case "d":
-        return this.mk(isDigit, null, src);
+        return this.mk(DIGIT, null, src, false);
       case "D":
-        return this.mk(not(isDigit), null, src);
+        return this.mk(complement(DIGIT), null, src, false);
       case "w":
-        return this.mk(isWord, null, src);
+        return this.mk(WORD, null, src);
       case "W":
-        return this.mk(not(isWord), null, src);
+        return this.mk(complement(WORD), null, src, false);
       case "s":
-        return this.mk(isSpace, null, src);
+        return this.mk(SPACE, null, src, false);
       case "S":
-        return this.mk(not(isSpace), null, src);
+        return this.mk(complement(SPACE), null, src, false);
       case "p":
       case "P":
         // Unicode property: not modelled, so assume it can overlap anything.
@@ -244,9 +319,9 @@ class Parser {
           if (close < 0) throw new Unanalysable("unterminated \\p{}");
           this.i = close + 1;
         }
-        return this.mk(anyChar, null, this.s.slice(start, this.i));
+        return this.mk(ANY, null, this.s.slice(start, this.i), false);
       case "b":
-        if (inClass) return this.mk((c) => c === 8, "\b", src);
+        if (inClass) return this.lit("\b", src);
         return { t: "zero" };
       case "B":
         return { t: "zero" };
@@ -278,7 +353,7 @@ class Parser {
         if (this.s[this.i] === "{") {
           const close = this.s.indexOf("}", this.i);
           const v = close < 0 ? Number.NaN : Number.parseInt(this.s.slice(this.i + 1, close), 16);
-          if (Number.isNaN(v) || v > 0x10ffff) throw new Unanalysable("bad \\u{}");
+          if (Number.isNaN(v) || v > MAX_CP) throw new Unanalysable("bad \\u{}");
           this.i = close + 1;
           return this.lit(String.fromCodePoint(v), src);
         }
@@ -295,7 +370,7 @@ class Parser {
       }
       default:
         if (!inClass && e >= "1" && e <= "9") {
-          while (this.i < this.s.length && isDigit(this.s.charCodeAt(this.i))) this.i++;
+          while (this.i < this.s.length && /[0-9]/.test(this.s[this.i] as string)) this.i++;
           return { t: "zero" }; // backreference: not analysed
         }
         return this.lit(e, src);
@@ -304,7 +379,7 @@ class Parser {
 
   private lit(ch: string, src: string): Node {
     const cp = ch.codePointAt(0) as number;
-    return this.mk((c) => c === cp, ch, src);
+    return this.mk(single(cp), ch, src);
   }
 
   private charClass(start: number): Node {
@@ -313,8 +388,8 @@ class Parser {
       negate = true;
       this.i++;
     }
-    const parts: Test[] = [];
-    const single = (): { test: Test; cp: number | null } => {
+    const parts: (readonly [number, number])[] = [];
+    const item = (): { set: CpSet; cp: number | null } => {
       if (this.i >= this.s.length) throw new Unanalysable("unterminated class");
       const ch = this.s[this.i] as string;
       if (ch === "\\") {
@@ -323,13 +398,13 @@ class Parser {
         const n = this.escape(at, true);
         if (n.t === "atom") {
           const cp = n.lit === null ? null : (n.lit.codePointAt(0) as number);
-          return { test: n.test, cp };
+          return { set: n.set, cp };
         }
-        return { test: () => false, cp: null };
+        return { set: [], cp: null };
       }
       const cp = this.s.codePointAt(this.i) as number;
       this.i += cp > 0xffff ? 2 : 1;
-      return { test: (c) => c === cp, cp };
+      return { set: single(cp), cp };
     };
     while (true) {
       if (this.i >= this.s.length) throw new Unanalysable("unterminated class");
@@ -337,27 +412,26 @@ class Parser {
         this.i++;
         break;
       }
-      const lo = single();
+      const lo = item();
       if (this.s[this.i] === "-" && this.s[this.i + 1] !== "]" && this.i + 1 < this.s.length) {
         const save = this.i;
         this.i++;
-        const hi = single();
+        const hi = item();
         if (lo.cp !== null && hi.cp !== null) {
-          const a = lo.cp;
-          const b = hi.cp;
-          parts.push((c) => c >= a && c <= b);
+          // An inverted range is a syntax error that RegExp already rejected.
+          parts.push([lo.cp, hi.cp]);
           continue;
         }
         // `\w-x` style: the dash is literal.
         this.i = save;
       }
-      parts.push(lo.test);
+      parts.push(...lo.set);
     }
-    const union: Test = (c) => parts.some((p) => p(c));
-    const base = negate ? not(union) : union;
+    let positive = norm(parts);
+    if (this.ignoreCase) positive = fold(positive);
     return {
       t: "atom",
-      test: this.ignoreCase && !negate ? caseFold(base) : base,
+      set: negate ? complement(positive) : positive,
       lit: null,
       src: this.s.slice(start, this.i),
     };
@@ -413,24 +487,27 @@ function minLen(n: Node): number {
 }
 
 /** Characters this node can START with (ignores nullability; callers handle that). */
-function first(n: Node): Test {
+function first(n: Node): CpSet {
   switch (n.t) {
     case "zero":
-      return () => false;
+      return [];
     case "atom":
-      return n.test;
+      return n.set;
     case "rep":
       return first(n.node);
-    case "group": {
-      const tests = n.alts.flatMap((a) => a.map(first));
-      return (c) => tests.some((t) => t(c));
-    }
+    case "group":
+      return n.alts.reduce<CpSet>((acc, alt) => union(acc, firstOfSeq(alt)), []);
   }
 }
 
-function firstOfAlts(alts: readonly Node[][]): Test {
-  const tests = alts.flatMap((a) => a.map(first));
-  return (c) => tests.some((t) => t(c));
+/** What a sequence can start with, honouring nullability: stop at the first mandatory element. */
+function firstOfSeq(seq: readonly Node[]): CpSet {
+  let acc: CpSet = [];
+  for (const el of seq) {
+    acc = union(acc, first(el));
+    if (minLen(el) >= 1) break;
+  }
+  return acc;
 }
 
 function isVariable(n: Node): n is Extract<Node, { t: "rep" }> {
@@ -441,17 +518,18 @@ function isMany(n: Node): n is Extract<Node, { t: "rep" }> {
   return n.t === "rep" && n.max > MANY;
 }
 
-/** Is `item` (index i of `seq`) safely followed by a mandatory, disjoint character? */
-function delimited(seq: readonly Node[], i: number, loopStart: Test): boolean {
-  const itemSet = first((seq[i] as Node & { t: "rep" }).node);
+/** Is `seq[i]` (a variable repeat) safely followed by a mandatory, disjoint character? */
+function delimited(seq: readonly Node[], i: number, loopStart: CpSet): boolean {
+  const itemSet = first((seq[i] as Extract<Node, { t: "rep" }>).node);
   for (let j = i + 1; j < seq.length; j++) {
     const el = seq[j] as Node;
     if (el.t === "zero") continue;
-    if (overlaps(first(el), itemSet)) return false;
+    if (intersects(first(el), itemSet)) return false;
     if (minLen(el) >= 1) return true;
   }
-  // Reached the end of the repeated body: the next thing is the loop restart.
-  return !overlaps(loopStart, itemSet);
+  // Reached the end of the repeated body: the next thing is the loop restart,
+  // which begins with whatever any branch of the group can start with.
+  return !intersects(loopStart, itemSet);
 }
 
 function describe(n: Node): string {
@@ -467,11 +545,11 @@ function literalOf(seq: readonly Node[]): string | null {
   return out;
 }
 
-function singleAtomBranch(seq: readonly Node[]): Test | null {
+function singleAtomBranch(seq: readonly Node[]): CpSet | null {
   if (seq.length !== 1) return null;
   const n = seq[0] as Node;
-  if (n.t === "atom") return n.test;
-  if (n.t === "rep" && n.node.t === "atom") return n.node.test;
+  if (n.t === "atom") return n.set;
+  if (n.t === "rep" && n.node.t === "atom") return n.node.set;
   return null;
 }
 
@@ -496,7 +574,7 @@ function walk(seq: readonly Node[], out: RegexRiskFinding[]): void {
       b.node.t === "atom" &&
       a.max === Number.POSITIVE_INFINITY &&
       b.max === Number.POSITIVE_INFINITY &&
-      overlaps(first(a.node), first(b.node))
+      intersects(a.node.set, b.node.set)
     ) {
       out.push({
         kind: "adjacent-overlap",
@@ -524,7 +602,7 @@ function checkRepeatedGroup(
   group: Extract<Node, { t: "group" }>,
   out: RegexRiskFinding[],
 ): void {
-  const loopStart = firstOfAlts(group.alts);
+  const loopStart = first(group);
   let flaggedNested = false;
 
   for (const alt of group.alts) {
@@ -546,32 +624,38 @@ function checkRepeatedGroup(
     });
   }
 
-  if (group.alts.length >= 2) {
-    for (let a = 0; a < group.alts.length; a++) {
-      for (let b = a + 1; b < group.alts.length; b++) {
-        const A = group.alts[a] as Node[];
-        const B = group.alts[b] as Node[];
-        const sa = singleAtomBranch(A);
-        const sb = singleAtomBranch(B);
-        let why: string | null = null;
-        if (sa !== null && sb !== null) {
-          if (overlaps(sa, sb)) why = "two branches can match the same character";
-        } else {
-          const la = literalOf(A);
-          const lb = literalOf(B);
-          if (la !== null && lb !== null) {
-            if (la === lb) why = "two branches are identical";
-            else if (isRepeatOf(la, lb) || isRepeatOf(lb, la)) {
-              why = "one branch is a repetition of another";
-            }
+  if (group.alts.length > MAX_BRANCHES) {
+    out.push({
+      kind: "unanalysed",
+      detail: `\`${rep.src.slice(0, 40)}...\`: ${group.alts.length} alternation branches under a repeat is more than the ${MAX_BRANCHES} compared; branch overlap was not checked`,
+    });
+    return;
+  }
+
+  for (let a = 0; a < group.alts.length; a++) {
+    for (let b = a + 1; b < group.alts.length; b++) {
+      const A = group.alts[a] as Node[];
+      const B = group.alts[b] as Node[];
+      const sa = singleAtomBranch(A);
+      const sb = singleAtomBranch(B);
+      let why: string | null = null;
+      if (sa !== null && sb !== null) {
+        if (intersects(sa, sb)) why = "two branches can match the same character";
+      } else {
+        const la = literalOf(A);
+        const lb = literalOf(B);
+        if (la !== null && lb !== null) {
+          if (la === lb) why = "two branches are identical";
+          else if (isRepeatOf(la, lb) || isRepeatOf(lb, la)) {
+            why = "one branch is a repetition of another";
           }
         }
-        if (why !== null) {
-          out.push({
-            kind: "overlapping-alternation",
-            detail: `\`${rep.src}\`: ${why} under an unbounded repeat, so the same text matches in many ways`,
-          });
-        }
+      }
+      if (why !== null) {
+        out.push({
+          kind: "overlapping-alternation",
+          detail: `\`${rep.src.slice(0, 80)}\`: ${why} under an unbounded repeat, so the same text matches in many ways`,
+        });
       }
     }
   }
@@ -582,19 +666,18 @@ function checkRepeatedGroup(
  * means "none of the known shapes", not "safe" (see the module header).
  */
 export function analyzeRegexRisk(source: string, flags = ""): readonly RegexRiskFinding[] {
+  steps = 0;
+  const out: RegexRiskFinding[] = [];
   try {
     const parser = new Parser(source, flags.includes("i"), flags.includes("s"));
-    const alts = parser.parse();
-    const out: RegexRiskFinding[] = [];
-    for (const alt of alts) walk(alt, out);
-    return out;
+    for (const alt of parser.parse()) walk(alt, out);
   } catch (err) {
     const reason = err instanceof Unanalysable ? err.message : "unexpected parser state";
-    return [
-      {
-        kind: "unanalysed",
-        detail: `the pattern could not be analysed for backtracking risk (${reason})`,
-      },
-    ];
+    // Keep what was found before the budget ran out; add the honest gap.
+    out.push({
+      kind: "unanalysed",
+      detail: `the pattern could not be fully analysed for backtracking risk (${reason})`,
+    });
   }
+  return out;
 }

@@ -186,3 +186,41 @@ describe("loader diagnostics", () => {
     expect(countProblems([{ subject: "a", reason: "r" }]).errors).toBe(1);
   });
 });
+
+describe("initPlugins logging", () => {
+  it("says 'warning (rule stays active)' for advisories and 'skipped' only for errors, once per plugin+kind", async () => {
+    const { initPlugins } = await import("../../../src/plugins/init.js");
+    const { resetPluginWarningDedupeForTests } = await import("../../../src/plugins/init.js");
+    resetPluginWarningDedupeForTests();
+    await writeFile(
+      path.join(dir, "warn.mjs"),
+      `export default { name: "warny", setup(api) {
+        api.addPipelineStage({ name: "a", transform() {} });
+        api.addPipelineStage({ name: "b", transform() {} });
+      } };`,
+      "utf8",
+    );
+    const run = async (): Promise<string[]> => {
+      const lines: string[] = [];
+      await initPlugins({
+        specifiers: ["./warn.mjs", "./nope.mjs"],
+        enabled: true,
+        projectDir: dir,
+        golemVersion: "0",
+        log: (m) => lines.push(m),
+        announce: false,
+      });
+      return lines;
+    };
+    const first = await run();
+    const warnings = first.filter((l) => l.startsWith("plugin warning (rule stays active)"));
+    // Two stages, same plugin and kind: one line.
+    expect(warnings).toHaveLength(1);
+    expect(first.filter((l) => l.includes("(skipped, no-op)"))).toHaveLength(1);
+    expect(first.some((l) => l.includes("warny") && l.includes("skipped"))).toBe(false);
+
+    const second = await run();
+    expect(second.some((l) => l.startsWith("plugin warning"))).toBe(false);
+    expect(second.filter((l) => l.includes("(skipped, no-op)"))).toHaveLength(1);
+  });
+});

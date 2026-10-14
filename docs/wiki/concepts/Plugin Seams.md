@@ -159,7 +159,23 @@ cases the old try/catch did not cover:
 - a stage whose promise **never settles** — skipped after 5s
   (`PLUGIN_STAGE_TIMEOUT_MS`); a late write to the original object cannot reach
   the restored copy;
-- a stage that rejects asynchronously.
+- a stage that rejects asynchronously, or throws something unprintable
+  (`Object.create(null)`, a throwing `message` getter): the error text is
+  converted inside its own try/catch, redacted (`redactStandaloneText`), then
+  truncated to 300 characters, before it reaches a fault reason or the proxy log.
+
+**Circuit breaker.** No abort signal reaches third-party code, so a hung stage
+would cost every request the full timeout. After 3 consecutive timeouts a stage
+is skipped for 60s ("stage disabled after repeated timeouts"); the tripping
+fault is always logged and skips during the cool-off are counted. The timeout,
+clock and breaker values are injectable (`pluginStageRun` on the pipeline
+options) but not user-configurable: there is no `plugins.*` setting for it, and
+adding one touches the schema, UI model and drift tests, so it is a follow-up
+(see DUST2.11).
+
+Known limit: a stage's late write after a timeout can still reach `parsed`, the
+object the original request was parsed into (it only skews the telemetry
+`tokensBefore` estimate); it cannot reach the body that is forwarded.
 
 Every skip is counted per stage in the process (`pluginStageFaultCounts`) and
 logged to the proxy log — on the first fault from a stage and then every 100th,
@@ -184,7 +200,7 @@ name. Nothing the loader detects is dropped silently. Kinds:
 | `validate-threw` | warning | a `validate` threw at runtime (treated as not-a-secret) |
 | `regex-backtracking` / `unanalysed-regex` | warning | see below |
 | `missing-metadata` | warning | stage without a description, or a non-string `version`/`description` |
-| `stage-probe-failed` | warning | the stage threw or hung on a synthetic probe request |
+| `stage-probe-failed` | warning / error | the stage threw (warning) or timed out (error) on a synthetic probe request |
 
 Warnings from a plugin whose `setup()` threw are not shown, because that plugin
 contributes nothing. A bare path specifier is not pre-checked for existence, so a
@@ -200,7 +216,9 @@ adjacent overlapping unbounded repeats (`\d+\d+`, polynomial). It never rejects 
 rule: dropping a working redaction would be the worse failure. A delimited
 repeat such as `([a-z]+\.)+` stays quiet.
 
-False positives: polynomial-only shapes reported as nested, and any character-set
+Character sets are exact code-point intervals (not samples), so overlap is right for every script, and case folding under `i` covers code points below U+2000 plus fullwidth Latin. The loop-restart check honours nullability, so `(?:\d[ -]*?){13,16}` and `(?:\s*,\s*\w+)+` are quiet. Work is budgeted: a step counter, and repeated alternations wider than 64 branches are reported as `unanalysed` rather than compared, so a hostile pattern cannot stall startup (500 branches under `/i` finishes in well under 200 ms).
+
+False positives: polynomial-only shapes reported as nested (`(\s*,\s*)+`), and any character-set
 overlap treated as ambiguity. False negatives (a quiet result is **not** "safe"):
 backreferences and lookaround contents, overlap between non-adjacent repeats
 (`.*x.*y`), branch ambiguity beyond identical / single-atom / repeated-literal
@@ -216,6 +234,8 @@ golem plugin --json       # machine-readable; problems + problemCounts
 golem plugin --check      # exit 1 if any ERROR-level problem was found
 golem plugin --strict     # exit 1 on any problem, warnings included
 ```
+
+Hook and CLI processes log loader problems at start: errors as `plugin problem (skipped, no-op)`, warnings as `plugin warning (rule stays active)`, each warning once per process per plugin and kind, with the text redacted and truncated.
 
 Exit code: **0 by default**, always — the command is informational and scripts
 already parse its output. `--check` makes it a gate on errors (something was

@@ -41,6 +41,15 @@ the code only partly delivers. Evidence: DUST1.1 rows 37, 39, 42.
 - **r042:** `src/plugins/regex-risk.ts`, warn-only, pure TypeScript.
 - **Exit code:** `golem plugin` stays 0 by default; `--check` exits 1 on error-level
   problems, `--strict` on any problem.
+- **Review fixes (2026-10-14):** probe timer is ref'd so `golem plugin` cannot exit silently
+  on a hung stage (child-process test); a timed-out probe is error-level so `--check` fails;
+  thrown-value conversion is exception-safe, redacted and truncated; circuit breaker (3
+  timeouts, 60s cool-off); detector uses exact code-point intervals plus a work budget.
+- **Known, accepted:** a stage's late write after a timeout can still reach `parsed` (the
+  parsed request object; skews telemetry `tokensBefore` only, never the forwarded body).
+  The timeout and breaker are injectable on the pipeline (`pluginStageRun`).
+- **Follow-up (not done):** a user-facing `plugins.stage_timeout_ms` setting. Adding one
+  means schema, ui-model, config-schema asset and drift tests; no trivial existing pattern.
 - Plugin rules still cannot set `scanEnd` / `validateAt` / `extendStart`.
 
 ## Out of scope
