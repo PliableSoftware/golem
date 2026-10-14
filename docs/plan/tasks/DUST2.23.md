@@ -27,3 +27,34 @@ policy turn redaction off; only `bypass_all` should.
 ## Out of scope
 
 - S9 object keys, S10 idempotence — Phase 3.
+
+## Decisions (2026-10-14, agent draft, pending independent review)
+
+**Reading of probe 1.** DUST1.1 headline 9 is over-redaction: a chunk with `=`/`+` failed the
+alpha/numeric/hex test, the token lost the exemption, and long varied ordinary paths
+(`OUT_DIR=/Users/Alice/.../lib`, `sort=Name+Desc+/Users/...`) were redacted. Secrets were never
+leaked by it. So the fix necessarily EXEMPTS more (a narrow, accepted behaviour change: fewer false
+positives), and the work is making that exemption unable to hide a secret.
+
+**Exemption rule** (`isPathLikeToken`, `src/pipeline/redaction-rules.ts`):
+- `=` and `+` are chunk delimiters, like `/ _ -`. A token without them takes exactly the old path.
+- A token containing `=` or `+` ("strict mode") is path-like only if it has >= 3 chunks (so
+  `key=<one run>` never qualifies) and every letters-only chunk longer than 3 characters is
+  word-shaped: lower, UPPER, Capitalized or CamelCase with every hump >= 3 letters
+  (`STRICT_WORD_RE`). Numeric chunks and the hex allowance (>= 3 chunks) are unchanged.
+- Rule order, ids, the 32-128 candidate window, the pure-hex and 2-of-3-class exclusions: unchanged.
+
+**Evidence** (`tests/unit/pipeline/redaction-path-delimiters.test.ts`): 7 realistic values
+byte-identical; 8 secret shapes x 25 seeds redacted; differential vs a frozen copy of the old
+function: 30000 random tokens without `=`/`+` give identical verdicts; 20000 random word-path tokens
+with `=`/`+` never redacted (old rule redacted > 500 of them); 200000 random base64 tokens with
+`=`/`+`, every one the old rule redacted is still redacted (0 newly exempt).
+
+**Probe 2 design.** `StageConfig.redaction` is the literal `true` (frozen-contract amendment dated
+2026-10-14 in `src/interfaces/policy.ts`, tests in `tests/contract/policy.contract.test.ts`). The
+runtime check `assertRedactionOn` (`src/pipeline/policy-guard.ts`) THROWS `RedactionPolicyError`
+when `stages.redaction !== true`; it does not coerce, so a bug is loud. Fail closed: the proxy
+answers a pipeline throw by running `redactOnly` (which never reads a policy) on the original
+request, and 5xx if that fails (`src/proxy/server.ts` ~358-390). Both former redaction-off branches
+(`pipeline.ts` non-Messages and stage 1/re-run) now redact unconditionally. `proxy.bypass_all`
+is untouched.
