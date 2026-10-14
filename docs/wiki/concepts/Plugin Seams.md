@@ -2,9 +2,9 @@
 title: Plugin Seams
 type: concept
 tags: [plugins, redaction, threat-model, trust, extensibility, adr-0005, r8]
-sources: [src/plugins/types.ts, src/plugins/loader.ts, src/plugins/init.ts, src/pipeline/redaction-rules.ts, src/cli/plugin.ts, docs/decisions/ADR-0005-plugin-seams-and-the-redaction-path.md]
+sources: [src/plugins/types.ts, src/plugins/loader.ts, src/plugins/regex-risk.ts, src/plugins/stage-runner.ts, src/plugins/init.ts, src/pipeline/redaction-rules.ts, src/cli/plugin.ts, docs/decisions/ADR-0005-plugin-seams-and-the-redaction-path.md]
 created: 2026-08-21
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # Plugin seams — third-party code inside the redaction path
@@ -142,13 +142,87 @@ nothing more. Two details worth keeping:
   verdict as returning `false` — because a throw tells us nothing, and it must
   not abort a pass that still has built-ins to run.
 
+### A failing stage keeps the pre-stage body, which is already redacted
+
+Stage 1 (built-in redaction) runs before the plugin stages (stage 1.7,
+`src/pipeline/pipeline.ts`), so the body a stage receives has already been through
+every built-in rule. Restoring "the pre-stage body" after a failure therefore
+fails toward keeping built-in redaction applied. This holds only while
+`policy.stages.redaction` is on; `proxy.bypass_all` is the one documented
+exception (ADR-0004) and nothing a plugin does can turn it on.
+
+`runPluginStage` (`src/plugins/stage-runner.ts`) makes the claim true in three
+cases the old try/catch did not cover:
+
+- a stage that mutates `body` **in place and then throws** — a snapshot taken
+  before the call is what continues, not the half-edited object;
+- a stage whose promise **never settles** — skipped after 5s
+  (`PLUGIN_STAGE_TIMEOUT_MS`); a late write to the original object cannot reach
+  the restored copy;
+- a stage that rejects asynchronously.
+
+Every skip is counted per stage in the process (`pluginStageFaultCounts`) and
+logged to the proxy log — on the first fault from a stage and then every 100th,
+with the running total. Not covered: a stage that blocks the event loop
+synchronously (`while (true) {}`) cannot be interrupted in-thread. The cost of the
+snapshot is one `structuredClone` of the body per stage, paid only when a plugin
+stage is configured.
+
+## Diagnostics: every problem is counted and listed
+
+`golem plugin` prints `Problems: N (E error(s), W warning(s))` and one line per
+problem, tagged `[error/<kind>]` or `[warn/<kind>]` with the specifier or plugin
+name. Nothing the loader detects is dropped silently. Kinds:
+
+| Kind | Severity | Meaning |
+|---|---|---|
+| `unresolved`, `import-failed`, `invalid-module`, `duplicate-plugin`, `setup-threw` | error | the plugin did not load |
+| `invalid-registration` | error | a rule, stage or tool was rejected (bad id, no `g` flag, duplicate, shadows a built-in tool) |
+| `late-registration` | error | `api.add*` called after `setup()` settled; used to vanish silently |
+| `empty-match` | warning | pattern can match `""`; rule stays active |
+| `dead-rule` | warning | `group` exceeds the pattern's capture groups, so it can never redact |
+| `validate-threw` | warning | a `validate` threw at runtime (treated as not-a-secret) |
+| `regex-backtracking` / `unanalysed-regex` | warning | see below |
+| `missing-metadata` | warning | stage without a description, or a non-string `version`/`description` |
+| `stage-probe-failed` | warning | the stage threw or hung on a synthetic probe request |
+
+Warnings from a plugin whose `setup()` threw are not shown, because that plugin
+contributes nothing. A bare path specifier is not pre-checked for existence, so a
+missing file shows up as `import-failed`.
+
+### Backtracking-shape check (warn only)
+
+`src/plugins/regex-risk.ts` statically flags four shapes in each plugin rule's
+regex: a repeated group holding a variable repeat with no distinct delimiter
+(`(a+)+`), an unbounded repeat of a group that can match empty (`(a?)*`),
+overlapping alternation under an unbounded repeat (`(\w|\d)+`, `(a|aa)+`), and
+adjacent overlapping unbounded repeats (`\d+\d+`, polynomial). It never rejects a
+rule: dropping a working redaction would be the worse failure. A delimited
+repeat such as `([a-z]+\.)+` stays quiet.
+
+False positives: polynomial-only shapes reported as nested, and any character-set
+overlap treated as ambiguity. False negatives (a quiet result is **not** "safe"):
+backreferences and lookaround contents, overlap between non-adjacent repeats
+(`.*x.*y`), branch ambiguity beyond identical / single-atom / repeated-literal
+branches (`(a|ab|b)*`), and bounded repeats of 10 or fewer. V8 has no regex
+timeout, so this is a smoke alarm, not a guarantee.
+
 ## `golem plugin`
 
 ```
 golem plugin              # what loaded, from where, and what each registered
 golem plugin --verbose    # every rule, stage and tool contributed
-golem plugin --json       # machine-readable
+golem plugin --json       # machine-readable; problems + problemCounts
+golem plugin --check      # exit 1 if any ERROR-level problem was found
+golem plugin --strict     # exit 1 on any problem, warnings included
 ```
+
+Exit code: **0 by default**, always — the command is informational and scripts
+already parse its output. `--check` makes it a gate on errors (something was
+dropped or did not run); `--strict` also fails on warnings. Use `--check` in CI
+and `--strict` to keep a repo's plugin rules free of advisories. It also runs each
+loaded stage once against a small synthetic request, so a throwing or hanging
+stage is found before a user's first request.
 
 `golem plugin` does a **fresh load in its own process** (`src/cli/plugin.ts:36`);
 it runs each plugin's `setup()`, so what it prints can differ from what the

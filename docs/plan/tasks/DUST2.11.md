@@ -26,6 +26,23 @@ the code only partly delivers. Evidence: DUST1.1 rows 37, 39, 42.
 
 - Redaction never weakened: a plugin problem never disables built-ins.
 
+## Findings and decisions (2026-10-14)
+
+- **r037, verified against `src/pipeline/pipeline.ts`:** stage 1 (built-in redaction) runs
+  BEFORE stage 1.7 (plugin stages), so the body a stage receives, and the "pre-stage body"
+  kept on failure, has already been through built-in redaction. True only while
+  `policy.stages.redaction` is on (`proxy.bypass_all` is the sole exception, ADR-0004).
+  The old try/catch did NOT keep it for a stage that mutated in place then threw, and
+  could hang forever on a never-settling stage; `src/plugins/stage-runner.ts` snapshots
+  and time-boxes (5s). Faults are counted per stage and logged.
+- **r039:** loader problems now carry `kind` and `severity`; previously silent drops
+  (registration after `setup()`, non-string metadata, missing stage description, `group`
+  beyond the pattern's captures) are recorded. `golem plugin` prints counts.
+- **r042:** `src/plugins/regex-risk.ts`, warn-only, pure TypeScript.
+- **Exit code:** `golem plugin` stays 0 by default; `--check` exits 1 on error-level
+  problems, `--strict` on any problem.
+- Plugin rules still cannot set `scanEnd` / `validateAt` / `extendStart`.
+
 ## Out of scope
 
 - WASM / declarative successor rules (1.1/r051, r052 — not started, spec register).
