@@ -32,6 +32,7 @@ import { resolveUpstreamDisplay } from "../../providers/index.js";
 import { ensureLoopbackCert } from "../../proxy/loopback-cert.js";
 import { startLoopbackServe } from "../../proxy/loopback-serve.js";
 import { proxyLog } from "../../shared/proxy-log.js";
+import { flushBounded } from "../../shared/selection-log.js";
 import { loadModelCatalog, modelAcceptsImages, openTelemetryStore } from "../../telemetry/index.js";
 import { planQueryEmbedder, resolvePersistedEmbedder } from "../auto-index.js";
 import { ollamaHasModel } from "../build-knowledge.js";
@@ -324,17 +325,22 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
     projectDir: dir,
     golemVersion: VERSION,
   });
-  const { proxy, semantic, upstream } = buildProxyFromSettings(dir, settings, telemetry, {
-    visionOf,
-    ...(plugins.plugins.length > 0 ? { plugins } : {}),
-    // R11.1: the daemon loaded its settings from disk, so re-reading the dials on
-    // a live request is the same question asked again — and it is what makes
-    // `golem compression 2` take effect without a restart.
-    reloadDials: true,
-    ...(shim ? { shim: true } : {}),
-    ...(localAnswerInference !== undefined ? { inference: localAnswerInference } : {}),
-    ...(suppressLocalAnswer ? { suppressLocalAnswer: true } : {}),
-  });
+  const { proxy, semantic, upstream, flushSelectionLog } = buildProxyFromSettings(
+    dir,
+    settings,
+    telemetry,
+    {
+      visionOf,
+      ...(plugins.plugins.length > 0 ? { plugins } : {}),
+      // R11.1: the daemon loaded its settings from disk, so re-reading the dials on
+      // a live request is the same question asked again — and it is what makes
+      // `golem compression 2` take effect without a restart.
+      reloadDials: true,
+      ...(shim ? { shim: true } : {}),
+      ...(localAnswerInference !== undefined ? { inference: localAnswerInference } : {}),
+      ...(suppressLocalAnswer ? { suppressLocalAnswer: true } : {}),
+    },
+  );
   if (semantic !== undefined) {
     proxyLog("Headroom semantic sidecar enabled (compression.level ≥2, opt-in, fail-open)");
   }
@@ -415,6 +421,8 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
     personaWatcher.close();
     void Promise.allSettled([
       proxy.close(),
+      // DUST2.17: queued selection lines must not die with the process; bounded.
+      flushBounded(flushSelectionLog, 500),
       telemetry.close(),
       removeProxyPid(dir),
       ...(loopback === null ? [] : [loopback.close()]),
