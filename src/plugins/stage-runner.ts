@@ -19,7 +19,7 @@
  * (`while (true) {}`) cannot be interrupted from inside the same thread.
  */
 
-import { redactStandaloneText } from "../pipeline/redaction.js";
+import { describeThrown } from "./safe-text.js";
 import type { PluginPipelineStage } from "./types.js";
 
 /** How long one stage may take before it is treated as hung. */
@@ -52,9 +52,6 @@ export interface PluginStageOutcome {
  */
 export const BREAKER_THRESHOLD = 3;
 export const BREAKER_COOL_OFF_MS = 60_000;
-/** Longest error text kept in a fault reason or log line. */
-export const MAX_REASON_CHARS = 300;
-
 export interface PluginStageRunOptions {
   /** Per-stage timeout. Default {@link PLUGIN_STAGE_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
@@ -77,6 +74,8 @@ export function pluginStageFaultCounts(): ReadonlyMap<string, number> {
   return new Map(ledger);
 }
 
+export { describeThrown, MAX_REASON_CHARS, redactForLog } from "./safe-text.js";
+
 /** Test-only. */
 export function resetPluginStageFaultsForTests(): void {
   ledger.clear();
@@ -85,31 +84,6 @@ export function resetPluginStageFaultsForTests(): void {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/**
- * Turn anything a plugin threw into a short, redacted, printable string. Cannot
- * throw: `Object.create(null)`, a throwing `message` getter and a throwing
- * `toString` all land on a constant fallback.
- */
-export function describeThrown(err: unknown): string {
-  try {
-    const raw = err instanceof Error ? err.message : String(err);
-    return redactForLog(typeof raw === "string" ? raw : String(raw));
-  } catch {
-    return "(unprintable error)";
-  }
-}
-
-/** Redact, then truncate (never the other way round: a cut secret can dodge its rule). */
-export function redactForLog(text: string): string {
-  let t = text.slice(0, MAX_REASON_CHARS * 10);
-  try {
-    t = redactStandaloneText(t);
-  } catch {
-    t = "(unprintable error)";
-  }
-  return t.length > MAX_REASON_CHARS ? `${t.slice(0, MAX_REASON_CHARS)}...` : t;
 }
 
 const TIMED_OUT = Symbol("plugin-stage-timed-out");

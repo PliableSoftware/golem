@@ -17,6 +17,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { RedactionRule } from "../pipeline/redaction-rules.js";
 import { analyzeRegexRisk } from "./regex-risk.js";
+import { describeThrown } from "./safe-text.js";
 import type {
   GolemPlugin,
   GolemPluginApi,
@@ -112,9 +113,7 @@ function pluginFromModule(mod: unknown): GolemPlugin | string {
   return plugin as GolemPlugin;
 }
 
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const errorText = describeThrown;
 
 /**
  * Wrap a plugin's `validate` so a throw is the same verdict as `false`.

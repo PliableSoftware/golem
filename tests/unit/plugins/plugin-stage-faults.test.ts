@@ -298,3 +298,33 @@ describe("circuit breaker for hung stages", () => {
     expect(logs.join("")).toContain("did not finish within 5ms");
   });
 });
+
+describe("redactForLog — redact the whole text, then truncate", () => {
+  it("does not leak a key that straddles the old 3000-char cut", async () => {
+    const { redactForLog } = await import("../../../src/plugins/safe-text.js");
+    // A ~2.9k PEM block, built at runtime so no literal key sits in this file,
+    // then a key that crosses offset 3000 of the original text.
+    const dashes = "-".repeat(5);
+    const body = Array.from({ length: 45 }, (_, i) =>
+      Buffer.from(`line-${i}-`.repeat(6)).toString("base64"),
+    ).join("\n");
+    const pem = `${dashes}BEGIN RSA PRIVATE KEY${dashes}\n${body}\n${dashes}END RSA PRIVATE KEY${dashes}`;
+    const pad = " ".repeat(Math.max(0, 2985 - pem.length));
+    const key = `sk-ant-api03-${"Ab1".repeat(14)}`;
+    const text = `${pem}${pad}${key} tail`;
+    expect(text.indexOf(key)).toBeLessThan(3000);
+    expect(text.indexOf(key) + key.length).toBeGreaterThan(3000);
+    const out = redactForLog(text);
+    expect(out).not.toContain("sk-ant");
+    expect(out).not.toContain("Ab1Ab1");
+    expect(out.length).toBeLessThanOrEqual(MAX_REASON_CHARS + 3);
+  });
+
+  it("drops a partial trailing token and omits oversized text", async () => {
+    const { redactForLog } = await import("../../../src/plugins/safe-text.js");
+    const out = redactForLog(`${"word ".repeat(59)}abcdefghijkl more`);
+    expect(out.endsWith("...")).toBe(true);
+    expect(out).not.toContain("abcdefghijkl");
+    expect(redactForLog("z".repeat(70_000))).toBe("(70000 chars of error text omitted)");
+  });
+});

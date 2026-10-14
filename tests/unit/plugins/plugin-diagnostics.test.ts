@@ -188,9 +188,10 @@ describe("loader diagnostics", () => {
 });
 
 describe("initPlugins logging", () => {
-  it("says 'warning (rule stays active)' for advisories and 'skipped' only for errors, once per plugin+kind", async () => {
-    const { initPlugins } = await import("../../../src/plugins/init.js");
-    const { resetPluginWarningDedupeForTests } = await import("../../../src/plugins/init.js");
+  it("says 'warning (rule stays active)' for advisories and 'skipped' only for errors; each DISTINCT finding once per process", async () => {
+    const { initPlugins, resetPluginWarningDedupeForTests } = await import(
+      "../../../src/plugins/init.js"
+    );
     resetPluginWarningDedupeForTests();
     await writeFile(
       path.join(dir, "warn.mjs"),
@@ -214,8 +215,10 @@ describe("initPlugins logging", () => {
     };
     const first = await run();
     const warnings = first.filter((l) => l.startsWith("plugin warning (rule stays active)"));
-    // Two stages, same plugin and kind: one line.
-    expect(warnings).toHaveLength(1);
+    // Stages "a" and "b" are two distinct findings of one plugin and kind: both logged.
+    expect(warnings).toHaveLength(2);
+    expect(warnings.some((l) => l.includes('"a"'))).toBe(true);
+    expect(warnings.some((l) => l.includes('"b"'))).toBe(true);
     expect(first.filter((l) => l.includes("(skipped, no-op)"))).toHaveLength(1);
     expect(first.some((l) => l.includes("warny") && l.includes("skipped"))).toBe(false);
 

@@ -12,7 +12,7 @@
 import { registerExtraRedactionRules } from "../pipeline/redaction-rules.js";
 import { proxyLog } from "../shared/proxy-log.js";
 import { loadPlugins } from "./loader.js";
-import { redactForLog } from "./stage-runner.js";
+import { redactForLog } from "./safe-text.js";
 import type { LoadedPlugins } from "./types.js";
 
 /** plugin+kind pairs already warned about in this process. */
@@ -83,8 +83,8 @@ export async function initPlugins(opts: InitPluginsOptions): Promise<LoadedPlugi
     const reason = redactForLog(problem.reason);
     if (problem.severity === "warning") {
       // Advisory: the rule or stage is active. Hook and CLI processes run this
-      // on every start, so say each warning once per process.
-      const key = `${problem.subject}\u0000${problem.kind ?? "other"}`;
+      // on every start, so say each distinct warning (plugin + kind + text) once per process.
+      const key = `${problem.subject}\u0000${problem.kind ?? "other"}\u0000${reason}`;
       if (warnedOnce.has(key)) continue;
       warnedOnce.add(key);
       log(`plugin warning (rule stays active): ${problem.subject}: ${reason}`);
