@@ -167,15 +167,19 @@ flowchart TB
 
 Source: `src/shared/selection-log.ts`, wired in `src/cli/proxy-runtime.ts`
 (DUST2.17, ADR-0003 invariant 5). Every proxied request appends one JSON line
-`{ts, gateway, provider, target, reason, sticky?}` to
+`{ts, gateway, provider, target, reason}` to
 `.golem/state/selection-log.jsonl`, single-target included (`gateway` is `null`
 on the legacy/inherited path). Unlike the stderr `.golem/proxy.log`, it is not
 truncated when the daemon starts. It holds registry ids and a provider name only:
-never a URL, header, env value or request body. `reason` is the one field derived
-from request text, so it is redacted, stripped of control characters and capped at
-200 characters. Bounded: past 2 MiB the file is renamed aside (`renameWithRetry`)
+never a URL, header, env value or request body. `target` is the registry target id when the
+target has one, else `gateway ?? provider`, on every path. `reason` is the one field
+derived from request text, so it is whitespace-collapsed (control characters and
+U+2028/2029 included), capped at 200 characters, then redacted. The shim, which
+never installs the route resolver, logs `shim: resolver not installed`. Bounded: past 2 MiB the file is renamed aside (`renameWithRetry`)
 and two rotated files are kept. Appends run off the request path; a failure is
-swallowed and never fails or delays a request. A request refused for an unknown
+swallowed and never fails or delays a request. Past 1000 queued lines further lines
+are dropped, and one `{ts, dropped}` marker records the gap when the queue recovers.
+Shutdown awaits the queue for at most 500 ms. A request refused for an unknown
 target is not a selection and is not logged. See also [[Redaction Stage]].
 
 ### 3b. Upstream provider — passthrough vs translating

@@ -8,7 +8,8 @@
  * `.golem/state/` where a restart leaves it alone.
  *
  * What a line holds — and nothing else:
- *   `{ts, gateway, provider, target, reason, sticky}` as one JSON object.
+ *   `{ts, gateway, provider, target, reason}` as one JSON object, plus an
+ *   occasional `{ts, dropped}` marker when lines were shed under backpressure.
  *
  * - No URL (a route URL can carry userinfo or a `?key=` query), no header, no
  *   env value, no request body. The fields come from the resolved registry entry
@@ -44,15 +45,21 @@ export interface SelectionEntry {
   /** The `proxy.gateways` id backing the credential, or null for the legacy/inherited path. */
   readonly gateway: string | null;
   readonly provider: string;
+  /**
+   * One rule for every path: the registry target id when the target has one,
+   * else `gateway ?? provider`. Callers pass it already resolved.
+   */
   readonly target: string;
   readonly reason: string;
-  readonly sticky?: boolean;
 }
 
 export interface SelectionLogOptions {
   readonly now?: () => Date;
   readonly maxBytes?: number;
   readonly keep?: number;
+  readonly maxPending?: number;
+  /** Test seam: runs between measuring the live file and re-checking it before the rename. */
+  readonly afterMeasure?: () => Promise<void>;
 }
 
 export interface SelectionLog {
@@ -62,17 +69,47 @@ export interface SelectionLog {
   flush(): Promise<void>;
 }
 
-/** Strip control characters, redact, cap. Total: never throws. */
+/**
+ * Collapse whitespace and cap BEFORE redacting, so a padded model id costs
+ * O(cap) in the redaction stage, then redact. A cap that lands mid-token drops
+ * that trailing fragment: half a secret must not survive redaction by being too
+ * short to match. Total: never throws.
+ */
 export function sanitizeReason(reason: string): string {
-  let text: string;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+  const flat = reason.replace(/[\s\u0000-\u001f\u007f\u2028\u2029]+/g, " ").trim();
+  let capped = flat;
+  let truncated = false;
+  if (flat.length > REASON_MAX_CHARS) {
+    truncated = true;
+    capped = flat.slice(0, REASON_MAX_CHARS);
+    if (flat[REASON_MAX_CHARS] !== " ") {
+      const lastSpace = capped.lastIndexOf(" ");
+      capped = lastSpace === -1 ? "" : capped.slice(0, lastSpace);
+    }
+  }
+  let redacted: string;
   try {
-    text = redactStandaloneText(reason);
+    redacted = redactStandaloneText(capped);
   } catch {
     return "(reason withheld)";
   }
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
-  const flat = text.replace(/[\u0000-\u001f\u007f]+/g, " ");
-  return flat.length > REASON_MAX_CHARS ? `${flat.slice(0, REASON_MAX_CHARS)}…` : flat;
+  return truncated ? `${redacted}…` : redacted;
+}
+
+/** Await `flush`, but never longer than `ms` and never rejecting: for shutdown. */
+export async function flushBounded(flush: () => Promise<void>, ms = 500): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      flush().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 let lastStamp = 0;
@@ -85,37 +122,52 @@ export function createSelectionLog(
   const now = options.now ?? (() => new Date());
   const maxBytes = options.maxBytes ?? SELECTION_LOG_MAX_BYTES;
   const keep = options.keep ?? SELECTION_LOG_KEEP_ROTATED;
+  const maxPending = options.maxPending ?? SELECTION_LOG_MAX_PENDING;
   let chain: Promise<void> = Promise.resolve();
   let pending = 0;
+  let dropped = 0;
 
   const write = async (line: string): Promise<void> => {
     try {
       await mkdir(path.dirname(file), { recursive: true });
       await appendFile(file, line, "utf8");
-      await rotateIfLarge(file, maxBytes, keep);
+      await rotateIfLarge(file, maxBytes, keep, options.afterMeasure);
     } catch {
       // A log that cannot be written is not worth a request.
     }
   };
 
+  const enqueue = (line: string): void => {
+    pending += 1;
+    chain = chain
+      .then(() => write(line))
+      .finally(() => {
+        pending -= 1;
+      });
+  };
+
   return {
     record(entry) {
       try {
-        if (pending >= SELECTION_LOG_MAX_PENDING) return;
-        const line = `${JSON.stringify({
-          ts: now().toISOString(),
-          gateway: entry.gateway,
-          provider: entry.provider,
-          target: entry.target,
-          reason: sanitizeReason(entry.reason),
-          ...(entry.sticky === true ? { sticky: true } : {}),
-        })}\n`;
-        pending += 1;
-        chain = chain
-          .then(() => write(line))
-          .finally(() => {
-            pending -= 1;
-          });
+        if (pending >= maxPending) {
+          dropped += 1;
+          return;
+        }
+        const ts = now().toISOString();
+        if (dropped > 0) {
+          // One marker per gap, written ahead of the line that proves recovery.
+          enqueue(`${JSON.stringify({ ts, dropped })}\n`);
+          dropped = 0;
+        }
+        enqueue(
+          `${JSON.stringify({
+            ts,
+            gateway: entry.gateway,
+            provider: entry.provider,
+            target: entry.target,
+            reason: sanitizeReason(entry.reason),
+          })}\n`,
+        );
       } catch {
         // Observe-only.
       }
@@ -124,9 +176,31 @@ export function createSelectionLog(
   };
 }
 
-async function rotateIfLarge(file: string, maxBytes: number, keep: number): Promise<void> {
-  const size = (await stat(file)).size;
-  if (size <= maxBytes) return;
+async function statOrNull(file: string): Promise<{ size: number; ino: number } | null> {
+  try {
+    const st = await stat(file);
+    return { size: st.size, ino: st.ino };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+// Same re-stat + inode guard as src/session/host-log.ts rotateIfLarge: if another
+// writer rotated between measuring and renaming, do not rename the young file.
+// (The two copies are a recorded follow-up, not extracted here.)
+async function rotateIfLarge(
+  file: string,
+  maxBytes: number,
+  keep: number,
+  afterMeasure?: () => Promise<void>,
+): Promise<void> {
+  const measured = await statOrNull(file);
+  if (measured === null || measured.size <= maxBytes) return;
+  await afterMeasure?.();
+  const nowStat = await statOrNull(file);
+  if (nowStat === null || nowStat.size <= maxBytes) return;
+  if (measured.ino !== 0 && nowStat.ino !== measured.ino) return;
   const dir = path.dirname(file);
   lastStamp = Math.max(Date.now(), lastStamp + 1);
   const aside = path.join(
