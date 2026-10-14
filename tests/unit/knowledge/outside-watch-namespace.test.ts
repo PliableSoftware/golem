@@ -6,7 +6,7 @@
  * deterministically (no fs events, no debounce).
  */
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileChangeBatch } from "../../../src/knowledge/file-watcher.js";
@@ -90,5 +90,21 @@ describe("outside-project index target", () => {
     await waitUntil(async () => !(await has("outsideMarker")));
 
     expect(await has("projectMarker")).toBe(true);
+  });
+
+  it("a target that IS the project root spelled through a symlink stays inside the project", async () => {
+    const link = path.join(path.dirname(project), "project-link");
+    await symlink(project, link, "junction");
+    const realProject = await realpath(project);
+    await mkdir(path.join(project, "docs"), { recursive: true });
+    await writeFile(path.join(project, "docs", "guide.md"), "# guideMarker\n");
+    for (const target of [link, path.join(link, "docs")]) {
+      const base = projectBaseDir(realProject, target, false);
+      const f = path.join(target === link ? link : target, target === link ? "README.md" : "guide.md");
+      expect(sourcePathFor(base, f).startsWith("external:")).toBe(false);
+    }
+    await kb.ingest(link, realProject);
+    const hits = await kb.search("projectMarker alpha", realProject, 5);
+    expect(hits.map((h) => h.chunk.sourcePath)).toContain("README.md");
   });
 });

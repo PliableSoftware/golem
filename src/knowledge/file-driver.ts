@@ -135,6 +135,10 @@ export interface LockOptions {
   readonly createExclusive?: (file: string, content: string) => Promise<void>;
   /** Test seam: runs right after a lock is judged stale, before the breaker acts on it. */
   readonly afterJudgedStale?: () => Promise<void>;
+  /** Test seam: runs after a breaker saw the `.break` sidecar stale, before it clears it. */
+  readonly beforeClearBreaker?: () => Promise<void>;
+  /** Test seam: runs after the breaker's re-check, immediately before the take-over rename. */
+  readonly beforeTakeRename?: () => Promise<void>;
 }
 
 /**
@@ -224,7 +228,7 @@ export async function acquireLock(
       if (Date.now() - st.mtimeMs > staleMs) {
         const seen = (await readFile(lockPath, "utf8")).trim();
         await options.afterJudgedStale?.();
-        if (await takeOverStale(lockPath, seen, token, staleMs, platform)) return own();
+        if (await takeOverStale(lockPath, seen, token, staleMs, platform, options)) return own();
       }
     } catch {
       // released/broken between the create and the stat, or a transient fs error:
@@ -245,6 +249,7 @@ async function takeOverStale(
   token: string,
   staleMs: number,
   platform: NodeJS.Platform,
+  options: LockOptions,
 ): Promise<boolean> {
   const breaker = `${lockPath}.break`;
   try {
@@ -254,7 +259,10 @@ async function takeOverStale(
     // Another breaker holds the sidecar. A crashed one leaves it behind: clear it
     // once it is itself stale, and let the main loop retry.
     const bst = await stat(breaker).catch(() => null);
-    if (bst !== null && Date.now() - bst.mtimeMs > staleMs) await rm(breaker, { force: true });
+    if (bst !== null && Date.now() - bst.mtimeMs > staleMs) {
+      await options.beforeClearBreaker?.();
+      await rm(breaker, { force: true });
+    }
     return false;
   }
   const taking = `${lockPath}.take.${token}`;
@@ -263,6 +271,7 @@ async function takeOverStale(
     const now = (await readFile(lockPath, "utf8")).trim();
     // A live owner (or another breaker) got there first: do not touch it.
     if (now !== seen || Date.now() - st.mtimeMs <= staleMs) return false;
+    await options.beforeTakeRename?.();
     await writeFile(taking, `${token}\n`);
     await renameWithRetry(taking, lockPath, { platform });
     return (await readFile(lockPath, "utf8")).trim() === token;
