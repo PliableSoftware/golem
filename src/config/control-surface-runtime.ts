@@ -10,10 +10,27 @@ import {
   type Control,
   type ControlGroup,
   ENV_LOCKED,
+  IMPORTANT_LOCKED,
 } from "./control-surface-types.js";
 import { loadEffectiveConfig } from "./effective.js";
 import { ConfigError } from "./errors.js";
 import { settingMeta } from "./ui-model.js";
+
+/**
+ * Why a runtime control cannot be written, from the provenance of the setting
+ * behind it. Importance is checked before `env` for the same reason as in
+ * `settingControl`: an important declaration is the one actually in force, and
+ * it is the one whose recourse the reader needs (origin + what can override it).
+ */
+function lockedReason(
+  entry:
+    | { readonly layer: string; readonly source?: string; readonly important?: true }
+    | undefined,
+): string | undefined {
+  if (entry === undefined) return undefined;
+  if (entry.important === true) return IMPORTANT_LOCKED(entry.layer, entry.source);
+  return entry.layer === "env" ? ENV_LOCKED(entry.source) : undefined;
+}
 
 /** Compression level, active account, and the proxy daemon. */
 export async function runtimeControlGroup(shared: {
@@ -29,7 +46,7 @@ export async function runtimeControlGroup(shared: {
   // two controls for one thing, on the one surface that shows them side by side.
   const compMeta = settingMeta("compression.level");
   const compEntry = provenance["compression.level"];
-  const compLocked = compEntry?.layer === "env" ? ENV_LOCKED(compEntry.source) : undefined;
+  const compLocked = lockedReason(compEntry);
   const compressionControl: Control = {
     id: "runtime:compression",
     family: "runtime",
@@ -58,7 +75,7 @@ export async function runtimeControlGroup(shared: {
   const registered = settings.proxy.gateways ?? [];
   const defaultId = settings.proxy.upstream_provider;
   const accountEntry = provenance["inference.model"];
-  const accountLocked = accountEntry?.layer === "env" ? ENV_LOCKED(accountEntry.source) : undefined;
+  const accountLocked = lockedReason(accountEntry);
   const accountControl: Control = {
     id: "runtime:account",
     family: "runtime",
@@ -150,7 +167,10 @@ export async function applyRuntime(
         message: `compression ${result.info.setting} (${result.info.label})`,
         file: result.file,
         ...(result.overriddenBy !== undefined && {
-          overridden: `a higher layer wins — the effective value comes from ${result.overriddenBy.layer}`,
+          overridden:
+            result.overriddenBy.important === true
+              ? `${result.overriddenBy.layer} pins it as !important — effective value stays ${JSON.stringify(result.info.effective)}`
+              : `a higher layer wins — the effective value comes from ${result.overriddenBy.layer}`,
         }),
       };
     }

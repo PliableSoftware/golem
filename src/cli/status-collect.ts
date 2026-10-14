@@ -16,6 +16,7 @@ import http from "node:http";
 import path from "node:path";
 import { resolveEffectiveCompression } from "../compression/effective-level.js";
 import { unreachableHeadroomConfigKeys } from "../compression/headroom-adapter.js";
+import { IMPORTANT_LOCKED } from "../config/control-surface-types.js";
 import { loadEffectiveConfig } from "../config/effective.js";
 import { defaultUserDir } from "../config/paths.js";
 // Narrow specifiers, not the `../hooks/index.js` barrel (~446ms — it pulls every
@@ -335,6 +336,10 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
       value: sectionValues?.[key],
       layer: entry.layer,
       ...(entry.source !== undefined && { source: entry.source }),
+      ...(entry.important === true && {
+        important: true as const,
+        locked: IMPORTANT_LOCKED(entry.layer, entry.source),
+      }),
     };
   }
 

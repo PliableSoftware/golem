@@ -65,6 +65,8 @@ export interface DialInfo {
   readonly label: string;
   readonly layer: LayerName;
   readonly source?: string;
+  /** ADR-0008: the winning declaration is `!important` (including `default!`). */
+  readonly important?: true;
 }
 
 export interface DialReadOptions {
@@ -89,6 +91,7 @@ export async function getDialInfo(kind: DialKind, options: DialReadOptions): Pro
       kind === "compression" ? compressionName(coerceCompressionLevel(setting)) : String(setting),
     layer: entry?.layer ?? "default",
     ...(entry?.source !== undefined && { source: entry.source }),
+    ...(entry?.important === true && { important: true as const }),
   };
 }
 
@@ -118,7 +121,11 @@ export interface SetDialResult {
   readonly file: string;
   readonly info: DialInfo;
   /** Set when a higher settings layer overrides the value just written. */
-  readonly overriddenBy?: { readonly layer: LayerName; readonly source?: string };
+  readonly overriddenBy?: {
+    readonly layer: LayerName;
+    readonly source?: string;
+    readonly important?: true;
+  };
 }
 
 export interface DialWriteOptions extends DialReadOptions {
@@ -169,6 +176,7 @@ export async function setDial(
       overriddenBy: {
         layer: info.layer,
         ...(info.source !== undefined && { source: info.source }),
+        ...(info.important === true && { important: true as const }),
       },
     }),
   };

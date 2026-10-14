@@ -45,6 +45,10 @@ export interface ConfigKeyStatus {
   readonly layer: string;
   /** File path or env var name behind the layer (absent for defaults). */
   readonly source?: string;
+  /** ADR-0008: the winning declaration is `!important` at {@link layer} (`default` = the `default!` floor). */
+  readonly important?: true;
+  /** Who pinned it and what can still override it; present exactly when {@link important} is. */
+  readonly locked?: string;
 }
 
 export interface StatusReport {

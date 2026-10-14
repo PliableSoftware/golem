@@ -168,7 +168,7 @@ export async function applySetting(
     ...(result.overriddenBy !== undefined && {
       overridden:
         result.overriddenBy.important === true
-          ? `${result.overriddenBy.layer} pins it as !important — effective value stays ${JSON.stringify(result.overriddenBy.value)}`
+          ? `${result.overriddenBy.layer === "default" ? "Golem (default!)" : result.overriddenBy.layer} pins it as !important — effective value stays ${JSON.stringify(result.overriddenBy.value)}`
           : `a higher layer wins — effective value is ${JSON.stringify(result.overriddenBy.value)} from ${result.overriddenBy.layer}`,
     }),
     ...restartHintFor(key),

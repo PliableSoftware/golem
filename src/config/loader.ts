@@ -57,6 +57,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { assertFloor, DEFAULT_IMPORTANT_KEYS } from "./default-floor.js";
 import { readEnvLayer } from "./env.js";
 import { ConfigError } from "./errors.js";
 import { isPlainObject, splitDotted } from "./file-io.js";
@@ -205,6 +206,13 @@ export interface LoadConfigOptions {
     /** Where it came from, for provenance — the team name or the cache path. */
     readonly source?: string;
   };
+  /**
+   * TEST SEAM for the `default!` floor: replaces the compiled-in registry
+   * ({@link DEFAULT_IMPORTANT_KEYS}). Still validated by `assertFloor`, so it
+   * cannot express anything the real registry could not. Production code must
+   * not pass it.
+   */
+  readonly defaultImportant?: ReadonlySet<string>;
 }
 
 export interface GolemConfig {
@@ -317,6 +325,16 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     }
   }
 
+  // `default!` — the strongest rung, applied last so nothing above can move it.
+  applyDefaultFloor(
+    tree,
+    provenance,
+    warnings,
+    origins,
+    envLayer.overrides,
+    options.defaultImportant ?? DEFAULT_IMPORTANT_KEYS,
+  );
+
   const settings = deepFreeze(tree as unknown as GolemSettings);
   return deepFreeze({
     settings,
@@ -326,6 +344,51 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     refused,
     teamSkipped,
   });
+}
+
+/**
+ * Pin every `default!` key to its compiled-in default and say who tried to move
+ * it. The warning names the origin and the key, never the value: a team's value
+ * for a key it may not set is exactly the text that must not travel.
+ */
+function applyDefaultFloor(
+  tree: MutableTree,
+  provenance: Record<string, ProvenanceEntry>,
+  warnings: string[],
+  origins: ReadonlyMap<LayerName, ObjectLayer>,
+  envOverrides: readonly {
+    readonly section: string;
+    readonly key: string;
+    readonly varName: string;
+  }[],
+  floor: ReadonlySet<string>,
+): void {
+  if (floor.size === 0) return;
+  assertFloor(floor);
+  for (const dotted of floor) {
+    const [section, key] = splitDotted(dotted);
+    if (section === undefined || key === undefined || tree[section] === undefined) continue;
+    const attempted = [
+      ...[...origins.values()]
+        .filter((o) => {
+          const sectionValue = o.raw[section];
+          return isPlainObject(sectionValue) && sectionValue[key] !== undefined;
+        })
+        .map((o) => o.label),
+      ...envOverrides
+        .filter((e) => e.section === section && e.key === key)
+        .map((e) => `environment variable "${e.varName}"`),
+    ];
+    for (const who of attempted) {
+      warnings.push(
+        `${who}: "${dotted}" is fixed by Golem (default!) and no origin can change it — its declaration was ignored.`,
+      );
+    }
+    tree[section][key] = (
+      DEFAULT_SETTINGS[section as keyof GolemSettings] as unknown as Record<string, unknown>
+    )[key];
+    provenance[dotted] = { layer: "default", important: true };
+  }
 }
 
 /**
@@ -416,7 +479,7 @@ async function readSettingsFile(file: string): Promise<unknown> {
  * here: replacing a target map wholesale is the long-standing behaviour, and
  * changing it silently would be a routing change disguised as a refactor.
  */
-const MERGE_PER_KEY_LEAVES: ReadonlySet<string> = new Set(["inference.personas"]);
+export const MERGE_PER_KEY_LEAVES: ReadonlySet<string> = new Set(["inference.personas"]);
 
 /**
  * Merge one layer's record-of-objects onto what lower layers built: per key,

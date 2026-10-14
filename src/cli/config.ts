@@ -9,8 +9,10 @@
 
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
+import { IMPORTANT_LOCKED } from "../config/control-surface-types.js";
 import { ConfigError } from "../config/errors.js";
 import { loadEffectiveConfig, type SettingsScope, writeSetting } from "../config/index.js";
+import { MERGE_PER_KEY_LEAVES } from "../config/loader.js";
 import { migrationFrom, type SettingMigration } from "../config/migrations.js";
 import { allLeafPaths, leafSchema } from "../config/schema.js";
 import { unwrapSchema } from "../config/ui-model.js";
@@ -29,6 +31,8 @@ export interface ConfigEntry {
   readonly source?: string;
   /** ADR-0008: the winning declaration was `!important` at {@link layer}. */
   readonly important?: true;
+  /** Who pinned it and what can still override it (present exactly when {@link important} is). */
+  readonly locked?: string;
 }
 
 export interface ConfigListReport {
@@ -44,6 +48,8 @@ export interface ConfigGetReport {
   readonly source?: string;
   /** ADR-0008: the winning declaration was `!important` at {@link layer}. */
   readonly important?: true;
+  /** Who pinned it and what can still override it (present exactly when {@link important} is). */
+  readonly locked?: string;
   /** Load warnings, including why a linked team's layer is not applied. */
   readonly warnings?: readonly string[];
 }
@@ -77,7 +83,10 @@ export async function listConfig(options: ConfigReadOptions): Promise<ConfigList
       value: sectionValues[section]?.[key],
       layer: entry?.layer ?? "default",
       ...(entry?.source !== undefined && { source: entry.source }),
-      ...(entry?.important === true && { important: true as const }),
+      ...(entry?.important === true && {
+        important: true as const,
+        locked: IMPORTANT_LOCKED(entry.layer, entry.source),
+      }),
     });
   }
   return { entries, warnings };
@@ -103,7 +112,10 @@ export async function getConfig(
     value: sectionValues[section]?.[leafKey],
     layer: entry?.layer ?? "default",
     ...(entry?.source !== undefined && { source: entry.source }),
-    ...(entry?.important === true && { important: true as const }),
+    ...(entry?.important === true && {
+      important: true as const,
+      locked: IMPORTANT_LOCKED(entry.layer, entry.source),
+    }),
     warnings,
   };
 }
@@ -269,6 +281,25 @@ function sameValue(a: unknown, b: unknown): boolean {
   );
 }
 
+/** True when every key (recursively) of `part` is present in `whole` with the same value. */
+function containsValue(whole: unknown, part: unknown): boolean {
+  if (
+    typeof part !== "object" ||
+    part === null ||
+    Array.isArray(part) ||
+    typeof whole !== "object" ||
+    whole === null ||
+    Array.isArray(whole)
+  ) {
+    return sameValue(whole, part);
+  }
+  return Object.entries(part as Record<string, unknown>).every(
+    ([k, v]) =>
+      Object.hasOwn(whole as Record<string, unknown>, k) &&
+      containsValue((whole as Record<string, unknown>)[k], v),
+  );
+}
+
 function jsonShapeOf(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
@@ -305,7 +336,13 @@ export async function setConfig(
   // Structural, not reference, comparison: an object- or array-valued leaf read
   // back through the loader is a different object every time, so `!==` reported
   // every such write as overridden by a layer that had not overridden anything.
-  const overridden = effective.layer !== scope || !sameValue(effective.value, value);
+  // A per-key-merging leaf (`inference.personas`) is the exception: its effective
+  // value legitimately holds other layers' entries and its provenance names the
+  // LAST layer to touch it, so neither comparison above means anything. Written
+  // entries must be contained in the effective value, field for field.
+  const overridden = MERGE_PER_KEY_LEAVES.has(key)
+    ? !containsValue(effective.value, value)
+    : effective.layer !== scope || !sameValue(effective.value, value);
   return {
     key,
     value,
@@ -349,7 +386,8 @@ export function renderConfigList(report: ConfigListReport): string {
 export function renderConfigGet(report: ConfigGetReport): string {
   const source = report.source !== undefined ? ` (${report.source})` : "";
   const band = report.important === true ? " !important" : "";
-  return `${report.key} = ${JSON.stringify(report.value)} — ${report.layer}${band}${source}\n`;
+  const why = report.locked !== undefined ? `locked: ${report.locked}\n` : "";
+  return `${report.key} = ${JSON.stringify(report.value)} — ${report.layer}${band}${source}\n${why}`;
 }
 
 /** Human rendering of `config set`. */
@@ -374,9 +412,12 @@ export function renderConfigSet(result: ConfigWriteResult): string {
     // once importance exists — user! outranks local without being higher.
     const why =
       o.important === true
-        ? `${o.layer} declares it !important, which beats every ordinary declaration`
+        ? o.layer === "default"
+          ? "Golem fixes it (default!) and no origin can override it"
+          : `${o.layer} declares it !important, which beats every ordinary declaration`
         : `a higher-precedence layer overrides it — effective value is from ${o.layer}`;
     lines.push(`note: ${why}${oSource}`);
+    if (o.locked !== undefined) lines.push(`locked: ${o.locked}`);
   }
   return `${lines.join("\n")}\n`;
 }

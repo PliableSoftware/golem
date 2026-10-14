@@ -44,12 +44,18 @@ export function renderPanel(state: PanelState, options: RenderOptions): readonly
   lines.push(rule(theme, inner));
 
   // Whatever is left after the chrome above and the footer below.
+  // The detail block and the footer may wrap (a lock reason names the origin AND
+  // the recourse, and clipping it would cut off the recourse), so they are built
+  // first and whatever they use beyond their usual 3 and 1 lines comes off the list.
+  const detail = renderDetail(state, theme, inner);
+  const footer = renderFooter(state, theme, inner);
+  const extra = Math.max(0, detail.length - 3) + Math.max(0, footer.length - 1);
   const used = lines.length + 3; // + rule + footer + detail
-  const listHeight = Math.max(3, options.height - used - 3);
+  const listHeight = Math.max(3, options.height - used - 3 - extra);
   lines.push(...renderList(state, theme, inner, listHeight));
-  lines.push(...renderDetail(state, theme, inner));
+  lines.push(...detail);
   lines.push(rule(theme, inner));
-  lines.push(...renderFooter(state, theme, inner));
+  lines.push(...footer);
 
   return lines.map((line) => `${GUTTER}${truncateTo(line, inner)}`);
 }
@@ -205,6 +211,34 @@ function valueColour(control: Control, theme: Theme): string | undefined {
   return undefined;
 }
 
+const LOCK_LINES = 7;
+const LOCK_PREFIX = "locked: ";
+const STATUS_LINES = 6;
+
+/** Greedy word wrap to `width`; the last line is clipped with an ellipsis if `maxLines` is hit. */
+function wrapText(text: string, width: number, maxLines: number): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current === "" ? word : `${current} ${word}`;
+    if (current !== "" && displayWidth(next) > width) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  lines.push(current);
+  if (lines.length <= maxLines) return lines;
+  const kept = lines.slice(0, maxLines);
+  kept[maxLines - 1] = truncateTo(
+    `${kept[maxLines - 1]} ${lines.slice(maxLines).join(" ")}`,
+    width,
+  );
+  return kept;
+}
+
 /** The description, lock reason, or confirm prompt for the selected control. */
 function renderDetail(state: PanelState, theme: Theme, width: number): readonly string[] {
   if (state.mode.kind === "confirm") {
@@ -224,8 +258,12 @@ function renderDetail(state: PanelState, theme: Theme, width: number): readonly 
   if (control === null) return [""];
   const out = ["", paint(control.summary, theme.dim, theme.level)];
   if (control.locked !== undefined) {
-    out.push(
-      paint(`locked: ${collapseWarning(control.locked, width - 9)}`, theme.warn, theme.level),
+    // Wrapped, not clipped: the end of the reason is the recourse.
+    wrapText(control.locked, Math.max(10, width - LOCK_PREFIX.length), LOCK_LINES).forEach(
+      (line, i) => {
+        const prefix = i === 0 ? LOCK_PREFIX : " ".repeat(LOCK_PREFIX.length);
+        out.push(paint(`${prefix}${line}`, theme.warn, theme.level));
+      },
     );
   } else if (control.source !== undefined) {
     out.push(paint(`from ${control.source}`, theme.dim, theme.level));
@@ -244,7 +282,9 @@ function renderFooter(state: PanelState, theme: Theme, width: number): readonly 
   }
   if (state.status !== null) {
     const colour = state.status.tone === "error" ? theme.error : theme.ok;
-    return [paint(truncateTo(state.status.text, width), colour, theme.level)];
+    return wrapText(state.status.text, width, STATUS_LINES).map((line) =>
+      paint(line, colour, theme.level),
+    );
   }
   const hidden = hiddenAdvancedCount(state);
   const advanced =

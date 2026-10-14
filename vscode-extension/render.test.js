@@ -879,3 +879,53 @@ test("buildModel tolerates a CLI that reports no targets at all", () => {
   assert.deepEqual(m.targets, []);
   assert.equal(m.activeTarget, null);
 });
+
+test("a locked control row states who pinned it and what can change it, inline", () => {
+  const reason = "set by your team as `!important`. Only your `~/.golem/settings.json` can override it.";
+  const html = settingsHtml({
+    groups: [
+      {
+        id: "settings:x",
+        title: "X",
+        controls: [
+          {
+            id: "setting:compression.level",
+            label: "Compression level",
+            kind: "enum",
+            value: "1",
+            layer: "team",
+            writableScopes: [],
+            locked: reason,
+            options: [{ value: "1", label: "1" }],
+          },
+        ],
+      },
+    ],
+  });
+  assert.match(html, /class="why"[^>]*>set by your team as `!important`\. Only your `~\/\.golem\/settings\.json` can override it\.</);
+  const free = settingsHtml({
+    groups: [
+      {
+        id: "settings:x",
+        title: "X",
+        controls: [
+          { id: "setting:a", label: "A", kind: "toggle", value: true, layer: "default", writableScopes: ["project"] },
+        ],
+      },
+    ],
+  });
+  assert.doesNotMatch(free, /class="why"/);
+});
+
+test("overrideNote relays the CLI's own explanation of an overruled write", () => {
+  const { overrideNote } = require("./render.js");
+  assert.equal(overrideNote("knowledge.rerank_enabled set to false in f (local scope)\neffective value: true — project\n"), null);
+  assert.equal(
+    overrideNote(
+      "k set to 1 in f (local scope)\neffective value: 1 — project\nnote: project declares it !important, which beats every ordinary declaration\nlocked: set by the repo. Only you can override it.\n",
+    ),
+    "project declares it !important, which beats every ordinary declaration set by the repo. Only you can override it.",
+  );
+  assert.equal(overrideNote('note: "a" was renamed to "b" in 1.0 — writing "b".\nk set to 1\n'), null);
+  assert.equal(overrideNote(null), null);
+});
