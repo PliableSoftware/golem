@@ -147,17 +147,33 @@ export interface LockOptions {
  * hide a dead owner from the stale check). Check-then-touch is path-based so it
  * behaves the same on win32; the residual window is a touch of the new owner's
  * mtime, which only delays staleness detection.
+ *
+ * Returns false only when the lock is DEFINITELY not ours (another token, or the
+ * file is gone). A transient fs error (win32 sharing violation) returns true: it
+ * says nothing about ownership, and a false "lost" would abort a healthy write.
  */
 export async function touchLockIfOwned(lockPath: string, token: string): Promise<boolean> {
   try {
     if ((await readFile(lockPath, "utf8")).trim() !== token) return false;
+  } catch (err) {
+    return !isEnoent(err);
+  }
+  try {
     const now = new Date();
     await utimes(lockPath, now, now);
-    return true;
   } catch {
-    return false;
+    // ownership was verified; a failed touch only delays the next heartbeat
   }
+  return true;
 }
+
+/** Release function of {@link acquireLock}, plus the write fence. */
+export type LockRelease = (() => Promise<void>) & {
+  /** True once the heartbeat saw the lock taken from us. Sticky. */
+  readonly lost: boolean;
+  /** Throws unless this holder still owns the lock. Call right before committing a write. */
+  assertHeld(): Promise<void>;
+};
 
 /**
  * Exclusive-create lockfile (`wx`) carrying a unique owner token.
@@ -165,31 +181,42 @@ export async function touchLockIfOwned(lockPath: string, token: string): Promise
  * - Release removes the file only if it still holds OUR token, so a holder whose
  *   lock was broken never deletes the next owner's.
  * - A heartbeat refreshes the mtime while held, only while the file still holds
- *   our token (see {@link touchLockIfOwned}).
+ *   our token (see {@link touchLockIfOwned}). If it finds the lock taken, `lost`
+ *   is set for good and {@link LockRelease.assertHeld} throws, so a stalled holder
+ *   that lost its lock to a legitimate break cannot commit a write over the new
+ *   owner's data.
  * - A stale lock is broken under a short-lived `<lock>.break` sidecar so only one
- *   breaker acts at a time. Under it the breaker re-reads the lock; unless it is
- *   still stale AND still the token it judged, it backs off (a live owner got
+ *   breaker acts at a time. The sidecar carries its owner's token: it is removed
+ *   only while it still holds ours, and a stale one is cleared by renaming it to a
+ *   unique name first. Under the sidecar the breaker re-reads the lock; unless it
+ *   is still stale AND still the token it judged, it backs off (a live owner got
  *   there first). It then replaces the stale file in place with a rename of its
- *   own lock file. The slot is never vacant, so no third process can take it in a
- *   put-back window and the live owner's lock is never moved aside.
- * - Throws after `waitMs` rather than writing unlocked.
+ *   own lock file, so the slot is never vacant and the live owner's lock is never
+ *   moved aside.
+ * - Throws after `waitMs` rather than writing unlocked. A dead holder plus a dead
+ *   breaker sidecar can each cost one `staleMs` before it is cleared, so the
+ *   default 60s wait can be consumed by that alone.
  * - Contention is EEXIST, and on win32 also EPERM/EACCES/EBUSY (an exclusive
  *   create on a file another handle holds, or that is pending delete, fails with
  *   those, not EEXIST). They are retried until the deadline; off win32 they are
- *   real permission errors and throw. A takeover rename that hits the same codes
- *   is retried by {@link renameWithRetry}, then treated as lost contention.
+ *   real permission errors and throw. The take-over rename is attempted ONCE: on
+ *   a win32 sharing violation the breaker gives up and the main loop re-judges.
  *
- * Residual: between the breaker's final re-check and its rename, a holder that
- * was merely stalled (not dead) could release and a new owner create; the rename
- * would then replace that fresh lock. It needs a >staleMs stall plus a
- * sub-millisecond interleave.
+ * Residual: a filesystem has no compare-and-swap, so two windows remain. (a)
+ * Between the breaker's last check of the lock and its rename, a holder that was
+ * stalled past `staleMs` (not dead) could release and a new owner create; the
+ * rename would replace that fresh lock, and the displaced owner is then stopped
+ * only by {@link LockRelease.assertHeld} at its next commit. (b) The same
+ * check-then-act gap exists between a breaker's last sidecar-token check and its
+ * rename. Each needs a stall longer than `staleMs` AND an exact interleave, and
+ * the fence turns the damage into an aborted write instead of an overwrite.
  *
  * Exported for tests only; not part of the knowledge barrel.
  */
 export async function acquireLock(
   lockPath: string,
   options: LockOptions = {},
-): Promise<() => Promise<void>> {
+): Promise<LockRelease> {
   const staleMs = options.staleMs ?? LOCK_STALE_MS;
   const deadline = Date.now() + (options.waitMs ?? LOCK_WAIT_MS);
   const token = `${process.pid}.${randomBytes(12).toString("hex")}`;
@@ -197,15 +224,18 @@ export async function acquireLock(
   const createExclusive =
     options.createExclusive ?? ((file, content) => writeFile(file, content, { flag: "wx" }));
 
-  const own = (): (() => Promise<void>) => {
+  const own = (): LockRelease => {
+    let lost = false;
     const beat = setInterval(
       () => {
-        void touchLockIfOwned(lockPath, token);
+        void touchLockIfOwned(lockPath, token).then((ok) => {
+          if (!ok) lost = true;
+        });
       },
       Math.max(5, Math.floor(staleMs / 3)),
     );
     beat.unref();
-    return async () => {
+    const release = async (): Promise<void> => {
       clearInterval(beat);
       try {
         if ((await readFile(lockPath, "utf8")).trim() === token)
@@ -214,6 +244,16 @@ export async function acquireLock(
         // already gone — nothing of ours to release
       }
     };
+    // defineProperty, not Object.assign: assign would copy the getter's value once.
+    Object.defineProperty(release, "lost", { get: () => lost });
+    Object.defineProperty(release, "assertHeld", {
+      value: async (): Promise<void> => {
+        if (!lost && (await readOwnerToken(lockPath)) === token) return;
+        lost = true;
+        throw new Error(`vector store lock lost before commit: ${lockPath}`);
+      },
+    });
+    return release as LockRelease;
   };
 
   for (;;) {
@@ -239,6 +279,59 @@ export async function acquireLock(
   }
 }
 
+/** The trimmed token in `file`, null when it is gone or stays unreadable (fail safe: not ours). */
+async function readOwnerToken(file: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return (await readFile(file, "utf8")).trim();
+    } catch (err) {
+      if (isEnoent(err)) return null;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+  return null;
+}
+
+/** Remove `file` only while it still holds `token`. Best effort. */
+async function removeIfOwned(file: string, token: string): Promise<void> {
+  try {
+    if ((await readOwnerToken(file)) === token) await rm(file, { force: true });
+  } catch {
+    // nothing more to do
+  }
+}
+
+/**
+ * Clear a `.break` sidecar whose owner died. Not check-then-rm: the sidecar is
+ * renamed to a name unique to us first (one clearer wins the rename), then the
+ * moved file is checked. If it is not the stale file we judged, we displaced a
+ * fresh sidecar: put it back (exclusive create) rather than delete it.
+ */
+async function clearStaleBreaker(
+  breaker: string,
+  token: string,
+  staleMs: number,
+  platform: NodeJS.Platform,
+  options: LockOptions,
+): Promise<void> {
+  const bst = await stat(breaker).catch(() => null);
+  if (bst === null || Date.now() - bst.mtimeMs <= staleMs) return;
+  const judged = await readOwnerToken(breaker);
+  if (judged === null) return;
+  await options.beforeClearBreaker?.();
+  const moved = `${breaker}.clear.${token}`;
+  try {
+    await renameWithRetry(breaker, moved, { platform, tries: 1 });
+  } catch {
+    return; // gone, or contended: the main loop re-judges
+  }
+  const got = await readOwnerToken(moved);
+  if (got !== null && got !== judged) {
+    await writeFile(breaker, `${got}\n`, { flag: "wx" }).catch(() => {});
+  }
+  await rm(moved, { force: true }).catch(() => {});
+}
+
 /**
  * Replace the stale lock whose token was `seen` with one carrying `token`.
  * Returns true only when this call now owns the lock.
@@ -256,30 +349,34 @@ async function takeOverStale(
     await writeFile(breaker, `${token}\n`, { flag: "wx" });
   } catch (err) {
     if (!isLockContention(err, platform)) throw err;
-    // Another breaker holds the sidecar. A crashed one leaves it behind: clear it
-    // once it is itself stale, and let the main loop retry.
-    const bst = await stat(breaker).catch(() => null);
-    if (bst !== null && Date.now() - bst.mtimeMs > staleMs) {
-      await options.beforeClearBreaker?.();
-      await rm(breaker, { force: true });
-    }
+    await clearStaleBreaker(breaker, token, staleMs, platform, options);
     return false;
   }
   const taking = `${lockPath}.take.${token}`;
+  let renamed = false;
+  let won = false;
   try {
     const st = await stat(lockPath);
     const now = (await readFile(lockPath, "utf8")).trim();
     // A live owner (or another breaker) got there first: do not touch it.
     if (now !== seen || Date.now() - st.mtimeMs <= staleMs) return false;
     await options.beforeTakeRename?.();
+    // Our sidecar may have been cleared as stale and re-taken while we stalled.
+    if ((await readOwnerToken(breaker)) !== token) return false;
     await writeFile(taking, `${token}\n`);
-    await renameWithRetry(taking, lockPath, { platform });
-    return (await readFile(lockPath, "utf8")).trim() === token;
+    // One attempt: on a win32 sharing violation give up and let the main loop re-judge.
+    await renameWithRetry(taking, lockPath, { platform, tries: 1 });
+    renamed = true;
+    won = (await readOwnerToken(lockPath)) === token;
+    return won;
   } catch {
     return false;
   } finally {
     await rm(taking, { force: true }).catch(() => {});
-    await rm(breaker, { force: true }).catch(() => {});
+    // The lock may carry our token with nobody holding it (rename done, verify
+    // failed or threw): never leave an ownerless lock behind.
+    if (renamed && !won) await removeIfOwned(lockPath, token);
+    await removeIfOwned(breaker, token);
   }
 }
 
@@ -445,7 +542,7 @@ export class FileVectorDriver implements DeletableVectorDriver {
               path.join(col.dir, `meta.json.corrupt-${Date.now()}`),
             ).catch(() => {});
           }
-          await this.#flush(work);
+          await this.#flush(work, release.assertHeld);
           this.#adopt(projectId, col, work);
         }
         return out.result;
@@ -484,7 +581,7 @@ export class FileVectorDriver implements DeletableVectorDriver {
     });
   }
 
-  async #flush(col: Collection): Promise<void> {
+  async #flush(col: Collection, assertHeld: () => Promise<void>): Promise<void> {
     await mkdir(col.dir, { recursive: true });
     // Atomic replace: stream records to a uniquely named temp file then rename
     // over the live one so a crash mid-write never leaves a half-truncated
@@ -504,7 +601,12 @@ export class FileVectorDriver implements DeletableVectorDriver {
     try {
       await writeFile(metaTmp, `${JSON.stringify(meta)}\n`, "utf8");
       await this.#writeRecordsStreamed(tmp, col.records.values());
+      // Fence: a holder stalled past staleMs may have lost its lock to a legitimate
+      // break. Re-verify ownership immediately before each commit; nothing is
+      // written over the new owner's data (the temp files are removed below).
+      await assertHeld();
       await renameWithRetry(metaTmp, path.join(col.dir, "meta.json"));
+      await assertHeld();
       await renameWithRetry(tmp, dest);
     } catch (err) {
       await rm(tmp, { force: true });

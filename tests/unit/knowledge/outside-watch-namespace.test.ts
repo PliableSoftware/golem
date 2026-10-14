@@ -100,7 +100,10 @@ describe("outside-project index target", () => {
     await writeFile(path.join(project, "docs", "guide.md"), "# guideMarker\n");
     for (const target of [link, path.join(link, "docs")]) {
       const base = projectBaseDir(realProject, target, false);
-      const f = path.join(target === link ? link : target, target === link ? "README.md" : "guide.md");
+      const f = path.join(
+        target === link ? link : target,
+        target === link ? "README.md" : "guide.md",
+      );
       expect(sourcePathFor(base, f).startsWith("external:")).toBe(false);
     }
     await kb.ingest(link, realProject);

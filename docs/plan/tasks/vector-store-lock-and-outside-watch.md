@@ -20,3 +20,10 @@ Three integrity gaps left deliberately after DUST3.7. The namespace fix for outs
 
 - Replacing the lockfile with a different store.
 - NEEDS-USER dead-code proposals in the Phase 3 index.
+
+## Notes from the fix (2026-10)
+
+- **Lock wait budget.** A dead lock holder plus a dead `<lock>.break` sidecar can each cost one `staleMs` (30 s) before they are cleared, so the default 60 s wait can be consumed by that alone and surface as `vector store lock timeout`. No code change; retry succeeds.
+- **Write fence.** `acquireLock` now returns a release with `assertHeld()` and a sticky `lost` flag; `#flush` re-verifies the owner token before each commit rename and aborts (nothing written) with `vector store lock lost before commit`. Residual: a filesystem has no compare-and-swap, so a stall longer than `staleMs` plus an exact interleave can still let a break replace a fresh lock; the fence turns the overwrite into an aborted write.
+- **Follow-up (not fixed): no migration for old relative-keyed outside-target chunks.** Chunks written by an outside `golem index <dir> --watch` BEFORE the `external:` namespace stay under their old relative `sourcePath` (for example `README.md`) and are still served by `search` as orphans. Repro: on an old build run `golem index ../other` (project id = this repo), then upgrade; `golem search` still returns the old `README.md` chunk from `../other`. The auto-index sync path removes them via the manifest; an explicit index does not.
+- **Follow-up (not fixed): the namespace only applies when `projectId` is an absolute path.** `projectBaseDir` returns the target itself for a relative project id, so a relative `project_id` or `--dir .` still keys an outside target relative to itself and can collide with project files. Repro: set `project_id` to a relative name, `golem index ../other --watch`, edit `../other/README.md` where the project also has `README.md`.

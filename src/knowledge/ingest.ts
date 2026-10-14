@@ -7,15 +7,16 @@
  */
 
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { chunkFile, isChunkableExtension, type RawChunk } from "./chunker.js";
 import { extractHtmlText, extractPdfText } from "./extractors.js";
 import { chunkCodeSyntaxAware } from "./tree-sitter-chunker.js";
 
-/** A chunk ready to embed + store: raw chunk + source path (repo-relative). */
+/** A chunk ready to embed + store: raw chunk + its stored source-path key. */
 export interface PreparedChunk extends RawChunk {
-  /** Path relative to the ingest root, POSIX-normalized for stable ids. */
+  /** Stored key (see {@link sourcePathFor}): base-relative POSIX, or `external:<abs>` outside the base. */
   readonly sourcePath: string;
 }
 
@@ -52,8 +53,37 @@ export function projectBaseDir(
   const own = targetIsFile ? path.dirname(absTarget) : absTarget;
   if (!path.isAbsolute(projectId)) return own;
   const root = path.resolve(projectId);
-  const rel = path.relative(root, absTarget);
-  return rel === "" ? own : root;
+  // Compare real paths so a target that IS the project, spelled through a symlink
+  // (or macOS /tmp vs /private/tmp), is not mistaken for an outside one.
+  const relReal = path.relative(realOrResolved(root), realOrResolved(absTarget));
+  if (relReal === "" || relReal === ".." || relReal.startsWith(`..${path.sep}`)) {
+    // Same dir (own is the project) or outside it: outside targets keep the
+    // project root as base and get `external:` keys from sourcePathFor.
+    return relReal === "" ? own : root;
+  }
+  if (path.isAbsolute(relReal)) return root; // different drive
+  // Inside by real path. If the spelled paths already agree, the root is the base;
+  // otherwise express the root in the TARGET's spelling by climbing the real
+  // relative path, so files walked under `absTarget` stay relative to it.
+  const spelled = path.relative(root, absTarget);
+  if (
+    spelled !== "" &&
+    spelled !== ".." &&
+    !spelled.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(spelled)
+  )
+    return root;
+  const depth = relReal.split(path.sep).length;
+  return path.resolve(absTarget, ...Array<string>(depth).fill(".."));
+}
+
+/** `realpath` of `p`, falling back to `path.resolve` when it cannot be resolved. */
+function realOrResolved(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 /** Directories never walked (vendored, build output, VCS, Golem state). */
@@ -216,7 +246,7 @@ export function chunkIdFor(projectId: string, chunk: PreparedChunk): string {
 export interface FileState {
   /** Absolute path. */
   readonly abs: string;
-  /** Path relative to the scan root (POSIX) — matches chunk `sourcePath`. */
+  /** Stored key (see {@link sourcePathFor}) — matches chunk `sourcePath`. */
   readonly sourcePath: string;
   /** Last-modified epoch ms + byte size — the change signal. */
   readonly mtimeMs: number;
@@ -251,9 +281,10 @@ export async function scanFiles(root: string, baseDirOverride?: string): Promise
 }
 
 /**
- * Chunk specific files with `sourcePath` relative to `baseDir` (NOT each file's
- * own dir), so incremental re-ingest of one file produces the same source paths
- * as the original full index of the project root.
+ * Chunk specific files with `sourcePath` from {@link sourcePathFor}`(baseDir, file)`
+ * (relative to `baseDir`, NOT each file's own dir; `external:` outside it), so
+ * incremental re-ingest of one file produces the same source paths as the
+ * original full index of the project root.
  */
 export async function chunkFilesRelativeTo(
   files: readonly string[],
