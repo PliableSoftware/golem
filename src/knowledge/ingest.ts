@@ -74,7 +74,11 @@ export function projectBaseDir(
   )
     return root;
   const depth = relReal.split(path.sep).length;
-  return path.resolve(absTarget, ...Array<string>(depth).fill(".."));
+  const climbed = path.resolve(absTarget, ...Array<string>(depth).fill(".."));
+  // Climbing the real depth up the SPELLED path is only valid when that spelling
+  // really leads back to the project root (a link to the root itself). A link into
+  // a subdirectory climbs to an unrelated directory: treat it as outside.
+  return realOrResolved(climbed) === realOrResolved(root) ? climbed : root;
 }
 
 /** `realpath` of `p`, falling back to `path.resolve` when it cannot be resolved. */

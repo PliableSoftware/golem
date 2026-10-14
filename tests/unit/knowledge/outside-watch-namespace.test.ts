@@ -110,4 +110,24 @@ describe("outside-project index target", () => {
     const hits = await kb.search("projectMarker alpha", realProject, 5);
     expect(hits.map((h) => h.chunk.sourcePath)).toContain("README.md");
   });
+
+  it("a symlink INTO a project subdirectory never yields a base above the project or a mixed key", async () => {
+    const deep = path.join(project, "deep", "er");
+    await mkdir(path.join(deep, "c"), { recursive: true });
+    await writeFile(path.join(deep, "f.md"), "# deepMarker\n");
+    await writeFile(path.join(deep, "c", "f.md"), "# deepCMarker\n");
+    const link1 = path.join(path.dirname(project), "link1");
+    await symlink(deep, link1, "junction");
+    const realProject = await realpath(project);
+    for (const [target, file] of [
+      [link1, path.join(link1, "f.md")],
+      [path.join(link1, "c"), path.join(link1, "c", "f.md")],
+    ] as const) {
+      const base = projectBaseDir(realProject, target, false);
+      const key = sourcePathFor(base, file);
+      // The link's spelled path is not under the project, so the file is keyed in the
+      // external namespace; never relative to a directory above the project.
+      expect(key.startsWith("external:")).toBe(true);
+    }
+  });
 });
