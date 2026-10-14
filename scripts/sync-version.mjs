@@ -7,6 +7,7 @@
  * by scripts/release.mjs after a bump. Cross-platform (node fs), idempotent:
  * only rewrites the file when the content actually changes.
  */
+import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +39,23 @@ async function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * True when `metaUrl` is the script node was started with. Both sides go through
+ * `realpathSync`: node resolves the main module's symlinks but leaves `process.argv[1]`
+ * as typed, so under a symlinked path (macOS `/var` -> `/private/var`, a symlinked
+ * checkout) a plain `resolve()` comparison is false and the script would silently
+ * do nothing and exit 0.
+ */
+export function isEntryPoint(metaUrl) {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(resolve(entry)) === realpathSync(fileURLToPath(metaUrl));
+  } catch {
+    return resolve(entry) === fileURLToPath(metaUrl);
+  }
+}
+
+if (isEntryPoint(import.meta.url)) {
   await main();
 }
