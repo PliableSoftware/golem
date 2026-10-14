@@ -3,6 +3,7 @@
  * injected clock (no sleeps, no real network). Uses the real `fetchRawPage`.
  */
 
+import { readdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -231,5 +232,43 @@ describe("cache file naming is traversal- and collision-safe", () => {
     const names = await readdir(webCacheDir(projectDir));
     expect(names).toHaveLength(nasty.length);
     for (const n of names) expect(path.basename(n)).toBe(n);
+  });
+});
+
+describe("oversized uncacheable page leaves nothing on disk", () => {
+  const listFiles = async (dir: string): Promise<string[]> => {
+    try {
+      const out: string[] = [];
+      for (const e of await readdir(dir, { withFileTypes: true, recursive: true })) {
+        if (e.isFile()) out.push(e.name);
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  };
+
+  it.each([
+    ["no-store", { "cache-control": "no-store" }],
+    ["set-cookie", { "set-cookie": "sid=abc" }],
+  ])("%s: no CCR file, no cache entry, no KB chunk; honest note, no hash handle", async (name, h) => {
+    const p = `/big-${name}`;
+    headersFor[p] = h;
+    bodyFor[p] = `ocelot ${"private sentence. ".repeat(1500)}`; // > 8k chars
+    const url = `${base}${p}`;
+    const out = await pre(url, T0);
+    expect(out).toContain("ocelot");
+    expect(out).toContain("not retained");
+    expect(out).not.toContain("hash=");
+    expect(await listFiles(path.join(projectDir, ".golem", "ccr"))).toStrictEqual([]);
+    expect(await cache().get(url)).toBeNull();
+    expect(await search("ocelot private sentence")).not.toContain(`web:${url}`);
+  });
+
+  it("a CACHEABLE oversized page still gets its expand handle (unchanged)", async () => {
+    bodyFor["/big-ok"] = `ocelot ${"public sentence. ".repeat(1500)}`;
+    const out = await pre(`${base}/big-ok`, T0);
+    expect(out).toContain("hash=");
+    expect((await listFiles(path.join(projectDir, ".golem", "ccr"))).length).toBeGreaterThan(0);
   });
 });

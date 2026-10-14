@@ -107,9 +107,15 @@ revalidation was already shipped; it is unchanged.
 `no-cache`, a `Set-Cookie` response, or a URL carrying credentials is served to the
 model but **not cached and not ingested**, and any earlier copy of that URL is deleted
 from both the cache and the [[Knowledge Base]] (`isUncacheable`). Golem sends no
-`Authorization` header, so there is no credentialed response to refuse. Caveat: an
-oversized served page still gets a redacted [[Compression]] CCR handle so `expand`
-works for that turn.
+`Authorization` header, so there is no credentialed response to refuse. Such a page is
+served in full up to the 8,000-char inline bound; beyond that it is truncated with a
+note that the full text is **not retained** (no CCR copy is written, so there is no
+`hash=` handle and nothing for `expand` to return). **Known limitation:** the
+fail-open path (`fetchRaw` threw, so Claude Code's own `WebFetch` ran) and legacy mode
+(`knowledge.webcache_fetch_raw` off) cannot know the response headers: the PostToolUse
+hooks (`runWebFetchPost` and the oversized-output CCR swap in
+`src/hooks/post-tool-use.ts`) may store that tool output regardless. On the green path
+the tool ran against the loopback stub, so the placeholder is what gets stored.
 
 **KB ingest.** A cached page is ingested under the opaque source key `web:<url>` (never
 joined to a base path, never a file name), only while `knowledge.enabled` is on and only

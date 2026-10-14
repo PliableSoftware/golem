@@ -305,7 +305,7 @@ async function fetchCacheAndServe(
   if (isUncacheable(raw.headers) || hasCredentials(url)) {
     await cache.delete(url);
     await dropIngestedPage(options, projectDir, url);
-    await serveFetched(io, projectDir, url, content, ctx);
+    await serveFetched(io, projectDir, url, content, ctx, false);
     return true;
   }
 
