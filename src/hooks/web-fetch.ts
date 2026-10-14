@@ -413,7 +413,12 @@ export async function runWebFetchPre(
     // DUST2.13: an explicit freshness window (Cache-Control max-age / Expires,
     // stored as `expiresAt`) can only SHORTEN the TTL above. A window that has
     // lapsed — or whose stored date is unparseable — means stale.
-    const explicitlyFresh = entry.expiresAt === undefined || Date.parse(entry.expiresAt) > nowMs;
+    const window =
+      entry.expiresAt === undefined
+        ? "none"
+        : Date.parse(entry.expiresAt) > nowMs
+          ? "fresh"
+          : "expired";
 
     // Optional conditional revalidation (opt-in): confirm the cached copy is
     // still current before serving it, so a changed page isn't served stale.
@@ -421,10 +426,10 @@ export async function runWebFetchPre(
       options.revalidate !== undefined &&
       (options.revalidateEnabled === undefined || (await options.revalidateEnabled(projectDir)));
 
-    if (explicitlyFresh) {
-      // provably fresh → serve with no network round-trip
+    if (window === "fresh" || (window === "none" && !revalidating)) {
+      // provably fresh (explicit window) or within the default TTL → serve, no network
     } else if (!revalidating || options.revalidate === undefined) {
-      // Expired and no revalidation: refetch (raw mode) or fall open.
+      // Expired explicit window and no revalidation: refetch (raw mode) or fall open.
       await serveMiss();
       return 0;
     } else {

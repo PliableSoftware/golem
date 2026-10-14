@@ -51,7 +51,7 @@ export const defaultRevalidate: RevalidateFn = async (url, v) => {
   return {
     status: res.status,
     ...(date !== undefined ? { date } : {}),
-    ...(res.headers.has("set-cookie") ? { setCookie: true } : {}),
+    ...(res.headers.get("set-cookie") !== null ? { setCookie: true } : {}),
     ...(etag !== undefined ? { etag } : {}),
     ...(lastModified !== undefined ? { lastModified } : {}),
     ...(cacheControl !== undefined ? { cacheControl } : {}),

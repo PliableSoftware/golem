@@ -96,7 +96,7 @@ export async function fetchRawPage(
   const date = res.headers.get("date") ?? undefined;
   const headers: RawPageHeaders = {
     ...(date !== undefined ? { date } : {}),
-    ...(res.headers.has("set-cookie") ? { setCookie: true } : {}),
+    ...(res.headers.get("set-cookie") !== null ? { setCookie: true } : {}),
     ...(etag !== undefined ? { etag } : {}),
     ...(lastModified !== undefined ? { lastModified } : {}),
     ...(cacheControl !== undefined ? { cacheControl } : {}),
