@@ -39,55 +39,6 @@ function randomFrom(r: () => number, alphabet: readonly string[], n: number): st
 const base62 = (r: () => number, n: number): string =>
   randomFrom(r, [...UPPER, ...LOWER, ...DIGITS], n);
 
-const WORDS = [
-  "Users",
-  "WebApp",
-  "Alice",
-  "Projects",
-  "MyProject",
-  "src",
-  "Components",
-  "Header",
-  "node",
-  "modules",
-  "typescript",
-  "lib",
-  "worktrees",
-  "scratchpad",
-  "UserProfile",
-  "GettingStarted",
-  "Install",
-  "Docs",
-  "Guide",
-  "release",
-  "Feature",
-  "Final",
-  "backup",
-  "Weekly",
-  "Database",
-  "Snapshot",
-  "HTTPServer",
-  "ADR",
-  "wiki",
-  "decisions",
-  "FileWatcher",
-  "bucket",
-  "name",
-  "Brand",
-  "Nike",
-  "AirMax",
-  "Size",
-  "Eleven",
-  "tmp",
-  "var",
-  "log",
-  "cache",
-  "Builds",
-  "Artifacts",
-  "OUT",
-];
-const DELIMS = ["/", "-", "_", "=", "+"];
-
 describe("`=`/`+` in path-like tokens: current behaviour", () => {
   const j = (...p: string[]): string => p.join("/");
   it("accepted over-redaction: DUST1.1 headline 9 (long varied paths with `=`/`+` are redacted, safe direction)", () => {
