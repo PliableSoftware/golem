@@ -448,9 +448,9 @@ export async function mergeManifestFiles(
 /**
  * Record a `golem index <target>` run in the manifest. A target INSIDE the project
  * merges its files in (see {@link mergeManifestFiles}). A target OUTSIDE it must
- * not: its keys are relative to itself, so merging them would make the next sync
- * list them as deleted (erasing what the user ingested) or overwrite a project
- * file's recorded state on a name collision. An existing manifest is then left
+ * not: its keys live in the `external:` namespace, which a sync scan of the project
+ * roots never produces, so merging them would make the next sync list them as
+ * deleted (erasing what the user ingested). An existing manifest is then left
  * exactly as it was; with none, a bare one (empty file map) is written as before.
  */
 export async function recordIndexedTarget(

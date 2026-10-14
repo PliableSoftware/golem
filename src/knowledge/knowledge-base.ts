@@ -32,7 +32,7 @@ import {
   type PreparedChunk,
   planIngest,
   projectBaseDir,
-  toPosix,
+  sourcePathFor,
 } from "./ingest.js";
 
 /** Prefix for a memory-scope hit's synthetic chunk id (never stored by the vector driver). */
@@ -240,7 +240,7 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
   ): Promise<void> {
     if (batch.changed.length > 0) await this.reindexFiles(baseDir, projectId, batch.changed);
     if (batch.removed.length > 0) {
-      const sourcePaths = batch.removed.map((abs) => toPosix(path.relative(baseDir, abs)));
+      const sourcePaths = batch.removed.map((abs) => sourcePathFor(baseDir, abs));
       await this.removeSourcePaths(projectId, sourcePaths);
     }
   }
@@ -267,7 +267,7 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
     // orphan) — one batch call so persisted drivers flush once, not per file.
     // Keyed by the INPUT files, not the new chunks: a file that now yields no
     // chunks (emptied, or no longer chunkable) must still lose its old vectors.
-    const sourcePaths = new Set(absFiles.map((abs) => toPosix(path.relative(baseDir, abs))));
+    const sourcePaths = new Set(absFiles.map((abs) => sourcePathFor(baseDir, abs)));
     await this.#driver.deleteBySourcePaths(projectId, [...sourcePaths]);
     return this.#embedAndStore(projectId, chunks);
   }

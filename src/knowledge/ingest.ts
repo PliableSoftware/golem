@@ -7,15 +7,16 @@
  */
 
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { chunkFile, isChunkableExtension, type RawChunk } from "./chunker.js";
 import { extractHtmlText, extractPdfText } from "./extractors.js";
 import { chunkCodeSyntaxAware } from "./tree-sitter-chunker.js";
 
-/** A chunk ready to embed + store: raw chunk + source path (repo-relative). */
+/** A chunk ready to embed + store: raw chunk + its stored source-path key. */
 export interface PreparedChunk extends RawChunk {
-  /** Path relative to the ingest root, POSIX-normalized for stable ids. */
+  /** Stored key (see {@link sourcePathFor}): base-relative POSIX, or `external:<abs>` outside the base. */
   readonly sourcePath: string;
 }
 
@@ -39,8 +40,10 @@ export interface IngestOptions {
 
 /**
  * The directory source paths are relative to for an ingest of `absTarget`: the
- * project root when `projectId` is an absolute path containing the target, else
- * the target itself (its parent for a file).
+ * project root when `projectId` is an absolute path, else the target itself (its
+ * parent for a file). A target outside the project root still gets the project
+ * root as its base, so {@link sourcePathFor} keys its files in the `external:`
+ * namespace instead of colliding with project files.
  */
 export function projectBaseDir(
   projectId: string,
@@ -50,9 +53,44 @@ export function projectBaseDir(
   const own = targetIsFile ? path.dirname(absTarget) : absTarget;
   if (!path.isAbsolute(projectId)) return own;
   const root = path.resolve(projectId);
-  const rel = path.relative(root, absTarget);
-  if (rel === "") return own;
-  return rel.startsWith("..") || path.isAbsolute(rel) ? own : root;
+  // Compare real paths so a target that IS the project, spelled through a symlink
+  // (or macOS /tmp vs /private/tmp), is not mistaken for an outside one.
+  const relReal = path.relative(realOrResolved(root), realOrResolved(absTarget));
+  if (relReal === "" || relReal === ".." || relReal.startsWith(`..${path.sep}`)) {
+    // Same dir (own is the project) or outside it: outside targets keep the
+    // project root as base and get `external:` keys from sourcePathFor.
+    return relReal === "" ? own : root;
+  }
+  if (path.isAbsolute(relReal)) return root; // different drive
+  // Inside by real path. If the spelled paths already agree, the root is the base;
+  // otherwise express the root in the TARGET's spelling by climbing the real
+  // relative path, so files walked under `absTarget` stay relative to it.
+  const spelled = path.relative(root, absTarget);
+  if (
+    spelled !== "" &&
+    spelled !== ".." &&
+    !spelled.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(spelled)
+  )
+    return root;
+  const depth = relReal.split(path.sep).length;
+  const climbed = path.resolve(absTarget, ...Array<string>(depth).fill(".."));
+  // Climbing the real depth up the SPELLED path is only valid when that spelling
+  // really leads back to the project root (a link to the root itself). A link into
+  // a subdirectory climbs to an unrelated directory: treat it as outside.
+  return realOrResolved(climbed) === realOrResolved(root) ? climbed : root;
+}
+
+/** `realpath` of `p`, falling back to `path.resolve` when it cannot be resolved. */
+function realOrResolved(p: string): string {
+  try {
+    // The native call canonicalises like the async `realpath` (expands Windows 8.3
+    // short names, fixes the case on case-insensitive filesystems); the JS one does not,
+    // so the same directory could compare unequal across the two spellings.
+    return realpathSync.native(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 /** Directories never walked (vendored, build output, VCS, Golem state). */
@@ -79,6 +117,24 @@ export const MAX_FILE_BYTES = 1_000_000;
 
 export function toPosix(p: string): string {
   return p.split(path.sep).join("/");
+}
+
+/** Source-path namespace for files indexed from OUTSIDE the project root. */
+export const EXTERNAL_SOURCE_PREFIX = "external:";
+
+/**
+ * The stored `sourcePath` key for `abs` when indexing relative to `baseDir`.
+ * A file inside `baseDir` keeps its relative POSIX path; a file outside it (an
+ * index target beside, not under, the project) gets `external:<absolute POSIX
+ * path>`, so it can never share a key with a project file of the same relative
+ * name — and a watch edit or delete on it can never touch that file's chunks.
+ */
+export function sourcePathFor(baseDir: string, abs: string): string {
+  const rel = path.relative(baseDir, abs);
+  const posixRel = toPosix(rel);
+  const escapes =
+    rel === "" || path.isAbsolute(rel) || posixRel === ".." || posixRel.startsWith("../");
+  return escapes ? `${EXTERNAL_SOURCE_PREFIX}${toPosix(path.resolve(abs))}` : posixRel;
 }
 
 /**
@@ -177,7 +233,7 @@ export async function planIngest(root: string, options: IngestOptions = {}): Pro
       filesSkipped += 1;
       continue;
     }
-    const sourcePath = toPosix(path.relative(baseDir, file));
+    const sourcePath = sourcePathFor(baseDir, file);
     for (const raw of await chunkFileContent(file, content, options)) {
       chunks.push({ ...raw, sourcePath });
     }
@@ -197,7 +253,7 @@ export function chunkIdFor(projectId: string, chunk: PreparedChunk): string {
 export interface FileState {
   /** Absolute path. */
   readonly abs: string;
-  /** Path relative to the scan root (POSIX) — matches chunk `sourcePath`. */
+  /** Stored key (see {@link sourcePathFor}) — matches chunk `sourcePath`. */
   readonly sourcePath: string;
   /** Last-modified epoch ms + byte size — the change signal. */
   readonly mtimeMs: number;
@@ -220,7 +276,7 @@ export async function scanFiles(root: string, baseDirOverride?: string): Promise
       const st = await stat(abs);
       out.push({
         abs,
-        sourcePath: toPosix(path.relative(baseDir, abs)),
+        sourcePath: sourcePathFor(baseDir, abs),
         mtimeMs: st.mtimeMs,
         size: st.size,
       });
@@ -232,9 +288,10 @@ export async function scanFiles(root: string, baseDirOverride?: string): Promise
 }
 
 /**
- * Chunk specific files with `sourcePath` relative to `baseDir` (NOT each file's
- * own dir), so incremental re-ingest of one file produces the same source paths
- * as the original full index of the project root.
+ * Chunk specific files with `sourcePath` from {@link sourcePathFor}`(baseDir, file)`
+ * (relative to `baseDir`, NOT each file's own dir; `external:` outside it), so
+ * incremental re-ingest of one file produces the same source paths as the
+ * original full index of the project root.
  */
 export async function chunkFilesRelativeTo(
   files: readonly string[],
@@ -249,7 +306,7 @@ export async function chunkFilesRelativeTo(
     } catch {
       continue;
     }
-    const sourcePath = toPosix(path.relative(baseDir, file));
+    const sourcePath = sourcePathFor(baseDir, file);
     for (const raw of await chunkFileContent(file, content, options)) {
       chunks.push({ ...raw, sourcePath });
     }
