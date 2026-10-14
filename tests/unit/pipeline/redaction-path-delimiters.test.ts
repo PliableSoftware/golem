@@ -88,26 +88,6 @@ const WORDS = [
 ];
 const DELIMS = ["/", "-", "_", "=", "+"];
 
-/** A path-like token of 32-128 chars: words, small numbers, short hex ids and delimiters. */
-function pathLikeToken(r: () => number): string {
-  for (;;) {
-    let s = "";
-    const target = 32 + Math.floor(r() * 60);
-    while (s.length < target) {
-      const k = r();
-      const piece =
-        k < 0.7
-          ? pick(r, WORDS)
-          : k < 0.85
-            ? String(Math.floor(r() * 10000))
-            : randomFrom(r, [...DIGITS, ..."abcdef"], 8);
-      s += piece + pick(r, DELIMS);
-    }
-    s = s.slice(0, -1);
-    if (s.length >= 32 && s.length <= 128 && /[=+]/.test(s)) return s;
-  }
-}
-
 describe("`=`/`+` in path-like tokens: current behaviour", () => {
   const j = (...p: string[]): string => p.join("/");
   it("accepted over-redaction: DUST1.1 headline 9 (long varied paths with `=`/`+` are redacted, safe direction)", () => {
