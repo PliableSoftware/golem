@@ -4,7 +4,7 @@ type: concept
 tags: [config, settings, precedence, cascade, important, team, css, provenance]
 sources: [docs/decisions/ADR-0008-settings-cascade-and-importance.md, docs/golem-spec.md, src/config/loader.ts, docs/plan/verification-notes.md#154]
 created: 2026-09-04
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # Settings Cascade
@@ -188,9 +188,37 @@ origin, so there is only one.
   locked reason, deriving the recourse from `ORIGIN_ORDER` rather than spelling
   it out per origin — so it stays true when an origin is added. `default` is
   filtered out of the recourse: it outranks everything, but nobody can write it.
+- **`DEFAULT_IMPORTANT_KEYS`** (`src/config/default-floor.ts`, DUST2.16) is the
+  `default!` mechanism. See the section
+  "`default!` is a floor, and only ever a stricter one" below.
 - **`tests/unit/config-cascade-importance.test.ts`** asserts the reversal per
   pair. Reversing pass 2 back to forward order fails four of its tests, which is
   the check that it is testing the ordering and not merely the outcome.
+
+### `default!` is a floor, and only ever a stricter one
+
+*Shipped 2026-10-14 (DUST2.16 / DUST1.8 r004).* The loader applies the registry
+after both bands, so nothing above it can move a key it names. The semantics, as
+implemented — not a new precedence:
+
+- A `default!` key resolves to its **compiled-in default**, whatever `user!`,
+  `team!`, `project!`, `local!`, `GOLEM_*` or a header say. Its provenance is
+  `{ layer: "default", important: true }`, so every surface renders it locked,
+  by "Golem itself", with the recourse "No origin can override it."
+- Each origin that declared the key gets one warning naming the origin and the
+  key. **The value is never printed**, so a team's value for a key it cannot set
+  cannot leak through the warning.
+- **Stricter or equal, by construction.** A key is admitted only if it is a
+  boolean the team policy gives a stricter direction (`true-only` / `false-only`,
+  see [[Team Layer]]) **and** its compiled default is already that strict value.
+  `proxy.bypass_all` is refused by name (CLI-only; a pin would also lock out
+  `golem off`). Numbers, lists, `settable` and `denied` keys are rejected
+  because this module cannot verify which value is stricter. `assertFloor`
+  enforces this when the loader runs and a test enforces it for the registry.
+- **The registry is empty today.** The mechanism is shipped and tested through a
+  seam; which values Golem should pin is an open USER decision recorded in
+  `docs/plan/tasks/DUST2.16.md`. Because it is empty, every existing install
+  resolves identically.
 
 **The `team` origin is populated on every surface (G3).** It has its rank and its
 `LayerName` value, and `loadConfig`'s `teamLayer` option
