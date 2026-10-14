@@ -16,6 +16,14 @@
  *
  * Implemented by `src/wiki/file-wiki-store.ts` (`FileWikiStore`) against the
  * local filesystem.
+ *
+ * AMENDMENT 2026-10-14 (DUST2.15): added the optional
+ * `WikiFrontmatter.aliases?: readonly string[]` (frontmatter `aliases`), read by
+ * graph-first lookup in `src/mcp/search.ts`. Additive: absent when a page
+ * declares none, and `WikiUpsertInput` is unchanged, so `upsertPage` never
+ * writes it (a hand-authored line is kept verbatim on rewrite). Pinned in
+ * tests/contract/wiki-aliases.contract.test.ts; consumers are listed in
+ * docs/plan/tasks/DUST2.15.md under "Contract amendment".
  */
 
 /** The `type` values `docs/wiki/WIKI.md` requires in frontmatter. */
@@ -40,6 +48,13 @@ export interface WikiFrontmatter {
   readonly created: string;
   /** YYYY-MM-DD */
   readonly updated: string;
+  /**
+   * Optional alternate names (frontmatter `aliases`). Graph-first lookup matches
+   * a query or `[[wikilink]]` against these as well as `title`. Absent when the
+   * page declares none; never written by `upsertPage` (a hand-authored line is
+   * preserved verbatim on rewrite).
+   */
+  readonly aliases?: readonly string[];
 }
 
 /** One wiki page: parsed frontmatter plus the markdown body that follows it. */

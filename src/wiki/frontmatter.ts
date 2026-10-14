@@ -90,6 +90,26 @@ function serializeListItem(item: string): string {
 }
 
 /**
+ * The optional `aliases` value: a bracketed list, or one bare scalar. Lenient by
+ * design — a malformed value yields no aliases rather than making the page
+ * unreadable. Items are trimmed and blanks dropped; undefined when none remain.
+ */
+function parseAliases(value: string): readonly string[] | undefined {
+  let items: readonly string[];
+  if (value.trim().startsWith("[")) {
+    try {
+      items = parseListValue(value);
+    } catch {
+      return undefined;
+    }
+  } else {
+    items = [value];
+  }
+  const cleaned = items.map((item) => item.trim()).filter((item) => item !== "");
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/**
  * Parse `---`-delimited frontmatter + body from a raw wiki page file.
  * Delimiter/blank-line checks trim each line so CRLF pages (a checkout
  * without this repo's `eol=lf` attribute) parse the same as LF pages.
@@ -121,6 +141,7 @@ export function parseFrontmatter(raw: string): ParsedFrontmatter {
     if (values[key] === undefined) throw new Error(`wiki page frontmatter is missing "${key}"`);
   }
 
+  const aliases = typeof values.aliases === "string" ? parseAliases(values.aliases) : undefined;
   const frontmatter: WikiFrontmatter = {
     title: values.title as string,
     type: values.type as WikiPageType,
@@ -128,6 +149,7 @@ export function parseFrontmatter(raw: string): ParsedFrontmatter {
     sources: values.sources as readonly string[],
     created: values.created as string,
     updated: values.updated as string,
+    ...(aliases !== undefined ? { aliases } : {}),
   };
 
   let bodyStart = closingIndex + 1;

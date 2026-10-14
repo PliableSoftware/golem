@@ -168,3 +168,102 @@ describe("graphFirstWikiHits", () => {
     expect(hits.map((h) => h.chunk.chunkId)).toEqual(["wiki:concepts/A.md"]);
   });
 });
+
+function aliased(relPath: string, title: string, aliases: string[], body = ""): WikiPage {
+  const base = page(relPath, title, body);
+  return { ...base, frontmatter: { ...base.frontmatter, aliases } };
+}
+
+describe("graphFirstWikiHits aliases (DUST2.15)", () => {
+  const ids = (hits: Hit[]) => hits.map((h) => h.chunk.chunkId);
+
+  it("surfaces a page when the query names one of its aliases, case-insensitively", async () => {
+    const wiki = new FakeWikiReader([
+      aliased("concepts/Prompt Caching.md", "Prompt Caching", ["PC"]),
+    ]);
+    expect(ids(await graphFirstWikiHits("  pc ", wiki, "docs/wiki", "p"))).toEqual([
+      "wiki:concepts/Prompt Caching.md",
+    ]);
+  });
+
+  it("scores an alias match above a one-hop link and below-or-equal an exact title match", async () => {
+    const wiki = new FakeWikiReader([
+      aliased("a/A.md", "A", ["Alpha"], "See [[B]]"),
+      page("b/B.md", "B", ""),
+    ]);
+    const hits = await graphFirstWikiHits("alpha", wiki, "docs/wiki", "p");
+    expect(ids(hits)).toEqual(["wiki:a/A.md", "wiki:b/B.md"]);
+    expect(hits[0]?.score).toBeGreaterThan(hits[1]?.score ?? 99);
+  });
+
+  it("surfaces BOTH pages sharing an alias, ordered by relPath regardless of list order", async () => {
+    const forward = new FakeWikiReader([
+      aliased("z/Zed.md", "Zed", ["shared"]),
+      aliased("a/Ay.md", "Ay", ["Shared"]),
+    ]);
+    const reversed = new FakeWikiReader([
+      aliased("a/Ay.md", "Ay", ["Shared"]),
+      aliased("z/Zed.md", "Zed", ["shared"]),
+    ]);
+    const want = ["wiki:a/Ay.md", "wiki:z/Zed.md"];
+    expect(ids(await graphFirstWikiHits("SHARED", forward, "docs/wiki", "p"))).toEqual(want);
+    expect(ids(await graphFirstWikiHits("SHARED", reversed, "docs/wiki", "p"))).toEqual(want);
+  });
+
+  it("ranks the title match first when another page carries the same string as an alias", async () => {
+    const wiki = new FakeWikiReader([
+      aliased("a/Other.md", "Other", ["Topic"]),
+      page("z/Topic.md", "Topic", ""),
+    ]);
+    expect(ids(await graphFirstWikiHits("topic", wiki, "docs/wiki", "p"))).toEqual([
+      "wiki:z/Topic.md",
+      "wiki:a/Other.md",
+    ]);
+  });
+
+  it("does not duplicate a page whose alias repeats or equals its own title", async () => {
+    const wiki = new FakeWikiReader([aliased("a/A.md", "A", ["a", "A", "x", "X"])]);
+    expect(ids(await graphFirstWikiHits("a", wiki, "docs/wiki", "p"))).toEqual(["wiki:a/A.md"]);
+    expect(ids(await graphFirstWikiHits("x", wiki, "docs/wiki", "p"))).toEqual(["wiki:a/A.md"]);
+  });
+
+  it("resolves a one-hop [[wikilink]] that names an alias, title winning over an alias", async () => {
+    const wiki = new FakeWikiReader([
+      page("a/A.md", "A", "[[Beta]] and [[Gamma]]"),
+      aliased("b/B.md", "B", ["Beta"]),
+      aliased("c/C.md", "C", ["Gamma"]),
+      page("d/Gamma.md", "Gamma", ""),
+    ]);
+    expect(ids(await graphFirstWikiHits("A", wiki, "docs/wiki", "p"))).toEqual([
+      "wiki:a/A.md",
+      "wiki:b/B.md",
+      "wiki:d/Gamma.md",
+    ]);
+  });
+
+  it("ignores blank aliases and a blank query matches nothing", async () => {
+    const wiki = new FakeWikiReader([aliased("a/A.md", "A", ["", "  "])]);
+    expect(await graphFirstWikiHits("   ", wiki, "docs/wiki", "p")).toEqual([]);
+  });
+
+  it("stays linear on a large wiki (one list pass, no per-link scan)", async () => {
+    const n = 20_000;
+    const pages: WikiPage[] = [];
+    for (let i = 0; i < n; i++) {
+      pages.push(
+        aliased(
+          `p/${i}.md`,
+          `T${i}`,
+          [`al${i}`, "common"],
+          `[[T${(i + 1) % n}]] [[al${(i + 2) % n}]]`,
+        ),
+      );
+    }
+    const wiki = new FakeWikiReader(pages);
+    const start = performance.now();
+    const hits = await graphFirstWikiHits("common", wiki, "docs/wiki", "p");
+    expect(hits).toHaveLength(n);
+    expect(performance.now() - start).toBeLessThan(3000);
+    expect(ids(hits).slice(0, 2)).toEqual(["wiki:p/0.md", "wiki:p/1.md"]);
+  });
+});

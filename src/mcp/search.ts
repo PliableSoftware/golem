@@ -6,13 +6,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type {
+  Chunk,
   Hit,
   InferenceService,
   KnowledgeBase,
   WikiPage,
   WikiReader,
 } from "../interfaces/index.js";
-import { UnknownChunkError, UnknownWikiPageError } from "../interfaces/index.js";
+import { UnknownChunkError } from "../interfaces/index.js";
 import { isMemoryChunkId } from "../knowledge/knowledge-base.js";
 import { rerankHits } from "../knowledge/rerank.js";
 import { extractWikilinks } from "../wiki/frontmatter.js";
@@ -123,6 +124,8 @@ export function boostWikiHits(hits: readonly Hit[], wikiDir: string | undefined)
  */
 const GRAPH_TITLE_MATCH_SCORE = 2;
 const GRAPH_LINKED_PAGE_SCORE = 1.6;
+/** A page found by alias: a named match, ranked just under an exact title match. */
+const GRAPH_ALIAS_MATCH_SCORE = 1.9;
 
 function normalizeTitleKey(title: string): string {
   return title.trim().toLowerCase();
@@ -132,6 +135,22 @@ function normalizeTitleKey(title: string): string {
 function wikiChunkRelPath(chunkId: string): string | undefined {
   return chunkId.startsWith("wiki:") ? chunkId.slice("wiki:".length) : undefined;
 }
+
+/**
+ * Cheap pre-check on a wiki-relative path taken from a caller-supplied chunk id:
+ * no NUL, no backslash or drive form, not absolute, no `..` segment. The wiki
+ * store enforces containment itself; this keeps a crafted id from ever reaching
+ * it. A `user:` federation prefix is allowed and checked on its remainder.
+ */
+function isSafeWikiChunkPath(relPath: string): boolean {
+  const rest = relPath.startsWith("user:") ? relPath.slice("user:".length) : relPath;
+  if (rest === "" || rest.includes("\0") || rest.includes("\\")) return false;
+  if (rest.startsWith("/") || /^[A-Za-z]:/.test(rest)) return false;
+  return !rest.split("/").includes("..");
+}
+
+/** Most memory-scope hits remembered for `fetch` (memory has no lookup-by-id). */
+const MEMORY_HIT_CACHE_MAX = 200;
 
 /**
  * Build a synthetic search Hit for a wiki page. `sourcePath` mirrors the
@@ -153,13 +172,24 @@ export function pageToHit(page: WikiPage, wikiDir: string, projectId: string, sc
   };
 }
 
+/** Code-unit order: locale-independent, so the same wiki always yields the same hit order. */
+function byRelPath(a: WikiPage, b: WikiPage): number {
+  return a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0;
+}
+
 /**
  * Graph-first lookup (spec Decision 28 §2, proposal `wiki-knowledge-pivot.md`):
- * before vector search, try an exact/case-insensitive title match against the
- * wiki, then expand one hop along that page's outgoing wikilinks. Cheap and
+ * before vector search, try an exact/case-insensitive match of the query against
+ * page titles and frontmatter `aliases`, then expand one hop along the matched
+ * pages' outgoing wikilinks (a link may name a title or an alias). Cheap and
  * precise — no embedding call — and purely additive: vector search always
  * still runs, so free-text queries that don't name a page keep working.
- * `listPages()` is called once per invocation, not memoized across calls.
+ *
+ * Order is deterministic: the title match first (on a title collision the last
+ * page in `listPages()` order wins, as before), then every alias match in relPath
+ * order; an alias shared by several pages surfaces all of them. One pass builds
+ * the tables, so the cost is O(pages + links). `listPages()` is called once per
+ * invocation, not memoized across calls.
  */
 export async function graphFirstWikiHits(
   query: string,
@@ -167,21 +197,50 @@ export async function graphFirstWikiHits(
   wikiDir: string,
   projectId: string,
 ): Promise<Hit[]> {
-  const pages = await wiki.listPages();
-  if (pages.length === 0) return [];
+  const queryKey = normalizeTitleKey(query);
+  if (queryKey === "") return [];
+  const listed = await wiki.listPages();
+  if (listed.length === 0) return [];
+  const pages = [...listed].sort(byRelPath);
   const byTitle = new Map<string, WikiPage>();
-  for (const page of pages) byTitle.set(normalizeTitleKey(page.frontmatter.title), page);
+  for (const page of listed) byTitle.set(normalizeTitleKey(page.frontmatter.title), page);
+  const byAlias = new Map<string, WikiPage[]>();
+  for (const page of pages) {
+    for (const alias of new Set((page.frontmatter.aliases ?? []).map(normalizeTitleKey))) {
+      if (alias === "") continue;
+      const bucket = byAlias.get(alias);
+      if (bucket === undefined) byAlias.set(alias, [page]);
+      else bucket.push(page);
+    }
+  }
 
-  const matched = byTitle.get(normalizeTitleKey(query));
-  if (matched === undefined) return [];
+  const titleMatch = byTitle.get(queryKey);
+  const aliasMatches = byAlias.get(queryKey) ?? [];
+  if (titleMatch === undefined && aliasMatches.length === 0) return [];
 
-  const hits = [pageToHit(matched, wikiDir, projectId, GRAPH_TITLE_MATCH_SCORE)];
-  const seen = new Set([matched.relPath]);
-  for (const linkedTitle of extractWikilinks(matched.body)) {
-    const linked = byTitle.get(normalizeTitleKey(linkedTitle));
-    if (linked === undefined || seen.has(linked.relPath)) continue;
-    seen.add(linked.relPath);
-    hits.push(pageToHit(linked, wikiDir, projectId, GRAPH_LINKED_PAGE_SCORE));
+  const hits: Hit[] = [];
+  const seen = new Set<string>();
+  const matched: WikiPage[] = [];
+  const take = (page: WikiPage, score: number): void => {
+    if (seen.has(page.relPath)) return;
+    seen.add(page.relPath);
+    hits.push(pageToHit(page, wikiDir, projectId, score));
+  };
+  if (titleMatch !== undefined) {
+    take(titleMatch, GRAPH_TITLE_MATCH_SCORE);
+    matched.push(titleMatch);
+  }
+  for (const page of aliasMatches) {
+    if (seen.has(page.relPath)) continue;
+    take(page, GRAPH_ALIAS_MATCH_SCORE);
+    matched.push(page);
+  }
+  for (const page of matched) {
+    for (const linkedTitle of extractWikilinks(page.body)) {
+      const key = normalizeTitleKey(linkedTitle);
+      const linked = byTitle.get(key) ?? byAlias.get(key)?.[0];
+      if (linked !== undefined) take(linked, GRAPH_LINKED_PAGE_SCORE);
+    }
   }
   return hits;
 }
@@ -295,6 +354,20 @@ export function registerKnowledgeTools(
   rerank?: InferenceService,
   tel?: ToolTelemetry,
 ): void {
+  // Memory-scope hits surfaced by `search` in this server's lifetime, newest last.
+  // Headroom's memory API has no point lookup, so `fetch` serves the full text the
+  // search already returned. Bounded; never persisted.
+  const memoryHits = new Map<string, Chunk>();
+  const rememberMemoryHit = (chunk: Chunk): void => {
+    memoryHits.delete(chunk.chunkId);
+    memoryHits.set(chunk.chunkId, chunk);
+    while (memoryHits.size > MEMORY_HIT_CACHE_MAX) {
+      const oldest = memoryHits.keys().next().value;
+      if (oldest === undefined) break;
+      memoryHits.delete(oldest);
+    }
+  };
+
   server.registerTool(
     "search",
     {
@@ -341,6 +414,7 @@ export function registerKnowledgeTools(
           wikiDir,
           rerank,
         });
+        for (const h of hits) if (isMemoryChunkId(h.chunk.chunkId)) rememberMemoryHit(h.chunk);
         const structuredHits = hits.map(toStructuredHit);
         const summary =
           hits.length === 0
@@ -392,45 +466,13 @@ export function registerKnowledgeTools(
     },
     async ({ chunk_id }) => {
       const startMs = Date.now();
-      if (isMemoryChunkId(chunk_id)) {
-        return errorResult(
-          `Memory-scope hit "${chunk_id}" cannot be fetched individually — Headroom's ` +
-            "memory API supports search only, not lookup by id. Its preview from search " +
-            `already contains up to ${CHUNK_PREVIEW_CHARS} characters; re-run search with a ` +
-            "narrower query for more context.",
+      const unknownChunk = () =>
+        errorResult(
+          `Unknown chunk "${chunk_id}". It may have been re-indexed or evicted; ` +
+            "re-run search to get current chunk ids.",
         );
-      }
-      const wikiRelPath = wikiChunkRelPath(chunk_id);
-      if (wikiRelPath !== undefined && wiki !== undefined && wikiDir !== undefined) {
-        try {
-          const chunk = pageToHit(
-            await wiki.readPage(wikiRelPath),
-            wikiDir,
-            defaultProjectId,
-            0,
-          ).chunk;
-          return instrumented(tel, "fetch", startMs, {
-            content: [{ type: "text", text: chunk.text }],
-            structuredContent: {
-              chunk_id: chunk.chunkId,
-              project_id: chunk.projectId,
-              text: chunk.text,
-              ...(chunk.sourcePath !== undefined ? { source_path: chunk.sourcePath } : {}),
-            },
-          });
-        } catch (err) {
-          if (err instanceof UnknownWikiPageError) {
-            return errorResult(
-              `Unknown chunk "${chunk_id}". It may have been re-indexed or evicted; ` +
-                "re-run search to get current chunk ids.",
-            );
-          }
-          throw err;
-        }
-      }
-      try {
-        const chunk = await knowledge.getChunk(chunk_id);
-        return instrumented(tel, "fetch", startMs, {
+      const chunkResult = (chunk: Chunk) =>
+        instrumented(tel, "fetch", startMs, {
           content: [{ type: "text", text: chunk.text }],
           structuredContent: {
             chunk_id: chunk.chunkId,
@@ -441,13 +483,32 @@ export function registerKnowledgeTools(
             ...(chunk.endLine !== undefined ? { end_line: chunk.endLine } : {}),
           },
         });
-      } catch (err) {
-        if (err instanceof UnknownChunkError) {
-          return errorResult(
-            `Unknown chunk "${chunk_id}". It may have been re-indexed or evicted; ` +
-              "re-run search to get current chunk ids.",
+      if (isMemoryChunkId(chunk_id)) {
+        const remembered = memoryHits.get(chunk_id);
+        if (remembered !== undefined) return chunkResult(remembered);
+        return errorResult(
+          `Memory-scope hit "${chunk_id}" was not returned by a search in this session. ` +
+            "Headroom's memory API supports search only, not lookup by id — re-run search " +
+            "and fetch the hit it returns.",
+        );
+      }
+      const wikiRelPath = wikiChunkRelPath(chunk_id);
+      if (wikiRelPath !== undefined && wiki !== undefined && wikiDir !== undefined) {
+        if (!isSafeWikiChunkPath(wikiRelPath)) return unknownChunk();
+        try {
+          return chunkResult(
+            pageToHit(await wiki.readPage(wikiRelPath), wikiDir, defaultProjectId, 0).chunk,
           );
+        } catch {
+          // Unknown page, a path the wiki store refused, or an unparseable file:
+          // all the same to the caller, and none may crash the tool or echo a path.
+          return unknownChunk();
         }
+      }
+      try {
+        return chunkResult(await knowledge.getChunk(chunk_id));
+      } catch (err) {
+        if (err instanceof UnknownChunkError) return unknownChunk();
         const msg = backendUnavailableMessage(err);
         if (msg !== null) return errorResult(msg);
         throw err;

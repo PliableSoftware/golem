@@ -196,3 +196,36 @@ describe("serializeFrontmatter keeps keys the schema does not know (DUST3 leftov
     expect(serializeFrontmatter(frontmatter, original)).toBe(original);
   });
 });
+
+describe("parseFrontmatter aliases (DUST2.15)", () => {
+  const withLine = (line: string) =>
+    SAMPLE.replace("updated: 2026-07-10", `updated: 2026-07-10\n${line}`);
+
+  it("omits aliases entirely when the key is absent", () => {
+    expect("aliases" in parseFrontmatter(SAMPLE).frontmatter).toBe(false);
+  });
+
+  it("parses a bracketed aliases list, trimming and dropping blanks", () => {
+    const { frontmatter } = parseFrontmatter(withLine('aliases: [PC, " Cache Tips ", , "a, b"]'));
+    expect(frontmatter.aliases).toEqual(["PC", "Cache Tips", "a, b"]);
+  });
+
+  it("accepts a single bare scalar as one alias", () => {
+    expect(parseFrontmatter(withLine("aliases: PC")).frontmatter.aliases).toEqual(["PC"]);
+  });
+
+  it("treats an empty list as no aliases", () => {
+    expect("aliases" in parseFrontmatter(withLine("aliases: []")).frontmatter).toBe(false);
+  });
+
+  it("never fails the page over a malformed aliases value", () => {
+    expect(() => parseFrontmatter(withLine("aliases: [unterminated"))).not.toThrow();
+  });
+
+  it("keeps the aliases line verbatim when the page is re-serialized", () => {
+    const { frontmatter } = parseFrontmatter(withLine("aliases: [PC]"));
+    const block = SAMPLE.split("\n\n")[0] as string;
+    const original = block.replace("updated: 2026-07-10", "updated: 2026-07-10\naliases: [PC]");
+    expect(serializeFrontmatter(frontmatter, original)).toContain("aliases: [PC]");
+  });
+});
