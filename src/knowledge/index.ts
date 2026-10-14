@@ -126,7 +126,13 @@ export {
   isSymbolExtractable,
 } from "./tree-sitter-chunker.js";
 export type { WebCacheEntry, WebCacheMeta } from "./web-cache.js";
-export { isFresh, WebCache, webCacheDir, webCacheKey } from "./web-cache.js";
+export {
+  isFresh,
+  MAX_WEB_INGEST_CHARS,
+  WebCache,
+  webCacheDir,
+  webCacheKey,
+} from "./web-cache.js";
 
 /** Where a project's embedded vector store lives on disk. */
 export function knowledgeDir(projectDir: string): string {

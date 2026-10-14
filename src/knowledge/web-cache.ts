@@ -42,12 +42,25 @@ export type WebCacheMeta = Partial<
   Pick<WebCacheEntry, "etag" | "lastModified" | "expiresAt" | "raw">
 >;
 
+/**
+ * Largest fetched page (chars, after redaction) ingested into the vector KB —
+ * the same 1,000,000 ceiling `MAX_FILE_BYTES` puts on an indexed file. A larger
+ * page is still cached and served; it just is not embedded.
+ */
+export const MAX_WEB_INGEST_CHARS = 1_000_000;
+
 /** Where a project's web-fetch cache lives. */
 export function webCacheDir(projectDir: string): string {
   return path.join(projectDir, ".golem", "webcache");
 }
 
-/** Stable per-URL cache filename (sha256 of the URL). */
+/**
+ * Stable per-URL cache filename stem: the first 128 bits of sha256(URL) as hex.
+ * Fixed length, `[0-9a-f]` only — no URL text ever reaches the file system, so no
+ * traversal, separator, reserved device name (CON, NUL, ...) or length hazard on
+ * Windows or POSIX. `get` re-checks the stored URL, so a (2^-64 odds) prefix
+ * collision reads as a miss rather than serving another URL's page.
+ */
 export function webCacheKey(url: string): string {
   return createHash("sha256").update(url, "utf8").digest("hex").slice(0, 32);
 }

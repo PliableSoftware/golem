@@ -2,9 +2,9 @@
 title: Web Cache
 type: concept
 tags: [webfetch, cache, hooks, knowledge, decision-42]
-sources: [src/hooks/web-fetch.ts, src/hooks/web-fetch/serve.ts, src/hooks/web-fetch/revalidate.ts, src/proxy/loopback-reach.ts, src/knowledge/web-cache.ts, docs/plan/verification-notes.md#44, docs/plan/verification-notes.md#120, docs/wiki/debriefs/2026-08-09-R9.7-webfetch-red-dot.md]
+sources: [src/hooks/web-fetch.ts, src/hooks/web-fetch/serve.ts, src/hooks/web-fetch/revalidate.ts, src/proxy/loopback-reach.ts, src/knowledge/web-cache.ts, src/knowledge/raw-fetch.ts, docs/plan/verification-notes.md#44, docs/plan/verification-notes.md#120, docs/wiki/debriefs/2026-08-09-R9.7-webfetch-red-dot.md]
 created: 2026-07-25
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # Web Cache
@@ -87,15 +87,43 @@ stub, and what that costs: UNVERIFIED here.
 
 ## Freshness lifecycle
 
-An entry is *fresh* while its age is under the TTL, and only then (`isFresh`,
-`src/knowledge/web-cache.ts:56-61`, which ignores `expiresAt`). `Cache-Control: max-age`
-and `Expires` are recorded as `expiresAt`, but they are read **only when conditional
-revalidation is on** (`knowledge.webcache_revalidate`, default `false`,
-`src/config/schema.ts:1160`): an entry whose `expiresAt` is still in the future skips the
-conditional GET (`src/hooks/web-fetch.ts:374-380`). They never extend freshness past the
-TTL. With revalidation on and no explicit window, a conditional GET (etag /
-if-modified-since) confirms or refreshes the entry without re-downloading the body;
-`no-store` or a changed `200` drops it (`web-fetch.ts:390-405`).
+An entry is *fresh* while its age is under the TTL (`isFresh`, 168h default) **and**
+any explicit window holds. `Cache-Control: max-age` and `Expires` are recorded as
+`expiresAt` (`metaFrom`, `src/hooks/web-fetch/revalidate.ts`) and are honoured whether
+or not conditional revalidation is on: an explicit expiry can only *shorten* the TTL,
+never extend it, and is itself clamped to 30 days (`MAX_EXPLICIT_FRESHNESS_MS`).
+`max-age` wins over `Expires`; `s-maxage` is ignored (private cache); an absolute
+`Expires` is corrected by the response `Date` for clock skew; an invalid `Expires`, an
+unparseable stored `expiresAt`, or a future `fetchedAt` reads as **stale**, never as an
+error.
+
+When the window has lapsed: with revalidation off (`knowledge.webcache_revalidate`,
+default `false`) the page is re-fetched; with it on, a conditional GET (etag /
+if-modified-since) confirms or refreshes the entry without re-downloading the body (`304`
+updates the stored validators and expiry). A changed `200` drops the entry. Conditional
+revalidation was already shipped; it is unchanged.
+
+**What is never stored.** A response with `Cache-Control: no-store`, `private` or
+`no-cache`, a `Set-Cookie` response, or a URL carrying credentials is served to the
+model but **not cached and not ingested**, and any earlier copy of that URL is deleted
+from both the cache and the [[Knowledge Base]] (`isUncacheable`). Golem sends no
+`Authorization` header, so there is no credentialed response to refuse. Such a page is
+served in full up to the 8,000-char inline bound; beyond that it is truncated with a
+note that the full text is **not retained** (no CCR copy is written, so there is no
+`hash=` handle and nothing for `expand` to return). **Known limitation:** the
+fail-open path (`fetchRaw` threw, so Claude Code's own `WebFetch` ran) and legacy mode
+(`knowledge.webcache_fetch_raw` off) cannot know the response headers: the PostToolUse
+hooks (`runWebFetchPost` and the oversized-output CCR swap in
+`src/hooks/post-tool-use.ts`) may store that tool output regardless. On the green path
+the tool ran against the loopback stub, so the placeholder is what gets stored.
+
+**KB ingest.** A cached page is ingested under the opaque source key `web:<url>` (never
+joined to a base path, never a file name), only while `knowledge.enabled` is on and only
+up to `MAX_WEB_INGEST_CHARS` (1,000,000, the same ceiling as an indexed file); a larger
+page is cached and served but not embedded. Fetched content is untrusted data: it is
+redacted first (see [[Redaction Stage]]) and reaches the model only through the existing
+serve path. The cache file name is the first 128 bits of `sha256(url)` as hex, so no URL
+text reaches the file system (no traversal, reserved device names or length issues).
 
 ```mermaid
 stateDiagram-v2

@@ -34,6 +34,7 @@ import {
   fetchRawPage,
   type IncrementalIngest,
   isFresh,
+  MAX_WEB_INGEST_CHARS,
   type RawPage,
   supportsIncremental,
   WebCache,
@@ -45,8 +46,8 @@ import { isLoopbackStubUrl } from "../proxy/loopback-serve.js";
 import { type HookIo, readAll } from "./hook-io.js";
 import { pipelineRedact, type RedactFn, stripKnownSecrets } from "./redact.js";
 import {
+  isUncacheable,
   metaFrom,
-  parseCacheControl,
   type RevalidateFn,
   type RevalidateResponse,
 } from "./web-fetch/revalidate.js";
@@ -205,6 +206,8 @@ async function ingestWebPage(
   fetchedAt: string,
 ): Promise<void> {
   if (options.buildKnowledge === undefined) return;
+  // Size limit: an oversized page stays cached/served but is not embedded.
+  if (content.length > MAX_WEB_INGEST_CHARS) return;
   const kb = await options.buildKnowledge(projectDir);
   if (kb !== null && supportsIncremental(kb)) {
     await (kb as KnowledgeBase & IncrementalIngest).ingestText(projectDir, `web:${url}`, content, {
@@ -212,6 +215,32 @@ async function ingestWebPage(
       fetchedAt,
       kind: "web",
     });
+  }
+}
+
+/** Best-effort removal of a URL's chunks from the KB (a page that turned uncacheable). */
+async function dropIngestedPage(
+  options: WebFetchHookOptions,
+  projectDir: string,
+  url: string,
+): Promise<void> {
+  if (options.buildKnowledge === undefined) return;
+  try {
+    const kb = await options.buildKnowledge(projectDir);
+    if (kb !== null && supportsIncremental(kb))
+      await kb.removeSourcePaths(projectDir, [`web:${url}`]);
+  } catch {
+    // best-effort only
+  }
+}
+
+/** A URL with embedded credentials is never stored: the key would hold the secret. */
+function hasCredentials(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.username !== "" || u.password !== "";
+  } catch {
+    return false;
   }
 }
 
@@ -270,6 +299,15 @@ async function fetchCacheAndServe(
   if (options.redact === undefined) await ensurePluginRedactionRules(projectDir);
   const content = stripKnownSecrets((options.redact ?? pipelineRedact)(raw.content));
   if (content.length === 0) return false; // empty extraction → let WebFetch try
+
+  // DUST2.13: `no-store`/`private`/`no-cache`, Set-Cookie, or a credentialed URL →
+  // serve what we fetched, but store nothing and drop any earlier copy (cache + KB).
+  if (isUncacheable(raw.headers) || hasCredentials(url)) {
+    await cache.delete(url);
+    await dropIngestedPage(options, projectDir, url);
+    await serveFetched(io, projectDir, url, content, ctx, false);
+    return true;
+  }
 
   const meta: WebCacheMeta = { ...metaFrom({ status: 200, ...raw.headers }, nowMs), raw: true };
   await cache.put(url, content, nowIso, meta);
@@ -372,45 +410,58 @@ export async function runWebFetchPre(
       return 0;
     }
 
+    // DUST2.13: an explicit freshness window (Cache-Control max-age / Expires,
+    // stored as `expiresAt`) can only SHORTEN the TTL above. A window that has
+    // lapsed — or whose stored date is unparseable — means stale.
+    const window =
+      entry.expiresAt === undefined
+        ? "none"
+        : Date.parse(entry.expiresAt) > nowMs
+          ? "fresh"
+          : "expired";
+
     // Optional conditional revalidation (opt-in): confirm the cached copy is
     // still current before serving it, so a changed page isn't served stale.
-    if (
+    const revalidating =
       options.revalidate !== undefined &&
-      (options.revalidateEnabled === undefined || (await options.revalidateEnabled(projectDir)))
-    ) {
-      // Honor an explicit freshness window (Cache-Control max-age / Expires) —
-      // no network round-trip while the copy is provably fresh.
-      const explicitlyFresh = entry.expiresAt !== undefined && Date.parse(entry.expiresAt) > nowMs;
-      if (!explicitlyFresh) {
-        let res: RevalidateResponse | null = null;
-        try {
-          res = await options.revalidate(url, {
-            etag: entry.etag,
-            lastModified: entry.lastModified,
-            fetchedAt: entry.fetchedAt,
-          });
-        } catch {
-          res = null; // offline / failure → fall through and serve the cache (still within TTL)
+      (options.revalidateEnabled === undefined || (await options.revalidateEnabled(projectDir)));
+
+    if (window === "fresh" || (window === "none" && !revalidating)) {
+      // provably fresh (explicit window) or within the default TTL → serve, no network
+    } else if (!revalidating || options.revalidate === undefined) {
+      // Expired explicit window and no revalidation: refetch (raw mode) or fall open.
+      await serveMiss();
+      return 0;
+    } else {
+      let res: RevalidateResponse | null = null;
+      try {
+        res = await options.revalidate(url, {
+          etag: entry.etag,
+          lastModified: entry.lastModified,
+          fetchedAt: entry.fetchedAt,
+        });
+      } catch {
+        res = null; // offline / failure → fall through and serve the cache (still within TTL)
+      }
+      if (res !== null) {
+        if (isUncacheable(res)) {
+          await cache.delete(url);
+          await dropIngestedPage(options, projectDir, url);
+          await serveMiss(); // uncacheable now → re-fetch ourselves (raw mode) or fall open
+          return 0;
         }
-        if (res !== null) {
-          if (parseCacheControl(res.cacheControl).noStore) {
-            await cache.delete(url);
-            await serveMiss(); // uncacheable now → re-fetch ourselves (raw mode) or fall open
-            return 0;
-          }
-          if (res.status === 200) {
-            // Changed: drop the stale entry, then re-fetch. We deliberately do NOT
-            // stash the new validators onto the old content — a cancelled re-fetch
-            // must never leave old content that a future 304 serves as fresh.
-            await cache.delete(url);
-            await serveMiss();
-            return 0;
-          }
-          if (res.status === 304) {
-            await cache.updateMeta(url, metaFrom(res, nowMs)); // unchanged → refresh validators/expiry
-          }
-          // 304 and any other status fall through to serving the cached copy.
+        if (res.status === 200) {
+          // Changed: drop the stale entry, then re-fetch. We deliberately do NOT
+          // stash the new validators onto the old content — a cancelled re-fetch
+          // must never leave old content that a future 304 serves as fresh.
+          await cache.delete(url);
+          await serveMiss();
+          return 0;
         }
+        if (res.status === 304) {
+          await cache.updateMeta(url, metaFrom(res, nowMs)); // unchanged → refresh validators/expiry
+        }
+        // 304 and any other status fall through to serving the cached copy.
       }
     }
 
