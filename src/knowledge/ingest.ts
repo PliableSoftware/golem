@@ -39,8 +39,10 @@ export interface IngestOptions {
 
 /**
  * The directory source paths are relative to for an ingest of `absTarget`: the
- * project root when `projectId` is an absolute path containing the target, else
- * the target itself (its parent for a file).
+ * project root when `projectId` is an absolute path, else the target itself (its
+ * parent for a file). A target outside the project root still gets the project
+ * root as its base, so {@link sourcePathFor} keys its files in the `external:`
+ * namespace instead of colliding with project files.
  */
 export function projectBaseDir(
   projectId: string,
@@ -51,8 +53,7 @@ export function projectBaseDir(
   if (!path.isAbsolute(projectId)) return own;
   const root = path.resolve(projectId);
   const rel = path.relative(root, absTarget);
-  if (rel === "") return own;
-  return rel.startsWith("..") || path.isAbsolute(rel) ? own : root;
+  return rel === "" ? own : root;
 }
 
 /** Directories never walked (vendored, build output, VCS, Golem state). */
@@ -81,9 +82,22 @@ export function toPosix(p: string): string {
   return p.split(path.sep).join("/");
 }
 
-/** The stored `sourcePath` key for `abs` when indexing relative to `baseDir`. */
+/** Source-path namespace for files indexed from OUTSIDE the project root. */
+export const EXTERNAL_SOURCE_PREFIX = "external:";
+
+/**
+ * The stored `sourcePath` key for `abs` when indexing relative to `baseDir`.
+ * A file inside `baseDir` keeps its relative POSIX path; a file outside it (an
+ * index target beside, not under, the project) gets `external:<absolute POSIX
+ * path>`, so it can never share a key with a project file of the same relative
+ * name — and a watch edit or delete on it can never touch that file's chunks.
+ */
 export function sourcePathFor(baseDir: string, abs: string): string {
-  return sourcePathFor(baseDir, abs);
+  const rel = path.relative(baseDir, abs);
+  const posixRel = toPosix(rel);
+  const escapes =
+    rel === "" || path.isAbsolute(rel) || posixRel === ".." || posixRel.startsWith("../");
+  return escapes ? `${EXTERNAL_SOURCE_PREFIX}${toPosix(path.resolve(abs))}` : posixRel;
 }
 
 /**
