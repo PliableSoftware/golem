@@ -164,7 +164,7 @@ tasks, so the five-dep runtime pin holds.
 --input-format stream-json --output-format stream-json` accepts a second user
 message on stdin after the first turn's `result` event without exiting, holds
 one stable `session_id` across turns, emits tool calls and tool results as
-separable structured events, honours `ANTHROPIC_BASE_URL` (invariant 8), and
+separable structured events, honours `ANTHROPIC_BASE_URL` (invariant 7), and
 loads the project's `.claude/settings.json` hooks the same as an interactive
 session (invariant 2's precondition). The runner is confirmed; build on it.
 
@@ -506,3 +506,5 @@ enrolment (`src/config/schema.ts:645`, `src/cli/commands/device.ts:6`), so a bar
 code-comment task, DUST2.10, and a wiki task). Revision 2's "invariants 2
 (enforcement) and 7 (identity)" matches neither: attribution is section 5's
 invariant 4.
+
+*Amendment, 2026-10-14 (DUST3 leftover 7):* §3a cited the base-URL rule as "invariant 8"; it is section 5's invariant 7 (no exemption) and now says so. The §7a and §7d citations of invariant 8 are for local-only enrolment and were already correct, so they are unchanged.

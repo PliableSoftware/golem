@@ -11,7 +11,12 @@ import path from "node:path";
 import type { WikiFrontmatter, WikiPage, WikiStore, WikiUpsertInput } from "../interfaces/index.js";
 import { UnknownWikiPageError, WikiWriteConflictError } from "../interfaces/index.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
-import { extractWikilinks, parseFrontmatter, serializeFrontmatter } from "./frontmatter.js";
+import {
+  extractWikilinks,
+  frontmatterBlock,
+  parseFrontmatter,
+  serializeFrontmatter,
+} from "./frontmatter.js";
 import { assertSafeWikiPath, redactWikiText as redact } from "./write-redaction.js";
 
 export interface FileWikiStoreOptions {
@@ -73,15 +78,22 @@ export class FileWikiStore implements WikiStore {
   }
 
   /** Read + parse one page by its exact wiki-relative path; undefined if absent. */
+  /** Frontmatter blocks as last read, so a rewrite keeps the author's quoting and key order. */
+  private readonly blocks = new Map<string, string>();
+
   private async readAt(relPath: string): Promise<WikiPage | undefined> {
     let raw: string;
     try {
       raw = await readFile(this.absPath(relPath), "utf8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        this.blocks.delete(toPosix(relPath));
+        return undefined;
+      }
       throw err;
     }
     const { frontmatter, body } = parseFrontmatter(raw);
+    this.blocks.set(toPosix(relPath), frontmatterBlock(raw));
     return { relPath: toPosix(relPath), frontmatter, body };
   }
 
@@ -198,6 +210,10 @@ export class FileWikiStore implements WikiStore {
   private async write(page: WikiPage): Promise<void> {
     const abs = this.absPath(page.relPath);
     await mkdir(path.dirname(abs), { recursive: true });
-    await writeFile(abs, `${serializeFrontmatter(page.frontmatter)}\n\n${page.body}\n`, "utf8");
+    await writeFile(
+      abs,
+      `${serializeFrontmatter(page.frontmatter, this.blocks.get(page.relPath))}\n\n${page.body}\n`,
+      "utf8",
+    );
   }
 }

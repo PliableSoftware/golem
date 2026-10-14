@@ -99,7 +99,7 @@ function askReason(action: ActionClass): string {
  * Who, if anyone, can answer an `ask` right now.
  *
  * Only the `none` case is wired here: the device transport (R13.5) and chat
- * surface (R13.6) have shipped but are not attached as an answerer. The seam
+ * surface (R13.6) have shipped but carry no permission answer (R13.9, P3 open). The seam
  * exists so one can be added rather than rewriting the decision.
  */
 export interface HostAttachment {

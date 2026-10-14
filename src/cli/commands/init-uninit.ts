@@ -105,7 +105,7 @@ function loopbackCertNotice(projectDir: string): string {
 export default function register(program: Command): void {
   program
     .command("init")
-    .description("Wire this project's Claude Code to Golem (proxy, MCP server, /golem/* skills)")
+    .description("Wire this project's Claude Code to Golem (proxy, MCP server, /golem-* skills)")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--dry-run", "show what would change without writing", false)
     .option("--foundry <url>", "front an Azure AI Foundry resource base URL")
