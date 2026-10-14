@@ -28,6 +28,7 @@ import { FileJoinQueue } from "../session/join-queue.js";
 import { LiveConversationRegistry } from "../session/live-conversations.js";
 import { SessionTreeRecorder } from "../session/session-tree.js";
 import { proxyLog, renderRequestOutcome } from "../shared/proxy-log.js";
+import { createSelectionLog } from "../shared/selection-log.js";
 import type { TelemetryStore } from "../telemetry/types.js";
 import { buildProxySidecars } from "./proxy-build/sidecars.js";
 import {
@@ -311,7 +312,16 @@ export function buildProxyFromSettings(
     upstreamModel,
     accountId: upstream.accountId,
   });
+  // DUST2.17: the durable (gateway, provider, reason) record, every request.
+  const selectionLog = createSelectionLog(dir);
   const proxy = new GolemProxy({
+    onUnroutedRequest: () =>
+      selectionLog.record({
+        gateway: upstream.accountId,
+        provider: upstreamProvider,
+        target: upstream.accountId ?? upstreamProvider,
+        reason: "single upstream (inference.model)",
+      }),
     upstreamBaseUrl: upstream.baseUrl,
     // R11.1 / ADR-0004 — `proxy.bypass_all` is the explicit home for what slider
     // level 0 used to mean: forward everything byte-faithfully, redaction
@@ -343,7 +353,8 @@ export function buildProxyFromSettings(
           resolveRoute: createRouteResolver({
             settings: proxyWithDefault,
             ...(build.visionOf !== undefined ? { visionOf: build.visionOf } : {}),
-            onRoute: ({ targetId, reason, sticky }) => {
+            onRoute: ({ targetId, reason, sticky, provider, gateway }) => {
+              selectionLog.record({ gateway, provider, target: targetId, reason, sticky });
               // ADR-0003 invariant 5: every (request → target, why) selection is
               // attributable. Non-secret by construction.
               if (sticky) return; // Already logged when the binding was made.

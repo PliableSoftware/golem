@@ -348,6 +348,12 @@ export class GolemProxy {
         }
         forward = { ...forward, body: rewritten };
       }
+    } else {
+      try {
+        this.config.onUnroutedRequest?.();
+      } catch {
+        // Observe-only: a selection-log failure must never reach the request.
+      }
     }
 
     // A3 seam: redaction -> compression. FAIL-SAFE, never fail-open (DUSTSEC.1,

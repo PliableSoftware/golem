@@ -242,6 +242,12 @@ export interface ProxyServerOptions {
    */
   readonly onRequestOutcome?: (outcome: ProxyRequestOutcome) => void;
   /**
+   * DUST2.17 — called once per request on the single-upstream path (no
+   * {@link resolveRoute}), where there is no resolver to report a selection.
+   * Takes no request data on purpose. Observe-only; a throw is swallowed.
+   */
+  readonly onUnroutedRequest?: () => void;
+  /**
    * R6.1 case (a): rewrite the headers sent upstream (e.g. strip the client's
    * Anthropic credential and inject a different provider's key under its
    * expected header — see src/providers). Applied to the forwarded headers
@@ -397,6 +403,7 @@ export interface ProxyConfig {
     request: ProxyRequest,
   ) => void;
   readonly onRequestOutcome?: (outcome: ProxyRequestOutcome) => void;
+  readonly onUnroutedRequest?: () => void;
   readonly mapUpstreamHeaders?: (
     headers: Record<string, string | string[]>,
   ) => Record<string, string | string[]>;
@@ -442,6 +449,9 @@ export function resolveProxyConfig(options: ProxyServerOptions = {}): ProxyConfi
     ...(options.onResponseUsage !== undefined ? { onResponseUsage: options.onResponseUsage } : {}),
     ...(options.onResponseHeaders !== undefined
       ? { onResponseHeaders: options.onResponseHeaders }
+      : {}),
+    ...(options.onUnroutedRequest !== undefined
+      ? { onUnroutedRequest: options.onUnroutedRequest }
       : {}),
     ...(options.onRequestOutcome !== undefined
       ? { onRequestOutcome: options.onRequestOutcome }

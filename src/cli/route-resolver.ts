@@ -206,6 +206,9 @@ export interface RouteResolverOptions {
     readonly targetId: string;
     readonly reason: string;
     readonly sticky: boolean;
+    /** Registry facts only (DUST2.17) — never a URL or credential. */
+    readonly provider: string;
+    readonly gateway: string | null;
   }) => void;
   /** Conversation → target bindings. Injectable so tests need no global state. */
   readonly bindings?: Map<string, string>;
@@ -415,6 +418,8 @@ export function createRouteResolver(options: RouteResolverOptions): RouteResolve
       targetId: decision.targetId,
       reason: decision.reason,
       sticky: decision.sticky,
+      provider: entry.target.provider,
+      gateway: entry.target.accountId,
     });
 
     const assumeCaching = upstreamAssumesCaching(entry.target.provider);

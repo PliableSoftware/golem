@@ -163,6 +163,21 @@ flowchart TB
   CALL -->|"endpoint error"| ERR
 ```
 
+### 3a-bis. Selection log — which upstream took each request
+
+Source: `src/shared/selection-log.ts`, wired in `src/cli/proxy-runtime.ts`
+(DUST2.17, ADR-0003 invariant 5). Every proxied request appends one JSON line
+`{ts, gateway, provider, target, reason, sticky?}` to
+`.golem/state/selection-log.jsonl`, single-target included (`gateway` is `null`
+on the legacy/inherited path). Unlike the stderr `.golem/proxy.log`, it is not
+truncated when the daemon starts. It holds registry ids and a provider name only:
+never a URL, header, env value or request body. `reason` is the one field derived
+from request text, so it is redacted, stripped of control characters and capped at
+200 characters. Bounded: past 2 MiB the file is renamed aside (`renameWithRetry`)
+and two rotated files are kept. Appends run off the request path; a failure is
+swallowed and never fails or delays a request. A request refused for an unknown
+target is not a selection and is not logged. See also [[Redaction Stage]].
+
 ### 3b. Upstream provider — passthrough vs translating
 
 Source: `src/providers/index.ts`. Anthropic-wire providers get a **passthrough**: the provider layer does not touch
