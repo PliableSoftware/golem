@@ -37,6 +37,31 @@ export interface RedactionRule {
   readonly group?: number;
   /** Extra pure check on the redaction target (e.g. Luhn). Default: accept. */
   readonly validate?: (target: string) => boolean;
+  /**
+   * Extra pure check that needs the text AROUND the target (`start`/`end` are the
+   * target's span in `text`). Runs after {@link validate}; a `false` leaves the
+   * match as-is. Default: accept.
+   */
+  readonly validateAt?: (text: string, start: number, end: number) => boolean;
+  /**
+   * Exclusive end of the part of `text` that can hold a match. The rule is applied
+   * to `text.slice(0, scanEnd(text))`. For a pattern whose every match must END at
+   * a marker (a PEM block's END line): a start with no marker after it fails only
+   * after scanning to the end of the text, so thousands of such starts are
+   * quadratic. Bounding the haystack at the last marker makes every remaining start
+   * stop at the next one. Must never return less than the end of the last possible
+   * match. Default: the whole text.
+   */
+  readonly scanEnd?: (text: string) => number;
+  /**
+   * For a whole-match rule whose pattern matches only the TAIL of the thing to
+   * redact: where the redaction span really starts. `start` is the match's start,
+   * `floor` the end of the previous redaction (the span may not reach back past it).
+   * Returns an integer in `[floor, start]`, or -1 for "not a match". Anything else
+   * is treated as `floor`: toward MORE redaction. Lets a rule anchor on a rare
+   * character (`@`) instead of trying a start at every position.
+   */
+  readonly extendStart?: (text: string, start: number, floor: number) => number;
 }
 
 /** Luhn checksum over the digits of `target` (separators allowed). */
@@ -97,6 +122,110 @@ export function isCreditCardLike(target: string): boolean {
 }
 
 /**
+ * Longest alphanumeric stretch {@link isOutsideHexToken} reads on each side of a
+ * digit run. A bound, so a multi-megabyte hex dump costs a constant per candidate
+ * rather than a rescan of the dump.
+ */
+const HEX_CONTEXT_MAX_CHARS = 64;
+
+const isAsciiAlnum = (c: number): boolean =>
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+const isHexChar = (c: number): boolean =>
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102);
+
+/**
+ * DUSTSEC.24 boundary rule for the credit-card rule: a digit run is NOT a card
+ * when it is glued, with no separator, onto a hex-only alphanumeric token, i.e.
+ * the characters touching it (up to {@link HEX_CONTEXT_MAX_CHARS} each side,
+ * counting `[A-Za-z0-9]` only) are all `[0-9A-Fa-f]` and at least one exists.
+ * Hashes, hex-encoded blobs and memory dumps hold Luhn-valid digit runs by chance
+ * (about 1 in 10 per run), and rewriting them corrupts the value.
+ *
+ * Only a separator-free run is exempt; one with spaces or dashes inside is always
+ * redacted. Everything else is unchanged: a number standing alone, or touching punctuation,
+ * whitespace, `_`, a non-hex letter ("Visa4111...", "4111...USD") or a mixed token,
+ * is still redacted. A side that fills the whole window and is all hex counts as
+ * a long hex token.
+ */
+export function isOutsideHexToken(text: string, start: number, end: number): boolean {
+  // A run with a space or dash inside is not a hex token, whatever touches it.
+  for (let i = start; i < end; i += 1) {
+    const c = text.charCodeAt(i);
+    if (c === 32 || c === 45) return true;
+  }
+  let left = start;
+  while (
+    left > 0 &&
+    start - left < HEX_CONTEXT_MAX_CHARS &&
+    isAsciiAlnum(text.charCodeAt(left - 1))
+  ) {
+    left -= 1;
+  }
+  let right = end;
+  while (
+    right < text.length &&
+    right - end < HEX_CONTEXT_MAX_CHARS &&
+    isAsciiAlnum(text.charCodeAt(right))
+  ) {
+    right += 1;
+  }
+  if (left === start && right === end) return true;
+  for (let i = left; i < start; i += 1) {
+    if (!isHexChar(text.charCodeAt(i))) return true;
+  }
+  for (let i = end; i < right; i += 1) {
+    if (!isHexChar(text.charCodeAt(i))) return true;
+  }
+  return false;
+}
+
+/**
+ * `scanEnd` for the private-key rule: the end of the last COMPLETE END line, i.e.
+ * the last place the rule's own END pattern (`-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----`)
+ * matches. Every match of the rule ends at one, so nothing past it can match. The
+ * original rule redacted nothing for a BEGIN with no END after it, and this keeps
+ * that: no complete END at all means a bound of 0.
+ *
+ * Bounding at the last complete END (not at the last `-----END ` text) matters: a
+ * trailing `-----END CERTIFICATE-----`, or an END line cut short, would leave every
+ * BEGIN before it scanning to the end of the text. Each candidate is tried with a
+ * sticky match at its own `-----END ` occurrence, so the cost is one bounded run of
+ * `[A-Z0-9 ]` per occurrence.
+ */
+const PRIVATE_KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/y;
+
+function privateKeyScanEnd(text: string): number {
+  let end = 0;
+  for (let at = text.indexOf("-----END "); at >= 0; at = text.indexOf("-----END ", at + 1)) {
+    PRIVATE_KEY_END.lastIndex = at;
+    const m = PRIVATE_KEY_END.exec(text);
+    if (m !== null) end = Math.max(end, at + m[0].length);
+  }
+  return end;
+}
+
+const isWordChar = (c: number): boolean => isAsciiAlnum(c) || c === 95;
+const isEmailLocalChar = (c: number): boolean =>
+  isWordChar(c) || c === 46 || c === 37 || c === 43 || c === 45;
+
+/**
+ * `extendStart` for the email rule: the local part before the `@` at `at`. The
+ * run of `[A-Za-z0-9._%+-]` ending there, at most 128 characters and not reaching
+ * back past `floor`, starting at its first word character (the original rule began
+ * at the first `\b`, which is that character). -1 when there is none.
+ */
+function emailLocalStart(text: string, at: number, floor: number): number {
+  const lo = Math.max(floor, at - 128);
+  let i = at;
+  while (i > lo && isEmailLocalChar(text.charCodeAt(i - 1))) i -= 1;
+  // Resuming right after a previous match, the original's `\b` fell between that match's last
+  // letter and a punctuation start, so the span begins on the punctuation.
+  if (i === floor && i < at && i > 0 && isWordChar(text.charCodeAt(i - 1))) return i;
+  while (i < at && !isWordChar(text.charCodeAt(i))) i += 1;
+  return i < at ? i : -1;
+}
+
+/**
  * The rule table. Order is load-bearing and part of the audit surface:
  * multi-line PEM blocks first (their base64 body would otherwise be shredded
  * by narrower rules), provider-specific key shapes next (most specific
@@ -112,6 +241,8 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "downstream sees any part of the key material.",
     pattern:
       /-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----/g,
+    // DUSTSEC.24: BEGIN lines with no END after them re-scanned to the end of the text each.
+    scanEnd: privateKeyScanEnd,
   },
   {
     id: "aws-key",
@@ -141,19 +272,19 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
   {
     id: "anthropic-key",
     description: "Anthropic API keys: sk-ant- prefix. Listed before the generic sk- rule.",
-    pattern: /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g,
+    pattern: /\bsk-ant-[A-Za-z0-9_-]{16}[A-Za-z0-9_-]*\b/g,
   },
   {
     id: "openai-key",
     description:
       "OpenAI API keys: sk- prefix (incl. sk-proj-/sk-svcacct-) followed by a " +
       "long token; negative lookahead excludes sk-ant- (Anthropic rule above).",
-    pattern: /\bsk-(?!ant-)[A-Za-z0-9_-]{32,}\b/g,
+    pattern: /\bsk-(?!ant-)[A-Za-z0-9_-]{32}[A-Za-z0-9_-]*\b/g,
   },
   {
     id: "slack-token",
     description: "Slack tokens: xoxb-/xoxa-/xoxp-/xoxr-/xoxs-/xoxe- prefixes.",
-    pattern: /\bxox[baprse]-[A-Za-z0-9-]{10,}\b/g,
+    pattern: /\bxox[baprse]-[A-Za-z0-9-]{10}[A-Za-z0-9-]*\b/g,
   },
   {
     id: "google-api-key",
@@ -186,7 +317,8 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
     description:
       "JSON Web Tokens: three dot-separated base64url segments where the " +
       'header starts with eyJ (base64 of `{"`).',
-    pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+    pattern:
+      /\beyJ[A-Za-z0-9_-]{8}[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8}[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8}[A-Za-z0-9_-]*\b/g,
   },
   {
     id: "connection-password",
@@ -194,13 +326,27 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "Credentials embedded in connection-string URLs " +
       "(scheme://user:password@host). Only the password is redacted so the " +
       "scheme, user, and host stay legible to the model.",
+    // DUSTSEC.24: anchored on the `:` before `//`. The scheme is checked by an UNBOUNDED
+    // look-behind (a letter, then any run of scheme characters, then the colon): the
+    // original's `\b[a-zA-Z][a-zA-Z0-9+.-]*:` minus the `\b`, so a scheme of any length
+    // qualifies, and so does one glued onto other word characters. The colon is outside
+    // the scheme class, so each look-behind walks only its own run and the cost stays
+    // linear. A start at every letter was quadratic on `a.a.a.`; a `\b` or a bounded
+    // look-behind let a password leak that the original redacted. Only the password is
+    // redacted, so where the match starts changes nothing. The rest is the original's:
+    // every `scheme://user:password@` it matched is matched here with the same password
+    // span (this pattern matches a SUPERSET of it, never fewer).
     // The lookahead skips a group that is EXACTLY one connection-password
     // placeholder, so a second pass over already-redacted text cannot re-match
     // (and renumber) it (S10). It names that ONE kind and anchors on `]@`: a
     // password shaped like any other placeholder (attacker-chosen kind text, or
-    // another rule's placeholder) is still redacted, as before.
+    // another rule's placeholder) is still redacted, as before. DELIBERATELY no wider:
+    // a wider exemption (any known kind, or "starts with a placeholder") hides a real
+    // password that follows placeholder-looking text (`email:1]hunter2`), and a leak
+    // loses to idempotence. The cost is that a glued scheme can be re-redacted on a
+    // second pass (over-redaction only).
     pattern:
-      /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
+      /:(?<=[a-zA-Z][a-zA-Z0-9+.-]*:)\/\/[^\s:@/]+:(?!\[REDACTED:connection-password:\d+\]@)([^\s@/]+)@/g,
     group: 1,
   },
   {
@@ -220,14 +366,26 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "separators, gated by a Luhn checksum (rejects IDs and phone numbers) " +
       "plus a separator-format check (single consistent character, uniform " +
       "grouping — rejects sparse/irregular digit runs like ASCII byte dumps " +
-      "that pass Luhn by chance, verification-notes §50).",
+      "that pass Luhn by chance, verification-notes §50). A run glued onto a " +
+      "hex token (see isOutsideHexToken) is part of that token, not a card " +
+      "(DUSTSEC.24).",
     pattern: /(?<![\d.-])\d(?:[ -]?\d){12,18}(?![\d.-])/g,
     validate: isCreditCardLike,
+    validateAt: isOutsideHexToken,
   },
   {
     id: "email",
     description: "Email addresses (PII).",
-    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    // DUSTSEC.24: the pattern matches `@domain` only, and `extendStart` reaches back over
+    // the local part (see emailLocalStart). A pattern that started at every position of
+    // a long run was quadratic on `a.a.a.` (no `@`), and with a leading `\b` or a bound
+    // it either skipped candidates or cost 128 steps per character of a 10 MB run.
+    // The local part is at most 128 characters (RFC 5321 caps it at 64): a longer one
+    // has its last 128 characters and the whole domain redacted, only the head beyond
+    // that stays. For an address that fits, the span is the original rule's: from the
+    // first word character of the run before the `@`.
+    pattern: /@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    extendStart: emailLocalStart,
   },
   {
     id: "nostr-secret-key",
@@ -240,7 +398,7 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "line suffix) must still match, and dropping the boundary can only widen " +
       "redaction, never weaken it. The `i` flag covers bech32's valid " +
       "all-uppercase form.",
-    pattern: /\bnsec1[023456789acdefghjklmnpqrstuvwxyz]{58,}/gi,
+    pattern: /\bnsec1[023456789acdefghjklmnpqrstuvwxyz]{58}[023456789acdefghjklmnpqrstuvwxyz]*/gi,
   },
 ];
 
@@ -393,14 +551,13 @@ export interface EmbeddedRule {
   readonly pattern: RegExp;
 }
 
-/** The nostr rule's own pattern minus its leading `\b`, so the bech32 class cannot drift. */
+/** The nostr rule's own bech32 class, so the in-run pattern cannot drift from it. */
 function nostrEmbeddedPattern(): RegExp {
   const nostr = BUILT_IN_RULES.find((r) => r.id === "nostr-secret-key");
-  // The named rule's tail is `{58,}`; bound it so a multi-megabyte run cannot overflow V8's regex stack.
-  const source = (nostr?.pattern.source ?? "nsec1(?!)")
-    .replace(/^\\b/, "")
-    .replace("{58,}", "{58,255}");
-  return new RegExp(source, "gi");
+  // The named rule's tail is `{58}` + `*` (DUSTSEC.24: written that way so V8 does not
+  // overflow its regex stack on a multi-megabyte run); bound it to `{58,255}` here.
+  const bech32 = /^\\bnsec1(\[[^\]]+\])\{58\}\1\*$/.exec(nostr?.pattern.source ?? "")?.[1];
+  return new RegExp(bech32 === undefined ? "nsec1(?!)" : `nsec1${bech32}{58,255}`, "gi");
 }
 
 export const EMBEDDED_ANYWHERE: readonly EmbeddedRule[] = Object.freeze([
