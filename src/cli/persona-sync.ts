@@ -27,7 +27,6 @@ import { loadEffectiveConfig } from "../config/index.js";
 import { resolveCoderPrompt } from "../inference/coder-prompt.js";
 import { resolvePersonaLane } from "../inference/persona-lane.js";
 import { effectivePersonas, resolvePersonaPrompt } from "../inference/personas.js";
-import { withTeamPrompt } from "../inference/team-prompt.js";
 import { withDefaultTarget } from "../providers/target-settings.js";
 import type { InitAction } from "./init.js";
 import { type DesiredAgent, installPersonaAgents, personaAgentPath } from "./init-personas.js";
@@ -99,15 +98,16 @@ export async function resolveDesiredAgents(
       // mechanisms that deliver a coder task — the `coder` MCP tool and this
       // definition — must read the SAME prompt, which is the entire reason
       // `coder-prompt.ts` exists. An explicit per-persona prompt wins over it.
-      const basePrompt =
+      const prompt =
         persona.id === "coder" &&
         config.prompt === undefined &&
         config.prompt_file === undefined &&
         settings.inference.coder_prompt !== undefined
           ? resolveCoderPrompt(settings.inference.coder_prompt)
           : (await resolvePersonaPrompt(persona.id, config, projectDir)).text;
-      // DUST2.22: the team's note rides AFTER the persona's own prompt, labelled.
-      const prompt = withTeamPrompt(basePrompt, settings.inference.team_prompt);
+      // DUST2.22: `inference.team_prompt` is deliberately NOT appended here. A
+      // generated agent body is a SYSTEM prompt by construction, and a team's
+      // text must never gain system authority (see src/inference/team-prompt.ts).
 
       desired.push({
         id: persona.id,

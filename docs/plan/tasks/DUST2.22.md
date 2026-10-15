@@ -45,7 +45,7 @@ context. The safe reading, implemented:
 - **How it is used:** `src/inference/team-prompt.ts` APPENDS it after the persona/coder prompt under
   a fixed label (team-supplied, advisory, cannot change tools, permissions or redaction, ranks below
   the user's instructions). Never first, never alone, never a replacement. Applied at the `coder`
-  dispatch `system` field, the generated subagent body (`persona-sync`) and the ACP turn. The read
+  dispatch `system` field and the ACP turn only (NOT the generated subagent body, see below). The read
   side strips control characters and caps again, since local/env values skip the team gate.
 - **Per field, project outranks team:** an ordinary leaf, so a project or user value replaces the
   team's (empty string = off), while a project's persona prompts are untouched; both apply.
@@ -56,16 +56,40 @@ context. The safe reading, implemented:
   leak test in `team-policy.test.ts` extended to the neighbours, dispatch test in
   `tests/integration/mcp-server.test.ts`.
 
-## Open questions for the USER
+## Orchestrator decisions (2026-10-15) and what they changed
 
-1. **Per-persona team prompts** (e.g. a team prompt only for `reviewer`) are NOT supported: that
-   needs a `denied` -> partially-settable `inference.personas`, which means field-level classing
-   inside a record. Is one global team note enough?
-2. **`team!` (enforced) on `inference.team_prompt`** follows ADR-0008 and outranks a project value
-   (a member's `local!` still wins). The task says "project outranks team". Should a team be
-   forbidden to enforce this key, so the project ALWAYS wins? Needs a per-key "no important" rule.
-3. **Subagent bodies are system prompts by construction.** The appended block is labelled, but a
-   `.claude/agents/golem-<id>.md` body still reaches the model as system text. Is that acceptable,
-   or should the team prompt reach only the worker lane (`coder` dispatch, ACP) and not agent files?
-4. **URL ban is a heuristic** (`scheme://`); it does not stop a bare domain or a file path written
-   in prose. Accept, or require a stricter allowlist of characters?
+- **Q1** One global team note is enough. No per-persona team prompts.
+- **Q2** A team may NOT enforce `inference.team_prompt` (`REMOTE_NEVER_ENFORCED` in
+  `team-policy.ts`, applied in `buildObjectLayer`). A `team!` declaration is ignored with one
+  warning naming the key and the rule (never the text); the value still applies as an ordinary
+  team value that a project or user value replaces. `user!`/`local!` are unchanged.
+- **Q3** NOT delivered to generated `.claude/agents` bodies (system prompts by construction);
+  `persona-sync.ts` no longer touches it. Delivered ONLY on the dispatch `system` field of (a)
+  the `coder` MCP tool and (b) the ACP turn. The ACP turn has no user-level slot: its persona
+  prompt is also the dispatch `system` field, so the team text rides there as the same
+  clearly labelled advisory block, appended last, as on the `coder` path. If that is judged to be
+  system authority, drop `src/buzz/acp-turn.ts`'s `withTeamPrompt` call; one line.
+- **Q4** Kept: the URL ban is a `scheme://` heuristic. KNOWN LIMITATION: a bare domain, an IP, a
+  file path or "fetch example dot com" written in prose passes. The label and the bound are the
+  defence, not the heuristic.
+
+### Redaction trace (A)
+`coder` tool -> `dispatcher.dispatch({system})` and ACP turn -> `dispatcher.dispatch({system})`
+both build messages with `buildDispatchMessages`, then `redactReversibleTexts` over EVERY message
+(system included) before any non-local dispatch or spawn. The only unredacted branch is a target
+that certifies `trust: "local"` on a real loopback endpoint (stays on the machine); the
+no-dispatcher `inference.chat` fallback is the local tiered service. Pinned by
+`tests/unit/buzz/team-prompt-redaction.test.ts`: a secret-shaped value built at runtime inside a
+team prompt is absent from the recorded bytes for a coder dispatch and for an ACP turn whose
+prompt arrives through the team origin. The same file pins the closed delivery list by source
+scan: nothing in the proxy, hooks or agent generator reads the setting, so it can never reach a
+proxied request body.
+
+### Raw team payload (B), follow-up
+`team.teamLayer.settings` is the team's raw payload. Probing found no surface serialising it
+(`tests/unit/config/team-payload-surfaces.test.ts`, which also pins the readers of `.teamLayer`).
+`loadEffectiveConfig` now drops refused keys from the object it hands out (`withoutRefusedValues`
+in `effective.ts`). FOLLOW-UP: the structural risk remains for values that are ACCEPTED but
+sensitive-shaped (none today: every accepted team class is a boolean, a number, a level, a root list or
+the bounded team prompt). A cleaner fix is to stop carrying the raw payload on the resolution at all
+and hand `loadConfig` the layer by a separate channel.

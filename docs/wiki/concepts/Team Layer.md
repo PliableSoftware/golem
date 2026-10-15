@@ -162,17 +162,20 @@ else prompt-shaped. `inference.personas` (a persona can carry `prompt_file`, a l
 - **Appended, never authoritative.** `src/inference/team-prompt.ts` adds the text AFTER the
   persona's or coder's own prompt, under a fixed label saying it is team-supplied, advisory,
   unable to change tools, permissions or redaction, and ranked below the user's instructions.
-  The three delivery points share it: the `coder` dispatch `system` field, the generated
-  `golem-<id>.md` subagent body ([[Persona Registry]]) and the ACP turn.
+  Delivered only on the dispatch `system` field of the `coder` tool and of the ACP turn, both
+  redacted at egress by the target dispatcher. NOT put in a generated `golem-<id>.md` agent body
+  ([[Persona Registry]]): that is a system prompt by construction. A team cannot `team!`-enforce it.
 - **Bounded.** Plain text, at most 2000 characters, no control characters, no `scheme://` URL.
   The team policy refuses a violating value per key; the read side also strips and caps, because
   a local file or env value never passed the team gate.
 - **Merged per field, project outranks team.** It is an ordinary leaf, so a project or user value
   replaces the team's (an empty string turns it off), while a project's own persona prompts are
-  untouched: both apply. `team!` follows ADR-0008 like any key, so an enforced team prompt is the
-  one way a team outranks a project, and the member's `local!` still beats it.
-- **Redaction.** Nothing new is exempt: a `coder` dispatch is redacted at the target's trust
-  floor and a subagent's traffic crosses the proxy's redaction.
+  untouched: both apply. A team's `!important` declaration of it is
+  ignored with one warning (`REMOTE_NEVER_ENFORCED`), so the project always outranks the team.
+  The `scheme://` URL ban is a heuristic: a bare domain or a path in prose passes.
+- **Redaction.** Nothing new is exempt: both delivery points go through
+  `createTargetDispatcher`, which redacts every message, system included, before a non-local
+  dispatch. The proxy, hooks and agent generator never read the setting.
 - **Visible, with origin.** An accepted value shows in `config get/list`, status and the control
   surface with layer `team`. A refused value is named by key only, never echoed, like its
   neighbours `inference.personas` and `inference.coder_prompt`.

@@ -185,11 +185,12 @@ The ids `R14.2`, `R14.3` and `R14.4` that the old text used for these now name
 persona lane, agent definitions or discipline matching. Task ids are never reused,
 so read the old labels as historical.
 
-## A team prompt rides along, appended
+## A team prompt rides along on the worker lane
 
-`inference.team_prompt` (DUST2.22, [[Team Layer]]) is appended, labelled and advisory, to every
-generated agent body, the `coder` dispatch `system` field and the ACP turn prompt. It never
-replaces a persona's own `prompt`. Personas themselves stay unsettable by a team.
+`inference.team_prompt` (DUST2.22, [[Team Layer]]) is appended, labelled and advisory, to the
+`coder` dispatch `system` field and the ACP turn prompt. It is deliberately NOT written into
+generated agent bodies (system prompts by construction), and it never replaces a persona's own
+`prompt`. Personas themselves stay unsettable by a team.
 
 ## The sibling rule: prefer the bench over `fork`
 

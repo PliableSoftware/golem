@@ -11,9 +11,12 @@
  *   model is told it carries no authority over tools, permissions or redaction;
  * - it is bounded again here (length, control characters), because a value from a
  *   local file or env var never passed the team policy's gate;
- * - it reaches the model through the same paths as every other prompt: a `coder`
- *   dispatch is redacted at the target's trust floor, and a generated subagent's
- *   traffic goes through the proxy's redaction.
+ * - it is delivered ONLY on the dispatch `system` field of a `coder` call and of
+ *   an ACP turn, both of which go through `createTargetDispatcher`, which
+ *   redacts every message (system included) before a non-local dispatch. It is
+ *   deliberately NOT put in a generated `.claude/agents` body (a system prompt
+ *   by construction) and never in a proxied request body;
+ *   tests/unit/buzz/team-prompt-redaction.test.ts pins the delivery list.
  *
  * It carries no tools, no file path and nothing Golem fetches: it is a string.
  */

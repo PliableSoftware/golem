@@ -102,12 +102,13 @@ describe("the cascade", () => {
     expect(c.settings.inference.personas.coder?.prompt).toBe("Project coder.");
     expect(c.settings.inference.team_prompt).toBe("Team: cite the ticket id.");
 
+    // A generated agent body is a SYSTEM prompt: the team text is never put there.
     const { desired, problems } = await resolveDesiredAgents(p.projectDir, p.userDir);
     expect(problems).toEqual([]);
     const prompt = desired.find((d) => d.id === "coder")?.prompt ?? "";
-    expect(prompt.startsWith("Project coder.")).toBe(true);
-    expect(prompt).toContain(TEAM_PROMPT_LABEL);
-    expect(prompt.endsWith("Team: cite the ticket id.")).toBe(true);
+    expect(prompt).toBe("Project coder.");
+    expect(prompt).not.toContain("cite the ticket id");
+    expect(prompt).not.toContain(TEAM_PROMPT_LABEL);
   });
 
   it("without a team prompt the generated prompt is unchanged", async () => {
@@ -119,6 +120,63 @@ describe("the cascade", () => {
     });
     const { desired } = await resolveDesiredAgents(p.projectDir, p.userDir);
     expect(desired.find((d) => d.id === "coder")?.prompt).toBe("Mine.");
+  });
+});
+
+describe("a team may not ENFORCE the team prompt (the project outranks the team)", () => {
+  const TEXT = "enforced-text-canary";
+  const enforcedWarnings = (w: readonly string[]) =>
+    w.filter((x) => x.includes('"inference.team_prompt"') && x.includes("may not enforce"));
+
+  it("an enforced team declaration still loses to a project value", async () => {
+    const c = await load(
+      await project({
+        rows: [row(TEXT, true)],
+        projectSettings: { inference: { team_prompt: "project words" } },
+      }),
+    );
+    expect(c.settings.inference.team_prompt).toBe("project words");
+    expect(c.provenance["inference.team_prompt"]?.layer).toBe("project");
+  });
+
+  it("an enforced team declaration with no project value applies as an ordinary, non-important team value", async () => {
+    const c = await load(await project({ rows: [row(TEXT, true)] }));
+    expect(c.settings.inference.team_prompt).toBe(TEXT);
+    expect(c.provenance["inference.team_prompt"]?.layer).toBe("team");
+    expect(c.provenance["inference.team_prompt"]?.important).toBeUndefined();
+  });
+
+  it("warns once, naming the key and the rule, never the text", async () => {
+    const c = await load(await project({ rows: [row(TEXT, true)] }));
+    expect(enforcedWarnings(c.warnings)).toHaveLength(1);
+    expect(JSON.stringify(c.warnings)).not.toContain(TEXT);
+  });
+
+  it("a normal team declaration does not warn", async () => {
+    const c = await load(await project({ rows: [row(TEXT, false)] }));
+    expect(enforcedWarnings(c.warnings)).toHaveLength(0);
+  });
+
+  it("a user! declaration still beats the team, and still locks (behaviour unchanged)", async () => {
+    const c = await load(
+      await project({
+        rows: [row(TEXT, true)],
+        userSettings: {
+          inference: { team_prompt: "mine" },
+          "!important": ["inference.team_prompt"],
+        },
+      }),
+    );
+    expect(c.settings.inference.team_prompt).toBe("mine");
+    expect(c.provenance["inference.team_prompt"]?.layer).toBe("user");
+    expect(c.provenance["inference.team_prompt"]?.important).toBe(true);
+  });
+
+  it("other keys may still be enforced by the team (the rule is per key)", async () => {
+    const c = await load(
+      await project({ rows: [{ key: "ui.pet", value: false, enforced: true }] }),
+    );
+    expect(c.provenance["ui.pet"]?.important).toBe(true);
   });
 });
 

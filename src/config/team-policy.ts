@@ -64,6 +64,14 @@ const T: TeamRule = "true-only";
 const L: TeamRule = "lower-only";
 const D: TeamRule = "denied";
 
+/**
+ * Keys a REMOTE origin may set but may not ENFORCE (`!important`). The value
+ * still applies as an ordinary team-layer value; a project or user value
+ * replaces it. DUST2.22: the task says the project outranks the team for the
+ * team prompt, and an enforced declaration would invert that.
+ */
+export const REMOTE_NEVER_ENFORCED: ReadonlySet<string> = new Set(["inference.team_prompt"]);
+
 /** The longest team prompt, in characters. Over it, the team's value is REFUSED, not truncated. */
 export const TEAM_PROMPT_MAX_CHARS = 2000;
 

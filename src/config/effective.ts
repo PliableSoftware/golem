@@ -105,7 +105,7 @@ export async function loadEffectiveConfig(
 
   try {
     const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
-    return { ...second, team: reconcile(team, second) };
+    return { ...second, team: withoutRefusedValues(reconcile(team, second), second.refused) };
   } catch (err) {
     return degraded(first, team, err, "applying the team layer failed");
   }
@@ -145,6 +145,38 @@ function reconcile(team: TeamLayerResolution, loaded: GolemConfig): TeamLayerRes
     note(key, "REFUSED: the team policy only allows tightening");
   }
   return { ...team, applied, skipped };
+}
+
+/**
+ * Surfaces receive `team` whole, and `team.teamLayer.settings` is the team's raw
+ * payload, so a refused value (a denied key's URL or prompt) used to travel with
+ * it. Nothing serialises it today (tests/unit/config/team-payload-surfaces.test.ts
+ * probes every surface), but "nobody happens to print it" is not a guarantee, so
+ * the refused keys are dropped from the object handed out.
+ */
+function withoutRefusedValues(
+  team: TeamLayerResolution,
+  refused: readonly string[],
+): TeamLayerResolution {
+  const layer = team.teamLayer;
+  if (layer === undefined || refused.length === 0) return team;
+  const drop = new Set(refused);
+  const settings: Record<string, unknown> = {};
+  for (const [section, value] of Object.entries(layer.settings as Record<string, unknown>)) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      settings[section] =
+        section === "!important" && Array.isArray(value)
+          ? value.filter((k) => typeof k !== "string" || !drop.has(k))
+          : value;
+      continue;
+    }
+    settings[section] = Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).filter(
+        ([k]) => !drop.has(`${section}.${k}`),
+      ),
+    );
+  }
+  return { ...team, teamLayer: { ...layer, settings: settings as typeof layer.settings } };
 }
 
 let announced = false;

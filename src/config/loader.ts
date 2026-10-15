@@ -79,7 +79,12 @@ import {
   SECTION_NAMES,
   SETTINGS_LEAVES,
 } from "./schema.js";
-import { relativeRefusal, staticRefusal, teamValueForWarning } from "./team-policy.js";
+import {
+  REMOTE_NEVER_ENFORCED,
+  relativeRefusal,
+  staticRefusal,
+  teamValueForWarning,
+} from "./team-policy.js";
 
 /** Which layer supplied a value. See {@link ORIGIN_ORDER} for the ranking. */
 export type LayerName = "default" | "user" | "team" | "project" | "local" | "env" | "override";
@@ -612,6 +617,14 @@ function buildObjectLayer(
     }
     for (const dotted of listed as readonly string[]) {
       if (declared.has(dotted)) {
+        if (remote && REMOTE_NEVER_ENFORCED.has(dotted)) {
+          // The value still applies as an ordinary team value; only the pin is dropped.
+          warnings.push(
+            `${label}: "${dotted}" was declared "${IMPORTANT_KEY}" but a team may not enforce it ` +
+              "(your project and user settings outrank the team's); applied as an ordinary team value",
+          );
+          continue;
+        }
         important.add(dotted);
         continue;
       }
