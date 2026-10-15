@@ -3,7 +3,7 @@ title: Hosted Session
 type: concept
 tags: [r13, adr-0007, session-host, autonomy, mtls, refusal]
 sources: ["docs/decisions/ADR-0007-remote-conversation-and-hosted-sessions.md", "docs/plan/verification-notes.md §142", "docs/plan/verification-notes.md §147", "docs/plan/tasks/R13.3.md"]
-updated: 2026-08-29
+updated: 2026-10-08
 created: 2026-08-29
 ---
 
@@ -20,7 +20,23 @@ golem session host list
 golem session host log
 golem session host explain Bash -- "rm -rf build"
 golem session host stop <id>
+golem session host forget <id>
+golem session host serve "an optional first turn"
 ```
+
+Subcommands (`src/cli/commands/session-host.ts:77-485`): `start` (the default),
+`serve` (start AND serve to paired devices over mTLS, `:203`), `list`, `log`,
+`stop`, `forget` (drop a record and its transcript, `:469`) and `explain`.
+
+Shipped-behaviour notes (DUST1.10 rows 19, 39):
+
+- `start` is described as relaying "one or more messages" (`:78`), but the runner's
+  stdin is closed on the first `result` event (`hosted.end()`, `:144`), so only the
+  first turn completes. UNVERIFIED whether a multi-message `start` is exercised;
+  hosted-session gaps are DUST2.19's.
+- `stop` calls `process.kill(found.pid)` on the recorded pid (`:453`), which is the
+  supervising CLI. Whether that takes the `claude` child with it on Windows is
+  UNVERIFIED (suspected, not run).
 
 ## How it differs from the session on your screen
 
@@ -33,7 +49,11 @@ golem session host stop <id>
 | where the gate is wired | the project's `.claude/settings.json` | injected by the host at spawn, via `--settings` |
 
 Both run through the proxy. A hosted session gets the same redaction, the same
-telemetry and the same limits — ADR-0007 invariant 8, no exemption, no side door.
+telemetry and the same limits, no exemption, no side door. That is ADR-0007 §5
+invariant **7** ("a hosted session is not a privileged session"); invariant 8 in
+that ADR is local-only enrolment. The code comment at `src/session/host.ts:21-25`
+and older text here call it "invariant 8" — an ADR numbering mismatch the ADR-0007
+amendment is to record (DUST2.3).
 
 ## Two enums, on purpose
 
@@ -73,13 +93,20 @@ a `PermissionRequest` deny hook installed **and never fired it**. `PreToolUse`
 fires before every tool call, and its deny stops the call with the reason
 delivered to the model as the tool result.
 
-R12.12 was still right for the guest: its problem was a *dialog* opening and a
+R12.12 was aimed at the guest: its problem was a *dialog* opening and a
 connected channel answering it, and `PermissionRequest` is what precedes a dialog.
-Different problems, different events.
+Different problems, different events. (R12.12's deny was removed 2026-10-09,
+DUSTSEC.10, by USER decision: the guest hook is now inert and the human answers
+the native dialog; see ADR-0002.)
 
 > The shapes are not interchangeable and the wrong one is a **silent no-op**:
 > `PreToolUse` takes a flat `permissionDecision` + `permissionDecisionReason`;
 > `PermissionRequest` nests `decision.behavior` + `message`.
+
+> **Decided 2026-10-09 (P3, USER):** Decision 61's opt-in setting reaches hosted sessions,
+> so Decision 60(d)'s "no setting changes that" is amended. Safeguards as for local
+> sessions: off by default, fresh re-authentication per answer, a loud log, a kill switch.
+> The setting is not built (R13.9), so the refusal described here is what ships today.
 
 ## The gate is the host's own
 
@@ -101,6 +128,15 @@ turn is written to the host log — device id or `"local"`, timestamp, exact tex
 too, `allow` included: a log that only records refusals cannot answer "what did
 this session do".
 
+The log is bounded by **rotation by rename** (DUST3.15, 2026-10-09): past
+`HOST_LOG_MAX_BYTES` = 5 MiB the live `host-log.jsonl` is renamed aside to
+`host-log.<epoch-ms>-<pid>-<rand>.jsonl` and the next append starts a new file;
+the newest `HOST_LOG_KEEP_ROTATED` = 3 rotated files are kept (about 20 MiB in
+all). Nothing on the append path reads and rewrites the file, so concurrent
+appends and `turn` attribution lines are never lost; a rename failure is
+swallowed after the line has landed. `readHostLog` spans the rotated files. The
+earlier line-count trim (`trimHostLog`, never called) was removed.
+
 This is not `src/autonomy/log.ts`. That log is tool-shaped and written by a hook
 inside someone else's session; this one records turns, decisions and lifecycle
 for sessions Golem runs. Two relationships, two logs — the same argument as the
@@ -116,4 +152,4 @@ tool call in a session Golem is answerable for.
 ## Related
 
 [[Autonomy Gate]] · [[Device Authentication]] · [[Conversation Store]] ·
-[[Usage Limit Park]] · [[Blocked State Read Model]]
+[[Device Conversations]] · [[Usage Limit Park]] · [[Blocked State Read Model]]

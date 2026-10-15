@@ -93,9 +93,68 @@ async function ourSkillDirs(projectDir: string): Promise<string[]> {
   }
 }
 
-/** Init step 3: skills — .claude/skills/golem-<cmd>/SKILL.md -> /golem-<cmd>. */
-export async function installSkills(projectDir: string, dryRun: boolean): Promise<InitAction[]> {
+/** Where Golem records which skills a project was already offered. */
+export function skillsOfferedPath(projectDir: string): string {
+  return path.join(projectDir, ".golem", "state", "skills-offered.json");
+}
+
+/**
+ * Which skills this project has already been offered, or null when there is no
+ * usable record. Same idea as `seededByDefault` for guidance rules: "offered and
+ * absent now" means the user deleted it, which must stick.
+ */
+async function readOfferedSkills(projectDir: string): Promise<Set<string> | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(skillsOfferedPath(projectDir), "utf8"));
+    const offered = (parsed as { offered?: unknown } | null)?.offered;
+    if (!Array.isArray(offered)) return null;
+    return new Set(offered.filter((v): v is string => typeof v === "string"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * No record: a fresh project offers everything; a project that predates the
+ * record infers "offered" from the skills on disk. A skill deleted before this
+ * record existed is re-offered once, which cannot be told apart from never having been
+ * offered, and is visible in the init report and one delete away.
+ */
+async function inferOfferedSkills(projectDir: string): Promise<Set<string>> {
+  const offered = new Set<string>();
+  for (const name of Object.keys(P0_SKILLS)) {
+    try {
+      await access(path.join(projectDir, ".claude", "skills", skillDirName(name), "SKILL.md"));
+      offered.add(name);
+    } catch {
+      // never installed
+    }
+  }
+  return offered;
+}
+
+/**
+ * Init step 3: skills — .claude/skills/golem-<cmd>/SKILL.md -> /golem-<cmd>.
+ *
+ * A skill the project was already offered and no longer has on disk was deleted
+ * on purpose and is NOT re-seeded; a skill never offered (new in a later release)
+ * is created once. `restore` ("all" or command names) opts deleted ones back in.
+ * Provenance for skills still present is untouched.
+ */
+export async function installSkills(
+  projectDir: string,
+  dryRun: boolean,
+  restore: readonly string[] = [],
+): Promise<InitAction[]> {
   const actions: InitAction[] = [];
+  const recorded = await readOfferedSkills(projectDir);
+  const offered = recorded ?? (await inferOfferedSkills(projectDir));
+  const restoreAll = restore.includes("all");
+  for (const name of restore) {
+    if (name !== "all" && !(name in P0_SKILLS)) {
+      actions.push({ kind: "skip", path: skillDirName(name), detail: `unknown skill "${name}"` });
+    }
+  }
   for (const [name, content] of Object.entries(P0_SKILLS)) {
     const skillPath = path.join(projectDir, ".claude", "skills", skillDirName(name), "SKILL.md");
     let existing: string | null = null;
@@ -103,6 +162,16 @@ export async function installSkills(projectDir: string, dryRun: boolean): Promis
       existing = await readFile(skillPath, "utf8");
     } catch {
       existing = null;
+    }
+    if (existing === null && offered.has(name) && !restoreAll && !restore.includes(name)) {
+      actions.push({
+        kind: "skip",
+        path: rel(projectDir, skillPath),
+        detail:
+          `${skillDisplayName(name)} skill declined — deleted by you, not re-seeded ` +
+          `(restore: golem init --restore-skill ${name})`,
+      });
+      continue;
     }
     // R9.5: "differs from what Golem ships" cannot tell a stale file from an
     // edited one. Ask the provenance record which it is — an edited skill is
@@ -140,6 +209,13 @@ export async function installSkills(projectDir: string, dryRun: boolean): Promis
       await writeFile(skillPath, content, "utf8");
       await rememberManaged(projectDir, skillPath, content);
     }
+  }
+  if (!dryRun) {
+    // Every skill walked is now offered, the declined ones included.
+    const record = [...new Set([...offered, ...Object.keys(P0_SKILLS)])].sort();
+    const file = skillsOfferedPath(projectDir);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, `${JSON.stringify({ offered: record }, null, 2)}\n`, "utf8");
   }
   return actions;
 }
@@ -283,6 +359,18 @@ export async function removeSkills(projectDir: string, dryRun: boolean): Promise
       await rm(dir, { recursive: true, force: true });
       await forgetManaged(projectDir, path.join(dir, "SKILL.md"));
     }
+  }
+  // Forget what was offered: after uninit, the next init offers everything again.
+  try {
+    await access(skillsOfferedPath(projectDir));
+    actions.push({
+      kind: "remove",
+      path: rel(projectDir, skillsOfferedPath(projectDir)),
+      detail: "skills-offered record",
+    });
+    if (!dryRun) await rm(skillsOfferedPath(projectDir), { force: true });
+  } catch {
+    // no record
   }
   const nested = path.join(skillsRoot, "golem");
   try {

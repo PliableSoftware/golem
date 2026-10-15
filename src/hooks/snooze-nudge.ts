@@ -27,9 +27,10 @@
  * (atomic cross-platform I/O, fail-open) to match `limit-prediction.ts`.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import type { LimitPrediction } from "../proxy/limit-prediction.js";
 
 /** Session-window utilization at/above which the gate nudges the agent to park. */
@@ -225,7 +226,5 @@ export async function writeSnoozeNudgeState(
 ): Promise<void> {
   const file = snoozeNudgeStatePath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(state, null, 2)}\n`);
 }

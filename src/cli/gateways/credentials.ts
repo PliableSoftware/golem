@@ -9,7 +9,7 @@
  * the registry half — only `appendAudit`'s non-secret metadata crosses back.
  */
 
-import { defaultUserDir, loadConfig } from "../../config/index.js";
+import { defaultUserDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   type CredentialStore,
   canPrompt,
@@ -19,6 +19,7 @@ import {
 } from "../../credentials/index.js";
 import { probeCredential } from "../../credentials/probe.js";
 import { PromptCancelled, promptSecret } from "../../credentials/prompt.js";
+import { MalformedSecretError, normalizeGatewayKey } from "../../credentials/validate.js";
 import { accountsReferencedByTargets } from "../../providers/index.js";
 import { InitError } from "../init.js";
 import type { GatewayTarget } from "./registry.js";
@@ -38,7 +39,7 @@ async function resolveGatewayTarget(
   readonly account: GatewayTarget;
   readonly isDefault: boolean;
 }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const p = settings.proxy;
   if (id === defaultGatewayId(p.upstream_provider) || id === DEFAULT_STORE_ID) {
     return {
@@ -138,7 +139,15 @@ export async function loginGateway(
       throw err;
     }
   }
-  if (secret.trim() === "") throw new InitError("empty key — nothing stored.");
+  try {
+    // Trims all surrounding whitespace and refuses control/non-Latin-1 characters,
+    // whichever route the key came by (piped, prompted, supplied).
+    secret = normalizeGatewayKey(secret);
+  } catch (err) {
+    if (err instanceof MalformedSecretError) throw new InitError(`${err.message} Nothing stored.`);
+    throw err;
+  }
+  if (secret === "") throw new InitError("empty key — nothing stored.");
 
   // 2. Probe it against the upstream before storing (unless disabled).
   let probeVerdict = "skipped";
@@ -219,9 +228,9 @@ export async function logoutGateway(
  *
  * **R9.1 — this resolves N credentials, not 1.** Every gateway referenced by a
  * target in `proxy.targets` (or derived from `proxy.gateways`) gets its key
- * injected under its own `perGatewayEnvVar` (was `perAccountEnvVar`, renamed in
+ * injected under its own `envVarForGateway` name (was `perAccountEnvVar`, renamed in
  * R9.23), because with a target registry the proxy may need any of them, not
- * only the active one. No new secret mechanism was required: `perGatewayEnvVar`
+ * only the active one. No new secret mechanism was required: `envVarForGateway`
  * was already designed per-gateway (Decision 47), and the CLI still owns
  * resolution and injects at spawn.
  *
@@ -237,7 +246,7 @@ export async function credentialEnvForProxy(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<Record<string, string>> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const selected = settings.inference.model ?? null;
   const defaultId = defaultGatewayId(settings.proxy.upstream_provider);
   // The default top-level config is in force when nothing is selected or the
@@ -255,7 +264,7 @@ export async function credentialEnvForProxy(
   //
   //     6668ms  credentialEnvForProxy      <- 98% of all pre-listen() time
   //       7ms   migrateOnVersionChange
-  //      11ms   loadConfig
+  //      11ms   loadEffectiveConfig
   //     118ms   detectCapability
   //
   // broken down as a one-time ~2.6s DPAPI host self-test plus ~0.94s per *stored*

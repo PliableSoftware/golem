@@ -16,6 +16,7 @@ const {
   fmtTokens,
   gatewayRows,
   COMPRESSION_LEVELS,
+  overrideNote,
 } = require("./render.js");
 
 const cwd = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
@@ -155,6 +156,13 @@ async function applyControlChange(id, value, scope) {
     vscode.window.showWarningMessage(
       `Golem: could not change ${id}. Run \`golem config set ${name} <value>\` in a terminal to see why.`,
     );
+  } else {
+    // The write landed but a higher origin may overrule it: say so rather than
+    // letting the row quietly snap back on the refresh.
+    const overridden = overrideNote(out);
+    if (overridden !== null) {
+      vscode.window.showWarningMessage(`Golem: ${id} was written but has no effect — ${overridden}`);
+    }
   }
   await refresh();
 }
@@ -446,7 +454,7 @@ function activate(context) {
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.text = "⬢ Golem";
-  statusBar.command = "golem.menu"; // click → actions menu (toggle proxy, slider, panel)
+  statusBar.command = "golem.menu"; // click → actions menu (toggle proxy, compression dial, panel)
   // Visibility is driven by refresh(): shown only in a Golem project, hidden
   // elsewhere (the extension is installed globally). Don't show() unconditionally.
   context.subscriptions.push(statusBar);

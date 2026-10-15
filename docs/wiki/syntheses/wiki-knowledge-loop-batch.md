@@ -95,3 +95,9 @@ Tracked forward rather than lost:
 
 See also [[Wiki-First Knowledge]], [[Distillation Pipeline]], [[Redaction Stage]],
 and ADR-0001 (docs/decisions/ADR-0001-file-watcher.md).
+
+## Rebaseline 2026-10-08
+
+- "at slider >= 1 ... Drop to level 0" (lines 78-79): the slider is retired (ADR-0004) and level `off` still redacts (`src/interfaces/policy.ts:142-143`, `redaction: true`). No dial value disables redaction; the only full bypass is `proxy.bypass_all` (`src/config/schema.ts:116`), CLI-only. The debugging advice (check bytes with a process-level tool, not a Read view) still holds; "drop to level 0" no longer does.
+- "the loop's one human-gated step (promotion)": plan-gating of wiki writes was reversed by Decision 44 (`docs/golem-spec.md:542`).
+- Guidance goes to `.claude/rules/golem-<name>.md` (`src/hooks/guidance.ts:6-8`), not `CLAUDE.local.md`.

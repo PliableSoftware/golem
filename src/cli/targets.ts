@@ -16,13 +16,13 @@
  *   the account commands use — one log, because "which endpoint did my context
  *   go to" is the same question whichever registry answered it.
  *
- * Nothing here changes proxy behaviour. In R9.1 the registry is inert
- * configuration; R9.2 routes on it and R9.3 dispatches `coder` through it.
+ * Nothing here changes proxy behaviour. The registry has routed since R9.2,
+ * and R9.3 dispatches `coder` through it.
  */
 
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { defaultUserDir, loadConfig, writeSetting } from "../config/index.js";
+import { defaultUserDir, loadEffectiveConfig, writeSetting } from "../config/index.js";
 import type { ProxySettings } from "../config/schema.js";
 import {
   type CredentialFault,
@@ -115,7 +115,7 @@ export async function collectTargets(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<TargetsReport> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const proxy = settings.proxy;
   const targets = listTargets(proxy);
   // R9.23: model moved to inference; `withDefaultTarget` folds it onto the
@@ -229,7 +229,7 @@ export async function addTarget(
   input: NewTarget,
   nowIso: string,
 ): Promise<{ readonly target: string; readonly overrides_gateway: boolean }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const proxy: ProxySettings = settings.proxy;
   const targets = [...(proxy.targets ?? [])];
 
@@ -249,7 +249,7 @@ export async function addTarget(
   }
 
   // R9.23: detect if the new target's id matches a GATEWAY-DERIVED target
-  // (compound id `<gateway>/<model>`). The gateway-derived target is what
+  // (compound id `<gateway>:<model>`). The gateway-derived target is what
   // `listTargets` produces, so use it to determine whether this add overrides.
   const derived = listTargets(proxy);
   const overridesGateway = derived.some((t) => t.id === input.id && t.origin === "gateway");
@@ -289,7 +289,7 @@ export async function testTarget(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<TargetTestResult> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const lookup = resolveTarget(settings.proxy, id);
   if (!lookup.ok) throw new InitError(lookup.reason);
   const target = lookup.target;
@@ -372,6 +372,6 @@ export function renderTargets(report: TargetsReport): string {
   } else {
     lines.push(`default target: ${report.model}`);
   }
-  lines.push(`trust levels: ${TARGET_TRUST_LEVELS.join(" | ")} (stored now, enforced in R9.3)`);
+  lines.push(`trust levels: ${TARGET_TRUST_LEVELS.join(" | ")}`);
   return `${lines.join("\n")}\n`;
 }

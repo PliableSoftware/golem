@@ -11,6 +11,7 @@ import {
   NoDrafterConfiguredError,
   type TargetDispatcher,
 } from "../inference/target-dispatcher.js";
+import { withTeamPrompt } from "../inference/team-prompt.js";
 import type { InferenceService, KnowledgeBase, WikiReader } from "../interfaces/index.js";
 import { type RefineOutcome, refineDraft } from "./coder-refine.js";
 import { backendUnavailableMessage, gatherGrounding } from "./search.js";
@@ -34,6 +35,8 @@ interface CoderGroundingDeps {
   readonly editEnabled?: boolean | undefined;
   /** R13.12 — `inference.coder_prompt`; undefined uses Golem's default. */
   readonly coderPrompt?: string | undefined;
+  /** DUST2.22 — `inference.team_prompt`, appended (labelled) to the coder framing. */
+  readonly teamPrompt?: string | undefined;
   /**
    * R13.12 — the model `inference.default_coder` names, when it names a MODEL.
    * Present means every task here belongs to the `golem-coder` subagent, which
@@ -128,9 +131,13 @@ export function registerCoderTool(
    */
   const taskCounts = new Map<string, number>();
   // R13.12 — resolved once here, not per call: it cannot change without the
-  // server restarting, and both the dispatch `system` field and the generated
-  // subagent body must read the same setting.
-  const coderPromptText = resolveCoderPrompt(grounding.coderPrompt);
+  // server restarting. The generated subagent body reads `coder_prompt` too (via
+  // `coder-prompt.ts`) but deliberately NOT the team prompt, which only this
+  // dispatch `system` field carries (DUST2.22, src/inference/team-prompt.ts).
+  const coderPromptText = withTeamPrompt(
+    resolveCoderPrompt(grounding.coderPrompt),
+    grounding.teamPrompt,
+  );
   // R9.3: the conversation may pick a target, bounded to what config declares
   // AND marks agent-selectable. An enum (rather than a free string) is what
   // makes "can never reach anything undeclared" visible in the schema itself —
@@ -154,7 +161,7 @@ export function registerCoderTool(
             .describe(
               "Which configured target to draft on; omit to use the configured " +
                 "route (`inference.worker_targets.coder`, then " +
-                "`inference.model`, then the session's own upstream). " +
+                "`inference.personas.coder.model`, then `inference.model`, then the session's own upstream). " +
                 `Available: ${selectable
                   .map((t) => `${t.id} (${t.provider}, trust=${t.trust})`)
                   .join("; ")}. Anything non-local is REDACTED before dispatch — ` +
@@ -170,7 +177,7 @@ export function registerCoderTool(
         'Delegate a task to Golem\'s "drafter" role instead of doing everything ' +
         "yourself — a first coding draft you then review and refine. Where it runs " +
         "is a ROUTING decision, not a property of this tool: `inference." +
-        "worker_targets.coder`, then `inference.model`, then the session's " +
+        "worker_targets.coder`, then `inference.personas.coder.model`, then `inference.model`, then the session's " +
         "own upstream (R10.8). It is the local tiered Ollama model only when a " +
         "target points there, so do NOT assume the work stays on this machine — " +
         "anything non-local is REDACTED before dispatch and restored in the reply, " +
@@ -243,6 +250,14 @@ export function registerCoderTool(
         /** R13.12 — the subagent this work belongs to, when one is configured. */
         delegate_to: z.string().optional(),
         delegate_model: z.string().optional(),
+        /** Set when the draft was dispatched to a registry target (non-local routes). */
+        target: z.string().optional(),
+        /** The dispatched target's trust level. */
+        trust: z.string().optional(),
+        /** Which step of the resolution chain picked the target (R10.8). */
+        route: z.string().optional(),
+        /** Redaction placeholders applied to the outbound context. */
+        redacted_count: z.number().int().nonnegative().optional(),
         ...(editEnabled
           ? {
               edit: z
@@ -267,6 +282,10 @@ export function registerCoderTool(
         refinement: z
           .object({
             rounds: z.number().int().nonnegative(),
+            /** Why refinement ended (e.g. judge-unavailable, unparseable, error). */
+            status: z.string().optional(),
+            /** Which role produced the critique: "judge", or "drafter" as fallback. */
+            critiqued_by: z.string().optional(),
             critique_summary: z.string().optional(),
             issues: z.array(z.object({ severity: z.string(), description: z.string() })).optional(),
           })
@@ -490,7 +509,9 @@ export function registerCoderTool(
                   ? "; via inference.model"
                   : dispatched.route === "worker"
                     ? "; via inference.worker_targets.coder"
-                    : "") +
+                    : dispatched.route === "persona_worker"
+                      ? "; via inference.personas.coder.model"
+                      : "") +
               (dispatched.redactedCount > 0
                 ? `; ${dispatched.redactedCount} secret(s) redacted before dispatch, restored here`
                 : "") +
@@ -558,7 +579,7 @@ export function registerCoderTool(
           });
         }
         const msg = backendUnavailableMessage(err);
-        if (msg !== null) return errorResult(msg);
+        if (msg !== null) return instrumented(tel, "coder", startMs, errorResult(msg));
         throw err;
       }
     },

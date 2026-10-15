@@ -69,3 +69,12 @@ memory. Lesson: run a KB `search` before *every* external fetch, not once.
   carries it; the capture/restore mechanics are unbuilt.
 
 R6 (multi-provider & remote, incl. the companion app) remains ON HOLD.
+
+## Rebaseline 2026-10-08
+
+- "slider" (lines 40, 45): retired (ADR-0004); now `compression.level`.
+- "Auto-resume / auto-service daemon" follow-up: dropped by design, Decision 37 (`docs/golem-spec.md:520`); do not read it as pending.
+- "R5.3 grounding into `task run`": shipped, `src/cli/task-grounding.ts` calls `gatherGrounding` (`src/mcp/search.ts:256`).
+- "R5.4 init-wiring": still opt-in, `golem autonomy wire` (`src/cli/commands/autonomy.ts:123`); no autonomy wiring found in `src/cli/commands/init-uninit.ts`.
+- "R6 remains ON HOLD": R6 shipped 2026-07-23 (`docs/plan/SHIPPED.md:28`).
+- Other follow-ups (R5.5 demand check, worktree capture/restore): UNVERIFIED.

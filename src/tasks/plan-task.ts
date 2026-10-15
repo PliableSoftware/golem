@@ -30,9 +30,16 @@
  * justify a YAML dependency (CLAUDE.md's dependency rule, Decision 53's tier ladder).
  */
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { planMetaSchema, TASK_STATES, type Task, taskSchema } from "./types.js";
+import { replaceViaTemp } from "../config/file-io.js";
+import {
+  LEGACY_BLOCKED_STATE,
+  planMetaSchema,
+  TASK_STATES,
+  type Task,
+  taskSchema,
+} from "./types.js";
 
 /** `docs/plan/tasks/` for a project. */
 export function planTasksDir(projectDir: string): string {
@@ -52,6 +59,29 @@ function parseList(value: string): string[] {
   return [trimmed];
 }
 
+/**
+ * Decode a YAML flow scalar: `"a \"b\""` and `'it''s'` lose their delimiters and escapes.
+ * A bare value passes through untouched. Without this a quoted title reaches the
+ * roadmap with its quotes and backslashes printed literally.
+ */
+function unquoteScalar(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\(["\\])/g, "$1");
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+  return value;
+}
+
+/** Inverse of {@link unquoteScalar}: quote only when a bare write would not read back. */
+function quoteScalar(value: string): string {
+  if (/^["']/.test(value) || value !== value.trim()) {
+    return `"${value.replace(/["\\]/g, "\\$&")}"`;
+  }
+  return value;
+}
+
 const LIST_KEYS = new Set(["depends_on", "touches"]);
 
 /**
@@ -60,7 +90,7 @@ const LIST_KEYS = new Set(["depends_on", "touches"]);
  * Throws on a malformed document rather than returning a partial one: unlike a
  * telemetry read (fail-open, the point is not to lose the request), a task file that
  * does not parse is work about to be silently dropped from the roadmap. The *store*
- * decides how loud that is — `list()` skips and keeps going, `get()` surfaces it.
+ * decides how loud that is — `listWithProblems()` reports it and keeps going, `get()` surfaces it.
  */
 export function parsePlanTask(raw: string): Task {
   const lines = raw.split("\n");
@@ -79,14 +109,18 @@ export function parsePlanTask(raw: string): Task {
     if (colonAt === -1) throw new Error(`malformed frontmatter line (no ':'): ${line}`);
     const key = line.slice(0, colonAt).trim();
     const value = line.slice(colonAt + 1).trim();
-    values[key] = LIST_KEYS.has(key) ? parseList(value) : value;
+    values[key] = LIST_KEYS.has(key) ? parseList(value) : unquoteScalar(value);
   }
 
   const id = values.task;
   if (typeof id !== "string" || id === "") {
     throw new Error('plan task frontmatter is missing "task" (the stable id, e.g. R8.5)');
   }
-  const state = typeof values.state === "string" ? values.state : "queued";
+  const rawState = typeof values.state === "string" ? values.state : "queued";
+  // Read compatibility (H2): `blocked` is metadata, not a state. An old doc that says
+  // `state: blocked` is a queued task whose `blocked:` line (or a placeholder) is the reason.
+  const legacyBlocked = rawState === LEGACY_BLOCKED_STATE;
+  const state = legacyBlocked ? "queued" : rawState;
   if (!(TASK_STATES as readonly string[]).includes(state)) {
     throw new Error(`plan task "${id}" has an unknown state "${state}"`);
   }
@@ -106,7 +140,9 @@ export function parsePlanTask(raw: string): Task {
     ...(typeof values.gate === "string" && values.gate !== "" ? { gate: values.gate } : {}),
     ...(typeof values.blocked === "string" && values.blocked !== ""
       ? { blocked: values.blocked }
-      : {}),
+      : legacyBlocked
+        ? { blocked: "blocked (legacy `state: blocked`, no reason recorded)" }
+        : {}),
     dependsOn: Array.isArray(values.depends_on) ? values.depends_on : [],
     touches: Array.isArray(values.touches) ? values.touches : [],
   });
@@ -131,14 +167,14 @@ export function serializePlanTask(task: Task): string {
   const head = [
     DELIMITER,
     `task: ${task.id}`,
-    `title: ${task.title ?? task.id}`,
+    `title: ${quoteScalar(task.title ?? task.id)}`,
     `state: ${task.state}`,
     `owner: ${plan.owner}`,
     `size: ${plan.size}`,
     ...(plan.discipline !== undefined ? [`discipline: ${plan.discipline}`] : []),
-    ...(plan.design !== undefined ? [`design: ${plan.design}`] : []),
-    ...(plan.gate !== undefined ? [`gate: ${plan.gate}`] : []),
-    ...(plan.blocked !== undefined ? [`blocked: ${plan.blocked}`] : []),
+    ...(plan.design !== undefined ? [`design: ${quoteScalar(plan.design)}`] : []),
+    ...(plan.gate !== undefined ? [`gate: ${quoteScalar(plan.gate)}`] : []),
+    ...(plan.blocked !== undefined ? [`blocked: ${quoteScalar(plan.blocked)}`] : []),
     `depends_on: [${plan.dependsOn.join(", ")}]`,
     `touches: [${plan.touches.join(", ")}]`,
     `created: ${task.createdAt}`,
@@ -158,6 +194,15 @@ export function planTaskSlug(id: string): string {
   return path.basename(id.replace(/[^\w.-]+/g, "-"));
 }
 
+/** A plan-task document that could not be read: which file, and why. */
+export interface PlanTaskProblem {
+  /** File name inside `docs/plan/tasks/` (stable across machines, used by the index). */
+  readonly name: string;
+  /** Absolute path, for the terminal. */
+  readonly path: string;
+  readonly reason: string;
+}
+
 /**
  * File-backed store over `docs/plan/tasks/*.md`.
  *
@@ -173,25 +218,45 @@ export class PlanTaskStore {
     this.#dir = planTasksDir(projectDir);
   }
 
-  /** Every readable plan task. An unparseable file is skipped, never fatal to a list. */
-  async list(): Promise<Task[]> {
+  /**
+   * Every readable plan task, plus every document that could not be read.
+   *
+   * One bad file must not hide the rest of the roadmap, but it must not vanish
+   * either: DUST1.7 row 25 found four docs (one an open bug) silently absent from
+   * ROADMAP. Callers decide how loud to be; none may ignore `problems`.
+   */
+  async listWithProblems(): Promise<{ tasks: Task[]; problems: PlanTaskProblem[] }> {
     let names: string[];
     try {
       names = await readdir(this.#dir);
     } catch {
-      return [];
+      return { tasks: [], problems: [] };
     }
     const tasks: Task[] = [];
-    for (const name of names) {
+    const problems: PlanTaskProblem[] = [];
+    for (const name of names.sort()) {
       if (!name.endsWith(".md") || name === "README.md") continue;
+      const file = path.join(this.#dir, name);
       try {
-        const raw = await readFile(path.join(this.#dir, name), "utf8");
+        const raw = await readFile(file, "utf8");
         tasks.push(parsePlanTask(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw));
-      } catch {
-        // Skip: one bad file must not hide the rest of the roadmap.
+      } catch (err) {
+        problems.push({
+          name,
+          path: file,
+          reason: err instanceof Error ? err.message : String(err),
+        });
       }
     }
-    return tasks;
+    return { tasks, problems };
+  }
+
+  /**
+   * Every readable plan task. Drops unparseable files — use {@link listWithProblems}
+   * wherever the result is shown to a person or written to a generated file.
+   */
+  async list(): Promise<Task[]> {
+    return (await this.listWithProblems()).tasks;
   }
 
   /** One task by id, or null. */
@@ -219,9 +284,7 @@ export class PlanTaskStore {
     });
     await mkdir(this.#dir, { recursive: true });
     const file = this.#pathFor(stored.id);
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, serializePlanTask(stored), "utf8");
-    await rename(tmp, file);
+    await replaceViaTemp(file, serializePlanTask(stored));
     return stored;
   }
 

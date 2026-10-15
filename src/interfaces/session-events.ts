@@ -12,6 +12,35 @@
  *   resumes with `Last-Event-ID: <seq>` and receives strictly what came after.
  *   An implementation MUST NOT reuse or reorder a `seq` within a session.
  *
+ * - **Amendment 2026-10-09 (DUST3.15, USER decision DROP): one frame has no
+ *   `seq`.** When the server closes a subscriber for backpressure it writes a
+ *   synthetic {@link SessionDroppedFrame}. That frame is not a session event: it
+ *   is not stored in the ring and never published, so it has no place in the
+ *   sequence. Stamping it `cursor + 1` collided with the next real event; stamping
+ *   the last real seq reused one. It therefore carries NO `seq` field and the SSE
+ *   framing emits NO `id:` line for it, so an `EventSource` keeps its last real
+ *   `lastEventId` and a resume receives exactly what it missed. It is deliberately
+ *   not a member of {@link SessionEvent}, so "every SessionEvent carries a seq"
+ *   still holds. A client MUST treat it as "this connection was dropped, reconnect"
+ *   and MUST NOT render it as the session having ended.
+ *
+ * - **Amendment 2026-10-09 (review fix): the dropped frame is for BACKPRESSURE
+ *   only.** The session is live in that case and the client reconnects. A host
+ *   shutdown is the session ending, so it publishes a real, stamped
+ *   {@link SessionEndedEvent} (never the dropped frame) and the client must not
+ *   reconnect.
+ *
+ * - **Amendment 2026-10-09 (second review): `attached` has no SSE `id:` line.**
+ *   It is stamped `seq: 0` but is not a ring event. An `id: 0` made a native
+ *   `EventSource` reconnect send `Last-Event-ID: 0`, which the server reads as a
+ *   fresh attach (events past the ring lost, no gap warning). Only seq > 0 frames
+ *   carry an `id:`.
+ *
+ * - **Amendment 2026-10-09 (review fix): `attached` carries an `epoch`.** A bus
+ *   rebuilt under the same session id restarts `seq` at 1. `epoch` identifies the
+ *   bus instance; when it differs from the one a client last saw, the client's
+ *   held seq belongs to a dead instance and MUST be discarded (resume from 0).
+ *
  * - **Connection state is an EVENT, never an inference.** ADR-0006's rule — "a
  *   dropped link shows not connected, never a stale approved" — is inherited
  *   here for conversation, where the same failure looks like a message the user
@@ -104,6 +133,18 @@ export interface SessionEndedEvent {
 }
 
 /**
+ * The synthetic frame sent to a subscriber the server dropped for backpressure.
+ * NOT a {@link SessionEvent}: no `seq`, no SSE `id:`. The session is still live;
+ * only this connection ended (a backpressure drop, never a shutdown). See the
+ * 2026-10-09 amendments above.
+ */
+export interface SessionDroppedFrame {
+  readonly type: "ended";
+  readonly dropped: true;
+  readonly reason: string;
+}
+
+/**
  * Sent immediately on attach, before any replay, so a client knows what it is
  * looking at and from where.
  */
@@ -113,6 +154,8 @@ export interface SessionAttachedEvent {
   readonly sessionId: string;
   /** The seq the client is resuming from, or 0 for a fresh attach. */
   readonly resumedFrom: number;
+  /** Identifies the bus instance whose `seq`s follow. See the 2026-10-09 amendment. */
+  readonly epoch: string;
   /**
    * True when the client asked to resume from a cursor the server no longer
    * holds. The client has a GAP and must say so rather than render a continuous

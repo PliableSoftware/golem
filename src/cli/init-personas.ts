@@ -21,9 +21,9 @@
  * for a prefix scan to decide removal — because enumerating is easier than
  * remembering — is precisely the mistake this comment exists to prevent.
  *
- * (There is a live fixture for this: `.claude/agents/golem-scribe.md` was
- * hand-authored on 2026-08-30 with no managed record, specifically so the
- * never-delete-what-we-did-not-write property has something real to hold.)
+ * (There was a live fixture for this: `.claude/agents/golem-scribe.md` was
+ * hand-authored on 2026-08-30 with no managed record. The scribe is ledgered
+ * now, so it no longer stands as that fixture.)
  *
  * Contrast `.claude/skills/golem/`, which is a Golem-OWNED namespace directory
  * and may be taken whole — the asymmetry R13.12 recorded and this inherits.

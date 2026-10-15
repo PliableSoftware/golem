@@ -4,7 +4,8 @@
  *
  * The §88 census that scoped this workstream was measured by hand, which means it
  * was already stale the next time a description changed (and it did: adding the
- * Decision-52 dial explanation to `level` took it from ~78 to ~191 tokens). This
+ * Decision-52 dial explanation to the since-retired `level` tool took it from
+ * ~78 to ~191 tokens — a historical figure). This
  * module lists the catalog by connecting to the real server over the SDK's
  * in-memory transport, so the census cannot drift from what is actually sent.
  *

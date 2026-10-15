@@ -12,7 +12,7 @@
 
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { defaultUserDir, loadConfig } from "../../config/index.js";
+import { defaultUserDir, loadEffectiveConfig } from "../../config/index.js";
 import type { ProxySettings } from "../../config/schema.js";
 import {
   type CredentialFault,
@@ -122,7 +122,7 @@ export async function collectGateways(
   env: Readonly<Record<string, string | undefined>> = process.env,
   opts: { readonly store_backend?: CredentialStore } = {},
 ): Promise<GatewaysReport> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const selected = settings.inference.model ?? null;
   const gateways = settings.proxy.gateways ?? [];
   const defaultId = defaultGatewayId(settings.proxy.upstream_provider);
@@ -185,8 +185,9 @@ export async function collectGateways(
     selected !== defaultId &&
     !gateways.some((g) => g.id === selected) &&
     selectedTarget === undefined;
-  // `active` stays a GATEWAY id: the gateway itself when one was selected, the
-  // gateway BEHIND a selected target, else the synthetic default.
+  // `active` is the gateway id: the gateway itself when one was selected, the
+  // gateway BEHIND a selected target, the target's own id when that target has
+  // no gateway (`accountId` null), else the synthetic default.
   const active =
     defaultActive || activeUnknown
       ? defaultId

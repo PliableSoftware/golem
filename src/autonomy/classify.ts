@@ -45,6 +45,22 @@ const WRITE_TOOLS = new Set([
 /** Tools that reach OUTSIDE the machine / are hard to reverse. Always gated. */
 const OUTWARD_TOOLS = new Set(["mcp__golem__wiki_upsert"]);
 
+/**
+ * `git branch` listing forms only. A ref after `--contains`/`--merged`/... is a
+ * filter, and `--sort` takes a key; neither creates or deletes anything. A bare
+ * name, `-m`, `-f`, `-d`/`-D` never match, so they stay gated or destructive.
+ */
+const GIT_REF = String.raw`[\w./@^~][\w./@^~-]*`;
+const GIT_BRANCH_LIST_FLAG = [
+  String.raw`-a|-r|-v|-vv|-i|--all|--remotes|--verbose|--list|-l|--show-current`,
+  String.raw`--(?:no-)?(?:contains|merged)(?:\s+${GIT_REF})?`,
+  String.raw`--points-at\s+${GIT_REF}`,
+  String.raw`--sort(?:=|\s+)-?[\w:.-]+`,
+].join("|");
+const GIT_BRANCH_LIST_RE = new RegExp(
+  String.raw`^git\s+branch(?:\s+(?:${GIT_BRANCH_LIST_FLAG}))*\s*$`,
+);
+
 /** Bash commands safe to treat as read-only (exact leading-token / phrase match). */
 const SAFE_BASH = [
   /^ls(\s|$)/,
@@ -55,7 +71,10 @@ const SAFE_BASH = [
   /^tail\s/,
   /^wc\s/,
   /^which\s/,
-  /^git\s+(status|diff|log|show|branch|remote\s+-v)(\s|$)/,
+  /^git\s+(status|diff|log|show|remote\s+-v)(\s|$)/,
+  // `git branch` creates, renames and deletes branches, so only the listing
+  // forms are read. Anything else (`-D`, `-m`, a bare branch name) is gated.
+  GIT_BRANCH_LIST_RE,
   /^npm\s+(test|run\s+(test|lint|typecheck|format:check))(\s|$)/,
   /^(npx\s+)?(tsc|vitest|biome)(\s|$)/,
   /^node\s+--version/,
@@ -72,6 +91,9 @@ const DESTRUCTIVE_BASH = [
   /\bgit\s+reset\s+--hard/i,
   /\bgit\s+clean\s+-[a-z]*f/i,
   /\bgit\s+checkout\s+--\s/i,
+  // Branch deletion (`-d`, `-D`, `--delete`, in any flag position): local data
+  // loss, and `-D` skips the merged check.
+  /\bgit\s+branch\s+(?:\S+\s+)*(?:-[a-z]*d[a-z]*|--delete)(?=\s|$)/i,
   /\bdd\s+if=/i,
   /\bmkfs\b/i,
   /\btruncate\b/i,
@@ -104,7 +126,99 @@ const OUTWARD_BASH = [
  * lists only catch their specific shapes, so a command that composes at all is
  * `unknown` (gated), never `read`. `<` (input redirection) stays allowed.
  */
-const SHELL_COMPOSITION_RE = /[;&|>`]|\$\(/;
+const SHELL_COMPOSITION_RE = /[;&|>`\n\r]|\$\(/;
+
+/**
+ * Flags that make an otherwise read-only safe-listed command WRITE to disk:
+ * linter autofix (`biome check --write`, `--fix`, `--apply`), snapshot update
+ * (`vitest -u`), and `--output=<path>` on the git diff family. Checked with a
+ * build tool's quotes removed (data quotes blanked otherwise), only for commands that matched {@link SAFE_BASH}; the
+ * result is `write`, never `read`.
+ */
+const WRITE_FLAG_RE =
+  /(?:^|\s)(?:--write|--fix|--fix-type|--apply|--apply-unsafe|--unsafe|--output|--output-file|--outfile|--out-dir|--outdir|--update|--update-snapshots?|--updateSnapshot)(?=[\s=]|$)/i;
+const VITEST_UPDATE_RE = /^(?:npx\s+)?(?:vitest|npm\s+(?:run\s+)?test)\b.*\s-u(?=\s|$)/;
+/** Commands whose arguments are all flags/paths for a build tool, so a quoted flag still reaches it. */
+const TOOL_COMMAND_RE = /^(?:npx\s+)?(?:tsc|vitest|biome|npm|git)(?:\s|$)/;
+/** Split a command into the words a shell would hand the program: quotes removed, escapes resolved. */
+function shellWords(cmd: string): string[] {
+  const words: string[] = [];
+  let cur = "";
+  let inWord = false;
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < cmd.length; i += 1) {
+    const c = cmd[i] ?? "";
+    const next = cmd[i + 1] ?? "";
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      else cur += c;
+    } else if (quote === '"') {
+      if (c === "\\" && /["\\$`]/.test(next)) {
+        cur += next;
+        i += 1;
+      } else if (c === '"') quote = null;
+      else cur += c;
+    } else if (c === "\\" && next !== "") {
+      cur += next; // an unquoted backslash escapes any char: `--outpu\t` is `--output`
+      inWord = true;
+      i += 1;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      inWord = true;
+    } else if (/\s/.test(c)) {
+      if (inWord) words.push(cur);
+      cur = "";
+      inWord = false;
+    } else {
+      cur += c;
+      inWord = true;
+    }
+  }
+  if (inWord) words.push(cur);
+  return words;
+}
+
+/** `git` options whose NEXT word is a search term or name, never a flag (`git log --grep "--fix"`). */
+const GIT_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "--grep",
+  "--author",
+  "--committer",
+  "--since",
+  "--until",
+  "--after",
+  "--before",
+  "-S",
+  "-G",
+  "-e",
+]);
+
+/** Words of a git command that git itself would read as options (not values, not paths after `--`). */
+function gitOptionWords(words: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i] ?? "";
+    if (w === "--") break;
+    if (GIT_VALUE_FLAGS.has(w)) {
+      i += 1; // the value
+      continue;
+    }
+    out.push(w);
+  }
+  return out;
+}
+
+function writesToDisk(cmd: string): boolean {
+  if (!TOOL_COMMAND_RE.test(cmd)) {
+    const seen = blankQuoted(cmd);
+    return WRITE_FLAG_RE.test(seen) || VITEST_UPDATE_RE.test(seen);
+  }
+  // A tool sees `"--write"` as `--write` (the shell strips the quotes), so the flag
+  // is judged on the words the program receives; for `cat '--write'` it is data.
+  const words = shellWords(cmd);
+  const isGit = (words[0] === "npx" ? words[1] : words[0]) === "git";
+  const seen = (isGit ? gitOptionWords(words) : words).join(" ");
+  return WRITE_FLAG_RE.test(seen) || VITEST_UPDATE_RE.test(seen);
+}
 
 function bashCommand(input: unknown): string | null {
   if (typeof input === "object" && input !== null && !Array.isArray(input)) {
@@ -202,12 +316,14 @@ export function classifyBash(command: string): ActionClass {
   // Composition (redirection, chaining, pipes, substitution) can hide a write
   // or a second command behind a safe leading token — never classify it read.
   if (SHELL_COMPOSITION_RE.test(cmd)) return "unknown";
-  if (SAFE_BASH.some((re) => re.test(cmd))) return "read";
+  if (SAFE_BASH.some((re) => re.test(cmd))) return writesToDisk(cmd) ? "write" : "read";
   // R8.12: retry the safe-list against the unwrapped command, so an installed
   // output compactor does not turn auto-approved reads into prompts. Safe-list
   // only — the danger checks already ran on the original.
   const unwrapped = stripOutputWrapper(cmd);
-  if (unwrapped !== cmd && SAFE_BASH.some((re) => re.test(unwrapped))) return "read";
+  if (unwrapped !== cmd && SAFE_BASH.some((re) => re.test(unwrapped))) {
+    return writesToDisk(unwrapped) ? "write" : "read";
+  }
   // A shell can do anything; an unrecognized command is gated, not assumed safe.
   return "unknown";
 }

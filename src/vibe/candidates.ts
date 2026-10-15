@@ -4,7 +4,7 @@
  * `~/.golem/vibe/candidates.jsonl` never reaches a prompt. It is a ledger of
  * corrections the capture layer saw, counted, so the quiz can ask about a
  * preference that RECURRED rather than one that happened once. A pattern seen
- * once is an edit; a pattern seen three times across three files is a
+ * once is an edit; a pattern seen `QUIZ_THRESHOLD` (2) times is a
  * preference, and that distinction is the only thing standing between a useful
  * question and a nag.
  *
@@ -75,9 +75,16 @@ export async function loadCandidates(store: VibeStore): Promise<Candidate[]> {
   return [...byKey.values()].sort((a, b) => b.seen - a.seen || a.key.localeCompare(b.key));
 }
 
-async function append(store: VibeStore, row: Candidate): Promise<void> {
+async function append(store: VibeStore, row: Candidate): Promise<Candidate> {
+  // DUSTSEC.9 (R7): `note` is the human's free text and the only field that can
+  // carry a secret. `key`/`from`/`to` are derived from style metrics (quote kind,
+  // indent width, ...) and `files` are paths used as a distinct-set, so they stay
+  // exact. Redacted BEFORE the append, so no raw form ever reaches the file.
+  const safe: Candidate =
+    row.note === undefined ? row : { ...row, note: await store.redact(row.note) };
   await mkdir(path.dirname(store.paths.candidates), { recursive: true });
-  await appendFile(store.paths.candidates, `${JSON.stringify(row)}\n`, "utf8");
+  await appendFile(store.paths.candidates, `${JSON.stringify(safe)}\n`, "utf8");
+  return safe;
 }
 
 /**
@@ -110,8 +117,7 @@ export async function recordSignal(
     state: existing?.state ?? "open",
     ...(existing?.note === undefined ? {} : { note: existing.note }),
   };
-  await append(store, row);
-  return row;
+  return await append(store, row);
 }
 
 /**
@@ -125,13 +131,25 @@ export async function quizzable(
   return (await loadCandidates(store)).filter((c) => c.state === "open" && c.seen >= threshold);
 }
 
-/** Mark a candidate confirmed. The caller writes it into the guide. */
+/**
+ * Mark a candidate confirmed. The caller writes it into the guide.
+ *
+ * A `rejected` key is a tombstone — the user declined it — so confirming it
+ * throws unless `force` is set (an explicit change of mind).
+ */
 export async function confirmCandidate(
   store: VibeStore,
   key: string,
   nowIso: string,
   note?: string,
+  options: { readonly force?: boolean } = {},
 ): Promise<Candidate | null> {
+  const existing = (await loadCandidates(store)).find((c) => c.key === key);
+  if (existing?.state === "rejected" && options.force !== true) {
+    throw new Error(
+      `candidate ${key} was rejected; confirming it would undo that decision — pass --force to confirm it anyway`,
+    );
+  }
   return await transition(store, key, "confirmed", nowIso, note);
 }
 
@@ -159,6 +177,5 @@ async function transition(
     lastSeen: nowIso,
     ...(note === undefined ? {} : { note }),
   };
-  await append(store, row);
-  return row;
+  return await append(store, row);
 }

@@ -20,7 +20,7 @@
  * config loader — never on `./init.js` or the hooks barrel.
  */
 
-import { type LayerName, loadConfig, writeSetting } from "../config/index.js";
+import { type LayerName, loadEffectiveConfig, writeSetting } from "../config/index.js";
 import {
   type BrevityLevel,
   coerceCompressionLevel,
@@ -65,6 +65,8 @@ export interface DialInfo {
   readonly label: string;
   readonly layer: LayerName;
   readonly source?: string;
+  /** ADR-0008: the winning declaration is `!important` (including `default!`). */
+  readonly important?: true;
 }
 
 export interface DialReadOptions {
@@ -74,7 +76,7 @@ export interface DialReadOptions {
 }
 
 export async function getDialInfo(kind: DialKind, options: DialReadOptions): Promise<DialInfo> {
-  const { settings, provenance } = await loadConfig({
+  const { settings, provenance } = await loadEffectiveConfig({
     projectDir: options.projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),
@@ -89,6 +91,7 @@ export async function getDialInfo(kind: DialKind, options: DialReadOptions): Pro
       kind === "compression" ? compressionName(coerceCompressionLevel(setting)) : String(setting),
     layer: entry?.layer ?? "default",
     ...(entry?.source !== undefined && { source: entry.source }),
+    ...(entry?.important === true && { important: true as const }),
   };
 }
 
@@ -118,7 +121,11 @@ export interface SetDialResult {
   readonly file: string;
   readonly info: DialInfo;
   /** Set when a higher settings layer overrides the value just written. */
-  readonly overriddenBy?: { readonly layer: LayerName; readonly source?: string };
+  readonly overriddenBy?: {
+    readonly layer: LayerName;
+    readonly source?: string;
+    readonly important?: true;
+  };
 }
 
 export interface DialWriteOptions extends DialReadOptions {
@@ -169,6 +176,7 @@ export async function setDial(
       overriddenBy: {
         layer: info.layer,
         ...(info.source !== undefined && { source: info.source }),
+        ...(info.important === true && { important: true as const }),
       },
     }),
   };
@@ -207,10 +215,10 @@ export function compressionEffectNote(value: string): string {
         "(To forward requests untouched, redaction included, that is `golem off` — which persists `proxy.bypass_all` until `golem on`.)"
       );
     case "1":
-      return "lossless — byte-faithful dedup/compaction. Meaning is preserved exactly.";
+      return "lossless and prefix-stable dedup/compaction. Meaning is preserved exactly.";
     case "2":
       return (
-        "balanced — adds lossy semantic compression (stale-turn drop) and a semantic cache. " +
+        "balanced — adds lossy semantic compression (stale-turn drop). " +
         "Off on a prompt-caching upstream (Decision 31), where it behaves as lossless."
       );
     default:

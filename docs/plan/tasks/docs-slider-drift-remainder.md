@@ -72,3 +72,7 @@ weaken the rule to make a file pass — clean the file.
 ## Outcome
 
 shipped
+
+## Dust 2026-10-08 note
+
+Dust 2026-10-08: gate no longer met because `coerceLevel` (`src/config/control-surface-types.ts:205-210`) still throws `invalid slider level` for `slider.level`; it has no caller, so it is dead code. Not reopened. (source: DUST1.11 audit, `docs/plan/audit/dust-1/DUST1.11.md` Plan hygiene; not re-verified live)

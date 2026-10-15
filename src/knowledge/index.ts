@@ -5,7 +5,7 @@
  * embedding + rerank (C3), and MEMORY-scope federation (C4/sidecar) follow.
  *
  * Native embedded vector engines (LanceDB / sqlite-vec) are OPTIONAL deps loaded
- * lazily behind the driver seam so the default `npx golem-run` install stays
+ * lazily behind the driver seam so the default `npx @pliable/golem` install stays
  * pure-TS (CLAUDE.md; decision memo in verification-notes §26).
  */
 
@@ -16,11 +16,7 @@ import type { VectorDriver } from "./driver.js";
 import { inferenceEmbedFn } from "./embedder.js";
 import { FileVectorDriver } from "./file-driver.js";
 import { hashingEmbedFn } from "./hashing-embedder.js";
-import {
-  GolemKnowledgeBase,
-  type KnowledgeBaseOptions,
-  NotImplementedYetError,
-} from "./knowledge-base.js";
+import { GolemKnowledgeBase, type KnowledgeBaseOptions } from "./knowledge-base.js";
 
 export type { RawChunk } from "./chunker.js";
 export {
@@ -69,24 +65,29 @@ export {
   readCollectionDim,
 } from "./file-driver.js";
 export type { FileChangeBatch, FileWatcher, FileWatcherOptions } from "./file-watcher.js";
-export { watchPath } from "./file-watcher.js";
+export { WatchCapExceededError, watchPath } from "./file-watcher.js";
 export { DEFAULT_HASH_DIM, hashEmbed, hashingEmbedFn, tokenize } from "./hashing-embedder.js";
 export type { FileState, IngestPlan, PreparedChunk } from "./ingest.js";
 export {
+  chunkFilesChecked,
   chunkFilesRelativeTo,
   chunkIdFor,
   MAX_FILE_BYTES,
   planIngest,
+  projectBaseDir,
   SKIP_DIRS,
   scanFiles,
+  scanTree,
+  sourcePathFor,
   toPosix,
+  WalkLimitError,
 } from "./ingest.js";
 export type { EmbedFn, IncrementalIngest, KnowledgeBaseOptions } from "./knowledge-base.js";
 export {
-  asFederatedSearch,
   GolemKnowledgeBase,
   isMemoryChunkId,
   NotImplementedYetError,
+  PartialReindexError,
   supportsIncremental,
 } from "./knowledge-base.js";
 export type { RawPage, RawPageHeaders } from "./raw-fetch.js";
@@ -129,8 +130,28 @@ export {
   hasParseError,
   isSymbolExtractable,
 } from "./tree-sitter-chunker.js";
+export type {
+  AppliedChange,
+  IndexVerdict,
+  IndexWatchDaemon,
+  IndexWatchDaemonOptions,
+  IndexWatchStats,
+  Timers,
+} from "./watch-daemon.js";
+export {
+  startIndexWatchDaemon,
+  WATCH_APPLY_FILES,
+  WATCH_MAX_FILES,
+  WATCH_POLL_MS,
+} from "./watch-daemon.js";
 export type { WebCacheEntry, WebCacheMeta } from "./web-cache.js";
-export { isFresh, WebCache, webCacheDir, webCacheKey } from "./web-cache.js";
+export {
+  isFresh,
+  MAX_WEB_INGEST_CHARS,
+  WebCache,
+  webCacheDir,
+  webCacheKey,
+} from "./web-cache.js";
 
 /** Where a project's embedded vector store lives on disk. */
 export function knowledgeDir(projectDir: string): string {
@@ -139,9 +160,7 @@ export function knowledgeDir(projectDir: string): string {
 
 export interface OpenKnowledgeBaseOptions extends KnowledgeBaseOptions {
   readonly projectDir: string;
-  /** Qdrant server URL (spec Decision 12). When set, uses the server driver. */
-  readonly vectorDbUrl?: string;
-  /** Inject a driver directly (tests, or a future native driver). */
+  /** Inject a driver directly (tests, or another driver). */
   readonly driver?: VectorDriver;
   /**
    * WS-D inference service — its `embed` becomes the KB embedder (C3). Ignored
@@ -155,8 +174,8 @@ export interface OpenKnowledgeBaseOptions extends KnowledgeBaseOptions {
 
 /**
  * Build a KnowledgeBase, selecting the vector driver and the embedder:
- *  - driver: an injected `driver` wins; else `vectorDbUrl` → Qdrant (stub);
- *    else the embedded default (in-memory at C1 until the native engine, §26);
+ *  - driver: an injected `driver` wins; else the embedded default
+ *    (`FileVectorDriver`, durable; in-memory is for tests);
  *  - embedder: explicit `embed` wins; else `inference` (WS-D bge-m3, SEMANTIC);
  *    else the pure-TS hashing embedder (LEXICAL) so the KB works with zero setup.
  */
@@ -174,12 +193,6 @@ export function openKnowledgeBase(options: OpenKnowledgeBaseOptions): KnowledgeB
 
 function selectDriver(options: OpenKnowledgeBaseOptions): VectorDriver {
   if (options.driver !== undefined) return options.driver;
-  if (options.vectorDbUrl !== undefined && options.vectorDbUrl !== "") {
-    throw new NotImplementedYetError(
-      `Qdrant server driver (vector_db_url=${options.vectorDbUrl})`,
-      "C1-followup",
-    );
-  }
   // Embedded default: the durable, pure-TS file driver under knowledgeDir — an
   // index survives across sessions with no native dependency (§26 refinement:
   // brute-force at dev-KB scale; LanceDB stays the OPTIONAL scale upgrade behind

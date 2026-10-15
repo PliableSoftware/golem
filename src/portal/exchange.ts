@@ -118,6 +118,9 @@ async function postToken(options: TokenPostOptions): Promise<z.infer<typeof toke
         accept: "application/json",
       },
       body: options.body.toString(),
+      // A 307/308 would replay this body (code_verifier / refresh token) to a
+      // host the origin check never saw. Never follow; refuse below.
+      redirect: "manual",
       signal: controller.signal,
     });
   } catch (err) {
@@ -128,6 +131,16 @@ async function postToken(options: TokenPostOptions): Promise<z.infer<typeof toke
     );
   } finally {
     clearTimeout(timer);
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    throw new PortalAuthError(
+      "token_exchange_failed",
+      `the token endpoint for the ${options.what} answered a redirect (${response.status}); ` +
+        "redirects are refused so the credential is never re-sent to another host. " +
+        "Check `portal.issuer`.",
+      response.status,
+    );
   }
 
   let payload: unknown = null;
@@ -169,6 +182,9 @@ function toTokenSet(
   return {
     issuer: binding.issuer,
     client_id: binding.clientId,
+    // A refresh stays bound to the origin the token was first linked for.
+    ...(previous?.api_origin === undefined ? {} : { api_origin: previous.api_origin }),
+    ...(previous?.issuer_origin === undefined ? {} : { issuer_origin: previous.issuer_origin }),
     access_token: response.access_token,
     ...(refresh === undefined ? {} : { refresh_token: refresh }),
     token_type: response.token_type,

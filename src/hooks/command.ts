@@ -159,7 +159,7 @@ export function buildHookCommand(options: HookCommandOptions = {}): Command {
   hook
     .command("permission-request")
     .description(
-      "PermissionRequest handler: R12.12 — deny destructive/outward before a dialog can open",
+      "PermissionRequest handler: inert (DUSTSEC.10) — emits no decision, so the native dialog asks the human",
     )
     .action(async () => {
       try {

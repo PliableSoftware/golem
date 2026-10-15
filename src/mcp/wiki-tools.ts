@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WikiPage, WikiPageType, WikiStore } from "../interfaces/index.js";
 import { UnknownWikiPageError, WikiWriteConflictError } from "../interfaces/index.js";
+import { UnsafeWikiPathError } from "../wiki/write-redaction.js";
 import { errorResult, instrumented, type ToolTelemetry } from "./shared.js";
 
 const WIKI_PAGE_TYPES: [WikiPageType, ...WikiPageType[]] = [
@@ -99,10 +100,11 @@ export function registerWikiTools(server: McpServer, wiki: WikiStore, tel?: Tool
       description:
         "Create or refine a page in the project's committed wiki (spec Decisions " +
         "28/29, de-gated by Decision 44). Author freely — no prior approval needed; " +
-        "every write is committed to git, so it's reviewable and revertible. " +
+        "this writes files into the wiki directory and does not commit them, so " +
+        "the change is reviewable and revertible once you commit it. " +
         "Redaction-before-storage still applies and contradictions must be surfaced " +
         "to the human, never auto-resolved. If a page already exists at rel_path, " +
-        "the new body is appended under a dated separator and tags/sources are " +
+        "the new body is appended under a `---` separator and tags/sources are " +
         "merged in; this never replaces existing content wholesale. title/type must " +
         "match the existing page's when one is already there.",
       inputSchema: {
@@ -132,6 +134,7 @@ export function registerWikiTools(server: McpServer, wiki: WikiStore, tel?: Tool
       },
     },
     async ({ rel_path, title, type, tags, sources, body }) => {
+      const startMs = Date.now();
       let existedBefore = true;
       try {
         await wiki.readPage(rel_path);
@@ -148,7 +151,7 @@ export function registerWikiTools(server: McpServer, wiki: WikiStore, tel?: Tool
           frontmatter: { title, type, tags: tags ?? [], sources: sources ?? [] },
           body,
         });
-        return {
+        return instrumented(tel, "wiki_upsert", startMs, {
           content: [
             {
               type: "text",
@@ -156,9 +159,10 @@ export function registerWikiTools(server: McpServer, wiki: WikiStore, tel?: Tool
             },
           ],
           structuredContent: { ...structuredWikiPage(page), appended: existedBefore },
-        };
+        });
       } catch (err) {
-        if (err instanceof WikiWriteConflictError) return errorResult(err.message);
+        if (err instanceof WikiWriteConflictError || err instanceof UnsafeWikiPathError)
+          return errorResult(err.message);
         throw err;
       }
     },

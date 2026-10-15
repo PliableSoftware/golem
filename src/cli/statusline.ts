@@ -4,7 +4,7 @@
  * Claude Code runs this every turn and renders whatever it prints under the
  * prompt (verification-notes §28). We merge Claude Code's per-session stdin
  * JSON (context %, cache-read hits, cost, rate limits) with Golem's own state
- * (slider, upstream, cumulative savings from A4 telemetry) into one compact
+ * (compression dial, upstream, cumulative savings from A4 telemetry) into one compact
  * line, e.g.:
  *
  *   ⬢ Golem → ◆ foundry (gpt-5) · 🗜 lossless · ✂ full
@@ -23,7 +23,7 @@ import path from "node:path";
 // §103. Dependency-free pure module, so the per-prompt surface pays nothing to
 // predict the compression gate (verification-notes §86).
 import { resolveEffectiveCompression } from "../compression/effective-level.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 // `../hooks/session-state.js`, not the `../hooks/index.js` barrel (~446ms — it
 // pulls every hook handler) for one function.
 import { type BlockKind, readSessionState, resolveBlock } from "../hooks/session-state.js";
@@ -233,7 +233,7 @@ export function blockedLabel(state: {
   return state.blockedKind === undefined ? "⏸ waiting" : `⏸ waiting (${state.blockedKind})`;
 }
 
-/** Human-facing name for a slider level, Title-cased ("balanced" → "Balanced"). */
+/** Human-facing name for a compression level, Title-cased ("balanced" → "Balanced"). */
 export function levelName(level: CompressionLevel): string {
   return compressionName(level);
 }
@@ -625,7 +625,7 @@ export function renderStatusLine(
   // showing nothing happening at all.
   if (golem.verifySegment) parts.push(yellow(golem.verifySegment));
   const waiting = blockedLabel(golem);
-  if (waiting !== "") parts.push(yellow(waiting));
+  if (waiting !== "") parts.push(dim(waiting));
   if (golem.updateAvailable === true) parts.push(yellow("⇧ update"));
 
   const line = parts.join(dim(" · "));
@@ -679,7 +679,7 @@ export async function collectGolemState(
   let effectiveLevel: CompressionLevel | undefined;
   let proxyPort: number | undefined;
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     compression = coerceCompressionLevel(settings.compression.level);
     bypassAll = settings.proxy.bypass_all;
     proxyPort = settings.proxy.port;

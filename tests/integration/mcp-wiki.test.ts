@@ -7,6 +7,9 @@
  * page, write conflict) must come back as actionable `isError` results.
  */
 
+import { randomBytes } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +18,7 @@ import {
   createStandaloneDeps,
   type GolemMcpServerDeps,
 } from "../../src/mcp/index.js";
+import { JsonlTelemetryStore } from "../../src/telemetry/index.js";
 import { FileWikiStore } from "../../src/wiki/index.js";
 import { useTempDirs } from "../helpers/tmp.js";
 
@@ -187,5 +191,105 @@ describe("MCP wiki tools (WS-W W2)", () => {
     });
     expect((result as { isError?: boolean }).isError).toBe(true);
     expect(textOf(result)).toContain("Input validation error");
+  });
+
+  // DUST3.8 S13: the wiki is a committed tree; nothing secret-shaped may reach it.
+  it("redacts a secret in the body and in frontmatter values, on disk and in the result", async () => {
+    const client = await connect(depsWithWiki());
+    const bodySecret = `ghp_${"a1B2c3D4".repeat(5)}`;
+    const tagSecret = `ghp_${"z9Y8x7W6".repeat(5)}`;
+    const sourceSecret = `ghp_${"q1w2e3r4".repeat(5)}`;
+    const titleSecret = `ghp_${"m5n6b7v8".repeat(5)}`;
+    const result = await client.callTool({
+      name: "wiki_upsert",
+      arguments: {
+        rel_path: "concepts/Leaky.md",
+        title: `Leaky ${titleSecret}`,
+        type: "concept",
+        tags: [tagSecret],
+        sources: [`https://example.com/?token=${sourceSecret}`],
+        body: `Token is ${bodySecret} here.`,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const onDisk = await readFile(path.join(dir, "concepts", "Leaky.md"), "utf8");
+    const returned = `${textOf(result)}\n${JSON.stringify(result.structuredContent)}`;
+    for (const secret of [bodySecret, tagSecret, sourceSecret, titleSecret]) {
+      expect(onDisk).not.toContain(secret);
+      expect(returned).not.toContain(secret);
+    }
+    expect(onDisk).toContain("Token is");
+  });
+
+  it("redacts an appended body on an existing page too", async () => {
+    const client = await connect(depsWithWiki());
+    const args = { rel_path: "concepts/Twice.md", title: "Twice", type: "concept" as const };
+    await client.callTool({ name: "wiki_upsert", arguments: { ...args, body: "first" } });
+    const secret = `ghp_${"k3j4h5g6".repeat(5)}`;
+    const second = await client.callTool({
+      name: "wiki_upsert",
+      arguments: { ...args, body: `second ${secret}` },
+    });
+    const onDisk = await readFile(path.join(dir, "concepts", "Twice.md"), "utf8");
+    expect(onDisk).not.toContain(secret);
+    expect(JSON.stringify(second.structuredContent)).not.toContain(secret);
+  });
+
+  // DUST3.8 h5: every other tool records a per-call event; wiki_upsert did not.
+  it("records a telemetry event for wiki_upsert", async () => {
+    const telDir = path.join(dir, "tel");
+    const store = new JsonlTelemetryStore(telDir);
+    const client = await connect({
+      ...depsWithWiki(),
+      defaultProjectId: "projW",
+      telemetry: store,
+    });
+    await client.callTool({
+      name: "wiki_upsert",
+      arguments: { rel_path: "concepts/T.md", title: "T", type: "concept", body: "x" },
+    });
+    await store.close();
+    const usage = await new JsonlTelemetryStore(telDir).aggregateToolUsage("projW");
+    expect(usage.byTool.wiki_upsert?.calls).toBe(1);
+  });
+
+  // DUST3.8 D2: readPage appends ".md"; upsertPage must too.
+  it("writes 'foo' and reads 'foo' through the same file", async () => {
+    const client = await connect(depsWithWiki());
+    const first = await client.callTool({
+      name: "wiki_upsert",
+      arguments: { rel_path: "concepts/Foo", title: "Foo", type: "concept", body: "one" },
+    });
+    expect(first.isError).toBeFalsy();
+    expect(first.structuredContent).toMatchObject({ rel_path: "concepts/Foo.md", appended: false });
+    const second = await client.callTool({
+      name: "wiki_upsert",
+      arguments: { rel_path: "concepts/Foo", title: "Foo", type: "concept", body: "two" },
+    });
+    expect(second.structuredContent).toMatchObject({ appended: true });
+    const read = await client.callTool({
+      name: "wiki_read",
+      arguments: { title_or_path: "concepts/Foo" },
+    });
+    expect(textOf(read)).toContain("two");
+  });
+
+  // DUST3.8 review: rel_path is stored raw as a file name in a committed tree.
+  it("refuses a rel_path carrying a token, writes nothing and never echoes it", async () => {
+    const client = await connect(depsWithWiki());
+    const hex = randomBytes(20).toString("hex");
+    const tok = `ghp_${"a1B2c3D4".repeat(5)}`;
+    for (const rel of [`concepts/${hex}.md`, `concepts/${tok}.md`]) {
+      const result = await client.callTool({
+        name: "wiki_upsert",
+        arguments: { rel_path: rel, title: "T", type: "concept", body: "x" },
+      });
+      expect(result.isError).toBe(true);
+      const echoed = `${textOf(result)}${JSON.stringify(result.structuredContent ?? {})}`;
+      expect(echoed).not.toContain(hex);
+      expect(echoed).not.toContain(tok);
+    }
+    const written = await readdir(dir, { recursive: true });
+    expect(written).toEqual([]);
   });
 });

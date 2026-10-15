@@ -1,5 +1,7 @@
 /**
- * All 8 Golem MCP prompt registrations. Extracted from server.ts (R8.28).
+ * All 7 Golem MCP prompt registrations. Extracted from server.ts (R8.28).
+ * The `slider` prompt was removed 2026-10-09 (USER decision M2, ADR-0004); a call to
+ * it is now an unknown-prompt error. Breaking for anything that listed or called it.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -7,37 +9,9 @@ import { z } from "zod";
 import { promptMessages } from "./shared.js";
 
 const P1_TOOL_FALLBACK =
-  "If that tool is not available in this session, tell the user this Golem capability has not shipped or is not enabled yet, and suggest checking `golem status`.";
+  "If that tool is not available in this session, tell the user this Golem capability is not enabled in this session (every Golem tool ships; some register only when configured), and suggest checking `golem status`.";
 
 export function registerPrompts(server: McpServer): void {
-  server.registerPrompt(
-    "slider",
-    {
-      title: "Golem slider",
-      description: "Show or set Golem's quality/savings slider (0–3)",
-      argsSchema: {
-        level: z
-          .string()
-          .optional()
-          .describe("New slider level 1–3 (0 is CLI-only); omit to show the current level"),
-      },
-    },
-    ({ level }) =>
-      promptMessages(
-        level === undefined || level === ""
-          ? "Call the stats tool and report the current Golem slider level, " +
-              "then briefly list what each level 0–3 enables " +
-              "(0 passthrough — full bypass, NO redaction; 1 lossless; 2 balanced; 3 aggressive)."
-          : `Set the Golem savings slider to level ${level} using the level ` +
-              "tool (it accepts integers 1–3; if the requested value is not a valid " +
-              "level, tell the user instead of guessing). Then confirm the new level " +
-              "and summarize in one sentence what changes at that level. Level 0 is a " +
-              "full bypass that turns redaction OFF and CANNOT be set from a tool " +
-              "call — if 0 was requested, do not attempt it: say that redaction would " +
-              "be off and that the user must run `golem slider 0` themselves.",
-      ),
-  );
-
   server.registerPrompt(
     "stats",
     {
@@ -54,7 +28,7 @@ export function registerPrompts(server: McpServer): void {
       promptMessages(
         `Call the stats tool${
           project_id === undefined || project_id === "" ? "" : ` with project_id "${project_id}"`
-        } and present the results concisely: current slider level, total tokens ` +
+        } and present the results concisely: current compression level, total tokens ` +
           "saved (before → after), request count, per-stage attribution if any, " +
           "and CCR store activity.",
       ),
@@ -90,17 +64,16 @@ export function registerPrompts(server: McpServer): void {
     },
     () =>
       promptMessages(
-        "The user wants to bypass Golem's compression. Explain the two options " +
-          "and pick per intent: (1) a per-request bypass that leaves the " +
-          "persistent slider alone — direct API callers add the `x-golem-bypass` " +
-          "header. (2) a persistent change — `level 1` keeps redaction on while " +
-          "compression stays byte-faithful, and you can set it with the level " +
-          "tool. `level 0` turns Golem fully OFF but ALSO disables redaction " +
-          "(secrets reach the upstream raw), so it cannot be set from a tool call " +
-          "at all: for a deliberate full bypass, tell the user to run " +
-          "`golem slider 0` in their terminal. Prefer level 1 unless a true full " +
-          "bypass is intended; confirm the choice and remind the user to restore " +
-          "their previous level afterwards.",
+        "The user wants to bypass Golem's compression. There is no per-request " +
+          "bypass (the `x-golem-bypass` header was removed). Explain the two " +
+          "options and pick per intent: (1) `golem compression off` keeps " +
+          "redaction on while compression is off. (2) `golem off` turns Golem " +
+          "fully OFF but ALSO disables redaction (secrets reach the upstream " +
+          "raw); it persists `proxy.bypass_all`, so it cannot be set from a tool " +
+          "call at all: for a deliberate full bypass, tell the user to run it in " +
+          "their own terminal. Prefer option 1 unless a true full bypass is " +
+          "intended; confirm the choice and remind the user to restore their " +
+          "previous setting afterwards (`golem on`).",
       ),
   );
 

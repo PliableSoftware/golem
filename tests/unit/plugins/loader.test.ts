@@ -119,7 +119,8 @@ describe("loadPlugins — every failure is a recorded no-op", () => {
     });
     expect(loaded.plugins.map((p) => p.name)).toEqual(["aaa", "ccc"]);
     expect(loaded.stages.map((s) => s.name)).toEqual(["aaa/ok", "ccc/also-ok"]);
-    expect(loaded.problems[0]?.reason).toContain("setup() threw");
+    // Advisory warnings (e.g. a stage with no description) may precede the error.
+    expect(loaded.problems.some((p) => p.reason.includes("setup() threw"))).toBe(true);
   });
 
   it("discards a half-registered plugin entirely rather than keeping the good half", async () => {
@@ -217,6 +218,75 @@ describe("loadPlugins — a plugin may only ADD", () => {
     expect(rule).toBeDefined();
     expect(rule?.validate?.("ACME-1")).toBe(false);
     expect(loaded.problems.some((p) => p.reason.includes("validate threw"))).toBe(true);
+  });
+
+  it("records a repeatedly-throwing validator ONCE with a count, not once per call", async () => {
+    const loaded = await loadFake({
+      acme: plugin("acme", (api) => {
+        api.addRedactionRule({
+          id: "throws",
+          description: "d",
+          pattern: /ACME-\d+/g,
+          validate: () => {
+            throw new Error("validator exploded");
+          },
+        });
+      }),
+    });
+    const validate = loaded.redactionRules[0]?.validate;
+    for (let i = 0; i < 500; i++) validate?.("ACME-1");
+    const thrown = loaded.problems.filter((p) => p.reason.includes("validate threw"));
+    expect(thrown).toHaveLength(1);
+    expect(thrown[0]?.count).toBe(500);
+  });
+
+  it("bounds the problems a validator whose message varies can accumulate", async () => {
+    const loaded = await loadFake({
+      acme: plugin("acme", (api) => {
+        api.addRedactionRule({
+          id: "varies",
+          description: "d",
+          pattern: /ACME-\d+/g,
+          validate: (target: string) => {
+            throw new Error(`bad ${target}`);
+          },
+        });
+      }),
+    });
+    const validate = loaded.redactionRules[0]?.validate;
+    for (let i = 0; i < 500; i++) validate?.(`ACME-${i}`);
+    expect(loaded.problems.length).toBeLessThanOrEqual(20);
+    // Overflow is its own entry with its own count; the 10th message keeps its text and count.
+    const entries = loaded.problems.filter((p) => p.reason.includes("validate threw"));
+    expect(entries).toHaveLength(11);
+    expect(entries[9]?.reason).toContain("bad ACME-9");
+    expect(entries[9]?.count).toBe(1);
+    expect(entries[10]?.reason).toMatch(/and more/);
+    expect(entries[10]?.count).toBe(490);
+  });
+
+  it("KEEPS a rule that can match the empty string, and records a non-fatal problem", async () => {
+    const loaded = await loadFake({
+      acme: plugin("acme", (api) => {
+        api.addRedactionRule({ id: "star", description: "d", pattern: /x*/g });
+        // Optional prefix + optional group: redacted its non-empty matches before.
+        api.addRedactionRule({
+          id: "opt",
+          description: "d",
+          pattern: /(?:ACME-)?([A-Z]{8})?/g,
+          group: 1,
+        });
+        api.addRedactionRule({ id: "ok", description: "d", pattern: /ACME-\d+/g });
+      }),
+    });
+    expect(loaded.redactionRules.map((r) => r.id)).toEqual(["acme/star", "acme/opt", "acme/ok"]);
+    const reasons = loaded.problems.map((p) => p.reason);
+    expect(reasons).toHaveLength(2);
+    for (const reason of reasons) {
+      expect(reason).toMatch(/empty string/);
+      expect(reason).toMatch(/empty matches are ignored/);
+    }
+    expect(reasons[0]).toContain('"star"');
   });
 
   it("coerces a non-boolean validator result to false", async () => {

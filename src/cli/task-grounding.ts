@@ -17,7 +17,7 @@
  * importable and unit-testable; `buildStack` is injectable for the same reason.
  */
 
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import type { InferenceService } from "../interfaces/inference.js";
 import type { KnowledgeBase } from "../interfaces/knowledge.js";
 import { gatherGrounding, type HitAssemblyDeps } from "../mcp/index.js";
@@ -39,7 +39,7 @@ export async function buildTaskGrounding(
   deps: TaskGroundingDeps = {},
 ): Promise<GroundFn | undefined> {
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     if (!settings.knowledge.enabled) return undefined;
     const build = deps.buildStack ?? ((d) => buildKnowledgeStack({ projectDir: d }));
     const { knowledge } = await build(dir);

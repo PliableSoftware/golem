@@ -16,6 +16,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  confirmCandidate,
   loadCandidates,
   openVibeStore,
   pendingLedgerPath,
@@ -141,6 +142,24 @@ describe("capture", () => {
 
     expect(result.corrected).toEqual([]);
     expect(await loadCandidates(store)).toEqual([]);
+  });
+
+  it("refuses to confirm a tombstoned key unless forced (DUST3.17)", async () => {
+    await agentWroteThenHumanEdited();
+    await sweepCorrections(projectDir, store, "2026-09-13T10:05:00.000Z");
+    const key = (await loadCandidates(store))[0]?.key;
+    if (key === undefined) throw new Error("expected a candidate to reject");
+    await rejectCandidate(store, key, "2026-09-13T10:06:00.000Z");
+
+    await expect(confirmCandidate(store, key, "2026-09-13T10:07:00.000Z")).rejects.toThrow(
+      /rejected/,
+    );
+    expect((await loadCandidates(store))[0]?.state).toBe("rejected");
+
+    const forced = await confirmCandidate(store, key, "2026-09-13T10:08:00.000Z", undefined, {
+      force: true,
+    });
+    expect(forced?.state).toBe("confirmed");
   });
 
   it("never resurrects a tombstoned preference", async () => {

@@ -12,7 +12,16 @@
 import { registerExtraRedactionRules } from "../pipeline/redaction-rules.js";
 import { proxyLog } from "../shared/proxy-log.js";
 import { loadPlugins } from "./loader.js";
+import { redactForLog } from "./safe-text.js";
 import type { LoadedPlugins } from "./types.js";
+
+/** plugin+kind pairs already warned about in this process. */
+const warnedOnce = new Set<string>();
+
+/** Test-only. */
+export function resetPluginWarningDedupeForTests(): void {
+  warnedOnce.clear();
+}
 
 export interface InitPluginsOptions {
   readonly specifiers: readonly string[];
@@ -21,6 +30,12 @@ export interface InitPluginsOptions {
   readonly golemVersion: string;
   /** Where to announce what loaded. Defaults to the proxy log. */
   readonly log?: (message: string) => void;
+  /**
+   * Say what loaded (default true). False is for short-lived hook processes that
+   * must not chatter on every invocation: problems and "rules NOT installed" are
+   * still reported, because those are the lines that matter.
+   */
+  readonly announce?: boolean;
 }
 
 /**
@@ -36,6 +51,7 @@ export interface InitPluginsOptions {
  */
 export async function initPlugins(opts: InitPluginsOptions): Promise<LoadedPlugins> {
   const log = opts.log ?? proxyLog;
+  const announce = opts.announce ?? true;
   const loaded = await loadPlugins({
     specifiers: opts.specifiers,
     enabled: opts.enabled,
@@ -44,14 +60,16 @@ export async function initPlugins(opts: InitPluginsOptions): Promise<LoadedPlugi
   });
 
   if (!loaded.attempted && opts.specifiers.length > 0) {
-    log(
-      `plugins.enabled is false — ${opts.specifiers.length} configured plugin(s) were NOT loaded`,
-    );
+    if (announce) {
+      log(
+        `plugins.enabled is false — ${opts.specifiers.length} configured plugin(s) were NOT loaded`,
+      );
+    }
     return loaded;
   }
   if (loaded.plugins.length === 0 && loaded.problems.length === 0) return loaded;
 
-  for (const plugin of loaded.plugins) {
+  for (const plugin of announce ? loaded.plugins : []) {
     const seams = [
       `${plugin.seams["redaction-rule"]} redaction rule(s)`,
       `${plugin.seams["pipeline-stage"]} stage(s)`,
@@ -62,7 +80,17 @@ export async function initPlugins(opts: InitPluginsOptions): Promise<LoadedPlugi
     log(`plugin loaded: ${plugin.name} from ${plugin.resolved} — ${seams}`);
   }
   for (const problem of loaded.problems) {
-    log(`plugin problem (skipped, no-op): ${problem.subject}: ${problem.reason}`);
+    const reason = redactForLog(problem.reason);
+    if (problem.severity === "warning") {
+      // Advisory: the rule or stage is active. Hook and CLI processes run this
+      // on every start, so say each distinct warning (plugin + kind + text) once per process.
+      const key = `${problem.subject}\u0000${problem.kind ?? "other"}\u0000${reason}`;
+      if (warnedOnce.has(key)) continue;
+      warnedOnce.add(key);
+      log(`plugin warning (rule stays active): ${problem.subject}: ${reason}`);
+    } else {
+      log(`plugin problem (skipped, no-op): ${problem.subject}: ${reason}`);
+    }
   }
 
   if (loaded.redactionRules.length > 0) {
@@ -70,13 +98,15 @@ export async function initPlugins(opts: InitPluginsOptions): Promise<LoadedPlugi
     if (outcome.refused !== null) {
       log(`plugin redaction rules were NOT installed: ${outcome.refused}`);
     } else {
-      log(
-        `${outcome.accepted} plugin redaction rule(s) appended after the built-in table ` +
-          "(built-ins always run first; a plugin can add a rule, never remove or reorder one)",
-      );
+      if (announce) {
+        log(
+          `${outcome.accepted} plugin redaction rule(s) appended after the built-in table ` +
+            "(built-ins always run first; a plugin can add a rule, never remove or reorder one)",
+        );
+      }
     }
   }
-  if (loaded.plugins.length > 0) {
+  if (announce && loaded.plugins.length > 0) {
     log(
       "note: plugins run inside this process, so inside the redaction path, and are NOT " +
         "sandboxed (ADR-0005). `golem plugin` lists what loaded.",

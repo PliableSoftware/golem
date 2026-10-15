@@ -1,6 +1,6 @@
 /**
  * R3.3 — syntax-aware chunking via `web-tree-sitter`. These packages are
- * devDependencies of this repo only (never a `golem-run` dependency — see
+ * devDependencies of this repo only (never a `@pliable/golem` dependency — see
  * tree-sitter-chunker.ts's doc comment), which is exactly what makes real
  * parsing testable here without any network access.
  */

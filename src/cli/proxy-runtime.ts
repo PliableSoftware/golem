@@ -15,19 +15,20 @@
 
 import type { HeadroomSidecar } from "../compression/headroom-adapter.js";
 import { NativeLosslessCompression } from "../compression/index.js";
-import { type GolemSettings, loadConfig, policyFromSettings } from "../config/index.js";
+import { type GolemSettings, loadEffectiveConfig, policyFromSettings } from "../config/index.js";
 import type { InferenceService } from "../interfaces/inference.js";
 import { CompressionLevel, type PipelinePolicy, policyFor } from "../interfaces/policy.js";
 import { contentHashIndex } from "../knowledge/web-cache.js";
 
 import { createGolemPipeline } from "../pipeline/index.js";
 import type { LoadedPlugins } from "../plugins/index.js";
-import { listTargets, type UpstreamProvider } from "../providers/index.js";
+import { listTargets, resolveDefaultTargetId, type UpstreamProvider } from "../providers/index.js";
 import { GolemProxy } from "../proxy/index.js";
 import { FileJoinQueue } from "../session/join-queue.js";
 import { LiveConversationRegistry } from "../session/live-conversations.js";
 import { SessionTreeRecorder } from "../session/session-tree.js";
 import { proxyLog, renderRequestOutcome } from "../shared/proxy-log.js";
+import { createSelectionLog } from "../shared/selection-log.js";
 import type { TelemetryStore } from "../telemetry/types.js";
 import { buildProxySidecars } from "./proxy-build/sidecars.js";
 import {
@@ -37,15 +38,22 @@ import {
 import { buildUpstreamWiring, resolveProxyUpstream } from "./proxy-build/upstream-resolution.js";
 import { createRouteResolver, type VisionLookup } from "./route-resolver.js";
 
+/** True when the selected default target id matches no entry in the registry. */
+function unknownDefaultTarget(proxy: Parameters<typeof listTargets>[0]): boolean {
+  const id = resolveDefaultTargetId(proxy);
+  return !listTargets(proxy).some((t) => t.id === id);
+}
+
 /**
- * The bypass shim's fixed policy (Decision 56): compression 1 — redaction ON,
- * lossless, brevity `off`. `policyFor`'s defaults already mean exactly
- * this (`brevity` defaults to `off`, `compression` tracks the level), so the shim
- * needs no new dial and no frozen-contract change; it is one pinned policy value.
+ * The bypass shim's fixed policy (Decision 56(c)): compression `off` — redaction
+ * ON and nothing else. No lossless dedup/compaction, no semantic stages, brevity
+ * `off`. `policyFor`'s `off` row keeps `redaction: true` (ADR-0004: compression
+ * off is not redaction off), so the shim needs no new dial and no frozen-contract
+ * change; it is one pinned policy value.
  *
  * Frozen at module scope precisely so no dial can reach it.
  */
-const SHIM_POLICY = policyFor(CompressionLevel.Lossless);
+const SHIM_POLICY = policyFor(CompressionLevel.Off);
 
 /**
  * R11.1 — how long a resolved dial policy is reused before the settings are
@@ -66,6 +74,8 @@ export interface ProxyBuild {
    * `-> https://api.anthropic.com` and made a working `golem gateway use` look
    * like it had not taken effect.
    */
+  /** Resolves when selection-log lines accepted so far were attempted. Await bounded at shutdown. */
+  readonly flushSelectionLog: () => Promise<void>;
   readonly upstream: {
     readonly provider: UpstreamProvider;
     readonly baseUrl: string;
@@ -91,12 +101,6 @@ export interface BuildProxyOptions {
    */
   readonly reloadDials?: boolean;
   /**
-   * When present, the level is re-read from this store on EVERY request
-   * instead of frozen at construction time — makes `level` /
-   * `golem slider` double as the live per-task toggle (Decision 25/30).
-   */
-
-  /**
    * R2.3 (spec Decision 24 sub-mode 2 / Decision 33): local inference
    * service, used ONLY to select the SEMANTIC embedder for the local-answer
    * sub-mode's KnowledgeBase. Has no effect unless
@@ -104,7 +108,7 @@ export interface BuildProxyOptions {
    * sub-mode, if enabled, falls back to the pure-TS hashing (LEXICAL) embedder.
    *
    * The caller MUST pass this only when the on-disk index was actually built
-   * SEMANTIC (see `resolvePersistedEmbedMode`): querying a lexically-built index
+   * SEMANTIC (see `resolvePersistedEmbedder`): querying a lexically-built index
    * with semantic vectors — or vice-versa — is a cross-space query that
    * `assertEmbedderSpaceMatch` now rejects (it used to silently score 0 for
    * every chunk). `runProxyForeground` resolves this from the persisted index
@@ -133,10 +137,10 @@ export interface BuildProxyOptions {
    * dead socket (its `ANTHROPIC_BASE_URL` cannot be un-set without a window
    * reload — verification-notes §112b). This flag is what "pipeline off" means
    * concretely: the live dial store is ignored and the policy is pinned to
-   * **level 1**, local-answer is suppressed, and the Headroom sidecar is never
+   * **`off`** (redaction only, no compression), local-answer is suppressed, and the Headroom sidecar is never
    * constructed.
    *
-   * **Level 1, deliberately NOT level 0.** Level 0 / `x-golem-bypass` forwards
+   * **`off`, deliberately NOT `proxy.bypass_all`.** `bypass_all` forwards
    * untouched, i.e. with redaction OFF — the single sanctioned redaction-off path,
    * which CLAUDE.md permits only when it is never the default and always surfaced
    * loudly. A Stop button that quietly routed unredacted prompts upstream would
@@ -155,6 +159,29 @@ export interface BuildProxyOptions {
    * to be fixed before anything is served.
    */
   readonly plugins?: LoadedPlugins;
+}
+
+/**
+ * The live dial reload: effective settings (team layer included, from its local
+ * cache) re-read from disk. Fail-safe — a read that throws keeps `fallback`'s
+ * policy rather than dropping to a default, because compressing less (or more)
+ * than was asked for because a config read blipped is exactly the class of
+ * misreport this project keeps closing.
+ */
+export async function reloadPolicy(
+  dir: string,
+  fallback: GolemSettings,
+  userDir?: string,
+): Promise<PipelinePolicy> {
+  try {
+    const fresh = await loadEffectiveConfig({
+      projectDir: dir,
+      ...(userDir !== undefined && { userDir }),
+    });
+    return policyFromSettings(fresh.settings);
+  } catch {
+    return policyFromSettings(fallback);
+  }
 }
 
 /**
@@ -198,7 +225,7 @@ export function buildProxyFromSettings(
   // keeps closing.
   let cachedPolicy: { readonly at: number; readonly policy: PipelinePolicy } | null = null;
   const resolvePolicy = async () => {
-    // Decision 56: pinned. The shim runs redaction and nothing else, whatever
+    // Decision 56(c): pinned. The shim runs redaction and nothing else, whatever
     // the dials say.
     if (build.shim === true) return SHIM_POLICY;
     // OPT-IN (see `reloadDials`): a caller that handed us `settings` gets exactly
@@ -212,17 +239,7 @@ export function buildProxyFromSettings(
     if (cachedPolicy !== null && now - cachedPolicy.at < DIAL_RELOAD_TTL_MS) {
       return cachedPolicy.policy;
     }
-    let policy: PipelinePolicy;
-    try {
-      const fresh = await loadConfig({ projectDir: dir });
-      policy = policyFromSettings(fresh.settings);
-    } catch {
-      // Fail-safe: keep the policy we were built with rather than dropping to a
-      // default. Compressing less (or more) than the user asked for because a
-      // config read blipped is exactly the class of misreport this project keeps
-      // closing.
-      policy = policyFromSettings(settings);
-    }
+    const policy = await reloadPolicy(dir, settings);
     cachedPolicy = { at: now, policy };
     return policy;
   };
@@ -297,7 +314,27 @@ export function buildProxyFromSettings(
     upstreamModel,
     accountId: upstream.accountId,
   });
+  // DUST2.17: the durable (gateway, provider, reason) record, every request.
+  const selectionLog = createSelectionLog(dir);
+  // One naming rule for the `target` field on every path: the registry target id
+  // when the target has one, else `accountId ?? provider`.
+  const defaultTargetId = resolveDefaultTargetId(proxyWithDefault);
+  const unroutedTargetName = listTargets(proxyWithDefault).some((t) => t.id === defaultTargetId)
+    ? defaultTargetId
+    : (upstream.accountId ?? upstreamProvider);
   const proxy = new GolemProxy({
+    onUnroutedRequest: () =>
+      selectionLog.record({
+        gateway: upstream.accountId,
+        provider: upstreamProvider,
+        target: unroutedTargetName,
+        // Honest per path: the shim never installs the resolver, so it must not
+        // claim the selection came from `inference.model`.
+        reason:
+          build.shim === true
+            ? "shim: resolver not installed"
+            : "single upstream (inference.model)",
+      }),
     upstreamBaseUrl: upstream.baseUrl,
     // R11.1 / ADR-0004 — `proxy.bypass_all` is the explicit home for what slider
     // level 0 used to mean: forward everything byte-faithfully, redaction
@@ -310,20 +347,27 @@ export function buildProxyFromSettings(
     connectTimeoutMs: settings.proxy.connect_timeout_ms,
     headersTimeoutMs: settings.proxy.request_timeout_ms,
     bodyTimeoutMs: settings.proxy.request_timeout_ms,
+    maxRequestBodyBytes: settings.proxy.max_request_body_bytes,
     pipeline,
     ...(mapUpstreamHeaders !== undefined ? { mapUpstreamHeaders } : {}),
     ...(translateUpstream !== undefined ? { translateUpstream } : {}),
     // R9.2: serve every configured target, selected per request by an explicit
-    // act. Enabled only when the registry holds more than the synthetic default
-    // — with one target the resolver would decide the same thing on every
-    // request, so leaving it absent keeps the single-upstream path byte-for-byte
-    // the code it has always been.
-    ...(listTargets(proxyWithDefault).length > 1 && build.shim !== true
+    // act. Enabled when the registry holds more than the synthetic default, OR
+    // when the selected default names no target at all (DUSTSEC.15 / V2): an
+    // unknown default always fails closed, and the resolver is the one place
+    // that refuses. Otherwise, with one target the resolver would decide the
+    // same thing on every request, so leaving it absent keeps the
+    // single-upstream path byte-for-byte the code it has always been.
+    // The shim is exempt on purpose (DUSTSEC.15): it never installs the resolver,
+    // so an unknown default does not refuse there and the stopped port keeps serving.
+    ...((listTargets(proxyWithDefault).length > 1 || unknownDefaultTarget(proxyWithDefault)) &&
+    build.shim !== true
       ? {
           resolveRoute: createRouteResolver({
             settings: proxyWithDefault,
             ...(build.visionOf !== undefined ? { visionOf: build.visionOf } : {}),
-            onRoute: ({ targetId, reason, sticky }) => {
+            onRoute: ({ targetId, reason, sticky, provider, gateway }) => {
+              selectionLog.record({ gateway, provider, target: targetId, reason });
               // ADR-0003 invariant 5: every (request → target, why) selection is
               // attributable. Non-secret by construction.
               if (sticky) return; // Already logged when the binding was made.
@@ -334,7 +378,7 @@ export function buildProxyFromSettings(
       : {}),
     onPipelineError: (err) => {
       proxyLog(
-        `pipeline error — forwarded request unchanged (passthrough): ${
+        `pipeline error — re-ran redaction alone on the original request and forwarded that (fails closed if it cannot): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -349,6 +393,7 @@ export function buildProxyFromSettings(
     onResponseUsage,
     onResponseHeaders,
   });
+  const flushSelectionLog = (): Promise<void> => selectionLog.flush();
   const upstreamInfo = {
     provider: upstreamProvider,
     baseUrl: upstream.baseUrl,
@@ -356,6 +401,6 @@ export function buildProxyFromSettings(
     ...(upstreamModel !== undefined ? { model: upstreamModel } : {}),
   };
   return semantic !== undefined
-    ? { proxy, semantic, upstream: upstreamInfo }
-    : { proxy, upstream: upstreamInfo };
+    ? { proxy, semantic, upstream: upstreamInfo, flushSelectionLog }
+    : { proxy, upstream: upstreamInfo, flushSelectionLog };
 }

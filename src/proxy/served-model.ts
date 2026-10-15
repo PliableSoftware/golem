@@ -21,9 +21,10 @@
  * what display surfaces should call.
  */
 
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 
 /** The last model the proxy served, and when. */
 export interface ServedModel {
@@ -80,9 +81,7 @@ export function servedModelPath(projectDir: string): string {
 export async function writeServedModel(projectDir: string, state: ServedModel): Promise<void> {
   const file = servedModelPath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /**

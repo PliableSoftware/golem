@@ -98,3 +98,134 @@ describe("extractWikilinks", () => {
     expect(extractWikilinks("[[A]] then [[B]] then [[A]] again")).toEqual(["A", "B", "A"]);
   });
 });
+
+// DUST3.8 D12: list items were split on every comma, so a comma inside one split it in two.
+describe("frontmatter list items containing commas", () => {
+  const base = {
+    title: "T",
+    type: "concept" as const,
+    created: "2026-07-10",
+    updated: "2026-07-10",
+  };
+
+  it("parses a quoted item with a comma as one item", () => {
+    const raw = SAMPLE.replace("tags: [cache, prompts]", "tags: [\"a, b\", 'c, d', plain]");
+    expect(parseFrontmatter(raw).frontmatter.tags).toEqual(["a, b", "c, d", "plain"]);
+  });
+
+  it("round-trips items with commas, brackets and quotes", () => {
+    const fm = {
+      ...base,
+      tags: ["a, b", 'say "hi"', "x]y", "plain"],
+      sources: ["https://example.com/?q=1,2"],
+    };
+    const raw = `${serializeFrontmatter(fm)}\n\nbody\n`;
+    expect(parseFrontmatter(raw).frontmatter).toEqual(fm);
+  });
+
+  it("leaves plain lists serialised exactly as before", () => {
+    expect(serializeFrontmatter({ ...base, tags: ["a", "b"], sources: [] })).toContain(
+      "tags: [a, b]",
+    );
+  });
+
+  it("keeps the whole raw item when text follows a closing quote", () => {
+    const raw = SAMPLE.replace("tags: [cache, prompts]", 'tags: ["a, b" extra, plain]');
+    expect(parseFrontmatter(raw).frontmatter.tags).toEqual(['"a, b" extra', "plain"]);
+  });
+
+  it("reads a doubled single quote inside single quotes as one quote", () => {
+    const raw = SAMPLE.replace("tags: [cache, prompts]", "tags: ['it''s, ok', plain]");
+    expect(parseFrontmatter(raw).frontmatter.tags).toEqual(["it's, ok", "plain"]);
+  });
+
+  it("round-trips a newline, a backslash and text after a quote", () => {
+    const fm = {
+      ...base,
+      tags: ["line1\nline2", "back\\slash, comma", '"quoted" tail'],
+      sources: [],
+    };
+    const raw = `${serializeFrontmatter(fm)}\n\nbody\n`;
+    expect(parseFrontmatter(raw).frontmatter).toEqual(fm);
+  });
+});
+
+describe("serializeFrontmatter with the original block (DUST3 leftover 8)", () => {
+  const ORIGINAL = [
+    "---",
+    "title: T",
+    "type: concept",
+    'tags: ["a", b]',
+    'sources: ["x/y.ts", "z (R1)"]',
+    "updated: 2026-07-01",
+    "created: 2026-06-01",
+    "---",
+  ].join("\n");
+
+  it("round-trips an untouched block byte-for-byte, key order and quoting included", () => {
+    const { frontmatter } = parseFrontmatter(`${ORIGINAL}\n\nbody`);
+    expect(serializeFrontmatter(frontmatter, ORIGINAL)).toBe(ORIGINAL);
+  });
+
+  it("regenerates only a line whose value changed", () => {
+    const { frontmatter } = parseFrontmatter(`${ORIGINAL}\n\nbody`);
+    const out = serializeFrontmatter({ ...frontmatter, tags: ["a", "b", "c"] }, ORIGINAL);
+    expect(out).toBe(ORIGINAL.replace('tags: ["a", b]', "tags: [a, b, c]"));
+  });
+
+  it("falls back to canonical output with no original", () => {
+    const { frontmatter } = parseFrontmatter(`${ORIGINAL}\n\nbody`);
+    expect(serializeFrontmatter(frontmatter)).toContain("sources: [x/y.ts, z (R1)]");
+  });
+});
+
+describe("serializeFrontmatter keeps keys the schema does not know (DUST3 leftover 8)", () => {
+  it("does not drop an extra frontmatter key when given the original block", () => {
+    const original = [
+      "---",
+      "task: some-task",
+      "title: T",
+      "type: debrief",
+      "tags: []",
+      "sources: []",
+      "created: 2026-09-07",
+      "updated: 2026-09-07",
+      "---",
+    ].join("\n");
+    const { frontmatter } = parseFrontmatter(`${original}\n\nbody`);
+    expect(serializeFrontmatter(frontmatter, original)).toBe(original);
+  });
+});
+
+describe("parseFrontmatter aliases (DUST2.15)", () => {
+  const withLine = (line: string) =>
+    SAMPLE.replace("updated: 2026-07-10", `updated: 2026-07-10\n${line}`);
+
+  it("omits aliases entirely when the key is absent", () => {
+    expect("aliases" in parseFrontmatter(SAMPLE).frontmatter).toBe(false);
+  });
+
+  it("parses a bracketed aliases list, trimming and dropping blanks", () => {
+    const { frontmatter } = parseFrontmatter(withLine('aliases: [PC, " Cache Tips ", , "a, b"]'));
+    expect(frontmatter.aliases).toEqual(["PC", "Cache Tips", "a, b"]);
+  });
+
+  it("accepts a single bare scalar as one alias", () => {
+    expect(parseFrontmatter(withLine("aliases: PC")).frontmatter.aliases).toEqual(["PC"]);
+  });
+
+  it("treats an empty list as no aliases", () => {
+    expect("aliases" in parseFrontmatter(withLine("aliases: []")).frontmatter).toBe(false);
+  });
+
+  it("never fails the page over a malformed aliases value", () => {
+    expect(() => parseFrontmatter(withLine("aliases: [unterminated"))).not.toThrow();
+  });
+
+  it("keeps the aliases line verbatim when the page is re-serialized", () => {
+    const { frontmatter } = parseFrontmatter(withLine("aliases: [PC]"));
+    const block = SAMPLE.split("\n\n")[0] as string;
+    const original = block.replace("updated: 2026-07-10", "updated: 2026-07-10\naliases: [PC]");
+    expect(serializeFrontmatter(frontmatter, original)).toContain("aliases: [PC]");
+  });
+});

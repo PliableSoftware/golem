@@ -29,8 +29,9 @@
  * shell-inheritance trap where restarting the proxy from a terminal that lacked
  * the key silently un-configured a working daemon.
  *
- * No MCP/tool surface reaches this module — ADR-0003 invariant 4 (credentials
- * are CLI/config only) is unchanged.
+ * The MCP server does resolve credentials through this module
+ * (`credentialEnvForProxy`), but ADR-0003 invariant 4 is unchanged: a key never
+ * enters model context or tool output.
  */
 
 import { defaultUserDir } from "../config/paths.js";
@@ -41,6 +42,20 @@ import {
   fileBackend,
   keychainBackend,
 } from "./backends.js";
+
+/**
+ * Read-side COMPATIBILITY rule (R8.29). Builds before R8.29 stored a prompted key
+ * untrimmed and trimmed on every read, so a key with edge whitespace may already
+ * be on disk or in a keychain. Backends now return bytes exactly, so for GATEWAY
+ * accounts the store trims leading/trailing whitespace on read: a gateway API key
+ * never legitimately has any, and without this an upgrade would start sending
+ * those keys with the whitespace. Portal tokens (`portal-oauth`) and Buzz secrets
+ * (`buzz:` accounts) stay byte-exact. The kind is guessed from the name only for
+ * this trim: a gateway someone names `buzz:x` merely stays byte-exact.
+ */
+function forRead(account: string, secret: string): string {
+  return account === "portal-oauth" || account.startsWith("buzz:") ? secret : secret.trim();
+}
 
 /** A credential plus where it came from. `secret` must never be logged. */
 export interface ResolvedCredential {
@@ -142,8 +157,11 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
     const faults: CredentialFault[] = [];
     for (const backend of readChain) {
       try {
-        const secret = await backend.get(account);
-        if (secret !== null) return { hit: { secret, location: backend.describe() }, faults };
+        const raw = await backend.get(account);
+        const secret = raw === null ? null : forRead(account, raw);
+        if (secret !== null && secret !== "") {
+          return { hit: { secret, location: backend.describe() }, faults };
+        }
       } catch (err) {
         faults.push({
           backend: backend.id,
@@ -215,9 +233,10 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       const stillUnresolved: string[] = [];
       for (const account of unique) {
         const entry = batch.get(account);
-        if (entry?.secret !== undefined) {
+        const batched = entry?.secret === undefined ? "" : forRead(account, entry.secret);
+        if (batched !== "") {
           out.set(account, {
-            hit: { secret: entry.secret, location: keychainB.describe() },
+            hit: { secret: batched, location: keychainB.describe() },
             faults: [],
           });
           continue;
@@ -242,8 +261,9 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
       let hit: ResolvedCredential | null = null;
       for (const backend of chain) {
         try {
-          const secret = await backend.get(account);
-          if (secret !== null) {
+          const raw = await backend.get(account);
+          const secret = raw === null ? null : forRead(account, raw);
+          if (secret !== null && secret !== "") {
             hit = { secret, location: backend.describe() };
             break;
           }
@@ -288,12 +308,34 @@ export function createCredentialStore(options: CredentialStoreOptions = {}): Cre
 
     forget: async (account) => {
       const removed: CredentialLocation[] = [];
+      const faults: string[] = [];
       // Every backend is writable now, so a forget really is complete.
       for (const backend of [...(keychainB === null ? [] : [keychainB]), fileB]) {
-        const had = await backend.get(account).catch(() => null);
+        let had: string | null;
+        try {
+          // Nothing can be stored in a backend that is not usable here (no
+          // libsecret on a headless box), so it is empty, not faulted — the read
+          // and store paths make the same call.
+          if (!(await backend.available())) continue;
+          had = await backend.get(account);
+        } catch (err) {
+          // A backend we could not read is NOT an empty one: reporting "no stored
+          // credential" would leave a live key behind with the user told otherwise.
+          // Keep going so the other backends are still cleaned, then say so.
+          faults.push(`${backend.id}: ${err instanceof Error ? err.message : String(err)}`);
+          continue;
+        }
         if (had === null) continue;
         await backend.remove(account);
         removed.push(backend.describe());
+      }
+      if (faults.length > 0) {
+        const done =
+          removed.length > 0 ? ` Removed from: ${removed.map((l) => l.label).join(", ")}.` : "";
+        throw new Error(
+          `could not check every credential backend for "${account}" (${faults.join("; ")}) — ` +
+            `a stored credential may remain.${done}`,
+        );
       }
       return removed;
     },

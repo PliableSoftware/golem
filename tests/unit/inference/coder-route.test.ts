@@ -185,6 +185,33 @@ describe("coderRouteConflict", () => {
   });
 });
 
+describe("coderRouteConflict, whitespace-padded persona model", () => {
+  // mcp-serve passes the persona's model both as the roster entry and as
+  // `defaultCoder`; only `defaultCoder` is trimmed, so padding used to read as
+  // two different destinations.
+  it("reports no conflict when the persona model is padded and names a target", () => {
+    const padded = "  cheap  ";
+    expect(
+      coderRouteConflict({
+        settings: SETTINGS,
+        personas: { coder: { discipline: "code", model: padded } },
+        defaultCoder: padded,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("reports no conflict when the padded persona model is a harness model id", () => {
+    const padded = " claude-sonnet-5 ";
+    expect(
+      coderRouteConflict({
+        settings: SETTINGS,
+        personas: { coder: { discipline: "code", model: padded } },
+        defaultCoder: padded,
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe("CODER_AGENT_NAME", () => {
   it("is the basename `src/mcp` and `src/cli` both depend on", () => {
     // It lives in `src/inference/` precisely so `src/mcp/` can name it without

@@ -20,6 +20,12 @@ export interface ResumeArgvOptions {
    * Claude Code's documented modes; omitted = the session/settings default.
    */
   readonly permissionMode?: string;
+  /**
+   * Start a NEW session from the prompt instead of resuming one. A plan task is a
+   * committed document, not a conversation: there is no session to `--resume` and
+   * `--continue` would pick up whatever unrelated conversation was most recent.
+   */
+  readonly fresh?: boolean;
 }
 
 /**
@@ -34,7 +40,9 @@ export function buildResumeArgv(task: Task, opts: ResumeArgvOptions = {}): strin
   const bin = opts.claudeBin ?? "claude";
   const argv: string[] = [bin];
 
-  if (!task.continueLatest && task.sessionId !== undefined) {
+  if (opts.fresh === true) {
+    // No resume flag: the brief alone starts the session.
+  } else if (!task.continueLatest && task.sessionId !== undefined) {
     argv.push("--resume", task.sessionId);
   } else {
     // Most-recent conversation in the project dir (memo/§65 `-c`).

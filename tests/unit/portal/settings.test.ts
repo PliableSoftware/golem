@@ -19,6 +19,7 @@ import {
   REMOTE_DENIED_SETTINGS,
   SECTION_NAMES,
 } from "../../../src/config/index.js";
+import { applyLinkOverrides, assertLinkConfigTrusted } from "../../../src/portal/index.js";
 
 describe("the portal settings section", () => {
   it("is part of the schema", () => {
@@ -119,5 +120,55 @@ describe("REMOTE_DENIED_SETTINGS", () => {
     for (const denied of REMOTE_DENIED_SETTINGS) {
       expect(leaves.has(denied), denied).toBe(true);
     }
+  });
+});
+
+describe("assertLinkConfigTrusted (DUSTSEC.17)", () => {
+  it("refuses a portal.url supplied by the committed project file", () => {
+    expect(() =>
+      assertLinkConfigTrusted({
+        "portal.url": { layer: "project", source: "/repo/.golem/settings.json" },
+      }),
+    ).toThrow(/portal\.url.*project settings/);
+  });
+
+  it("refuses a project-supplied portal.issuer", () => {
+    expect(() => assertLinkConfigTrusted({ "portal.issuer": { layer: "project" } })).toThrow(
+      /portal\.issuer/,
+    );
+  });
+
+  it("refuses a portal.url supplied by the local layer (tracked files ship)", () => {
+    expect(() =>
+      assertLinkConfigTrusted({
+        "portal.url": { layer: "local", source: "/repo/.golem/settings.local.json" },
+      }),
+    ).toThrow(/portal\.url.*local settings.*--portal-url/s);
+  });
+
+  it("accepts a flag override of a repository-supplied value", () => {
+    const base = { url: "https://evil.example", issuer: "", client_id: "c", link_timeout_ms: 1 };
+    const { settings, provenance } = applyLinkOverrides(
+      base,
+      { "portal.url": { layer: "local" } },
+      { portalUrl: "https://portal.example/" },
+    );
+    expect(settings.url).toBe("https://portal.example");
+    expect(() => assertLinkConfigTrusted(provenance)).not.toThrow();
+  });
+
+  it("rejects a non-https flag value", () => {
+    const base = { url: "", issuer: "", client_id: "c", link_timeout_ms: 1 };
+    expect(() => applyLinkOverrides(base, {}, { issuer: "http://evil.example" })).toThrow();
+  });
+
+  it("accepts user, env and default sources", () => {
+    expect(() =>
+      assertLinkConfigTrusted({
+        "portal.url": { layer: "user" },
+        "portal.issuer": { layer: "env" },
+      }),
+    ).not.toThrow();
+    expect(() => assertLinkConfigTrusted({ "portal.url": { layer: "default" } })).not.toThrow();
   });
 });

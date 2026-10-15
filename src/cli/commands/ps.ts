@@ -2,25 +2,27 @@
  * `golem ps` — list Golem-owned processes on this machine.
  *
  * Ownership is PROVEN, not pattern-matched. A command line containing
- * `golem-run` is a good hint and a bad gate — the test puts a foreign
+ * `@pliable/golem` (or the legacy `golem-run`) is a good hint and a bad gate — the test puts a foreign
  * `node.exe` in the way deliberately.
  *
  * Sources:
  *   - proxy: pid files under <project>/.golem/proxy.pid (one per project)
  *   - mcp serve: session registry under <project>/.golem/state/hosted-sessions.json
- *   - statusline: machine-wide `node.exe` scan for `golem-run ... statusline`
+ *   - statusline: machine-wide `node.exe` scan for `@pliable/golem ... statusline`
  *     candidates, each proven live/dead via the same parentage walk as mcp/proxy
- *   - dashboard: not yet tracked (no pidfile)
+ *   (The dashboard has no pidfile, so `ps` does not list it.)
  *
  * `golem ps --prune` removes ONLY processes Golem can prove are its own AND
  * are not serving a live session. Parentage is the evidence — walk to the
- * owning claude.exe/cmd.exe and check it is alive. Never infer death from age.
+ * owning claude.exe/cmd.exe and check it is alive. Death is not inferred from
+ * age alone, but the idle-prune (`--prune` with an idle timeout) does stop a proxy by age once
+ * its parent is dead.
  */
 
 import { spawn } from "node:child_process";
 import path from "node:path";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { forgetHostSession, listHostSessions } from "../../session/host-registry.js";
 import { InitError } from "../init.js";
 import { isProcessAlive, readProxyPid, removeProxyPid } from "../proxy-daemon.js";
@@ -35,7 +37,7 @@ function _fail(err: unknown): never {
 /** Represents a Golem-owned process. */
 export interface GolemProcess {
   readonly pid: number;
-  readonly kind: "proxy" | "mcp" | "statusline" | "dashboard";
+  readonly kind: "proxy" | "mcp" | "statusline";
   readonly projectDir: string;
   readonly startedAt: string;
   readonly rssMb: number;
@@ -269,14 +271,15 @@ async function findOwningClaude(pid: number): Promise<boolean> {
   return false;
 }
 
-/** Collect proxy processes from pid files. */
-async function collectProxies(): Promise<GolemProcess[]> {
+/** Collect proxy processes from pid files. Exported for tests only. */
+export async function collectProxies(): Promise<GolemProcess[]> {
   const out: GolemProcess[] = [];
 
   // Find all Golem projects by looking for .golem directories with proxy.pid
   const projectDirs = new Set<string>();
 
-  // 1. Current project (where CLI is invoked)
+  // Current project (where CLI is invoked). `~/.golem` holds shared state, not one
+  // subdirectory per project, so there is no per-user project registry to scan.
   const currentProjectDir = findProjectDir(process.cwd());
   if (currentProjectDir) {
     const pidPath = path.join(currentProjectDir, ".golem", "proxy.pid");
@@ -286,26 +289,6 @@ async function collectProxies(): Promise<GolemProcess[]> {
       projectDirs.add(currentProjectDir);
     } catch {}
   }
-
-  // 2. Check user's .golem for project subdirectories that have their own .golem/proxy.pid
-  const userProfile = process.env.USERPROFILE ?? process.env.HOME ?? "";
-  const userGolemDir = path.join(userProfile, ".golem");
-  try {
-    const fs = await import("node:fs/promises");
-    const entries = await fs.readdir(userGolemDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const candidate = path.join(userGolemDir, entry.name);
-        const pidPath = path.join(candidate, ".golem", "proxy.pid");
-        try {
-          await fs.access(pidPath);
-          projectDirs.add(candidate);
-        } catch {
-          // Not a project with .golem/proxy.pid
-        }
-      }
-    }
-  } catch {}
 
   for (const projectDir of projectDirs) {
     const info = await readProxyPid(projectDir);
@@ -333,8 +316,8 @@ async function collectProxies(): Promise<GolemProcess[]> {
  *
  * The registry lives at `<project>/.golem/state/hosted-sessions.json` — INSIDE
  * each project, never under `~/.golem/<name>`. The `~/.golem` subdirectory
- * scan below (kept for the current project layout, same as
- * {@link collectProxies}) never actually finds cross-project entries this
+ * scan below (the matching proxy scan in {@link collectProxies} was
+ * removed as dead) never actually finds cross-project entries this
  * way: `~/.golem` holds shared state (`credentials/`, `state/`, `teams/`,
  * `vibe/`, `settings.json`), not one subdirectory per project. Nothing in this
  * codebase registers a project's path there, so this loop was previously the
@@ -385,7 +368,7 @@ async function collectMcpServes(
     for (const [pid, entry] of snapshot) {
       if (seen.has(pid)) continue;
       if (entry.name !== "node.exe") continue;
-      if (!entry.cmd.includes("golem-run")) continue;
+      if (!namesGolemPackage(entry.cmd)) continue;
       if (!/\bmcp\b/.test(entry.cmd) || !/\bserve\b/.test(entry.cmd)) continue;
       out.push({
         pid,
@@ -402,6 +385,17 @@ async function collectMcpServes(
   return out;
 }
 
+/**
+ * Does a command line name the Golem npm package? Matches the canonical
+ * `@pliable/golem` path segment (either slash direction, for Windows) and the
+ * legacy `golem-run`, since an older install may still be running. The trailing
+ * lookahead keeps `@pliable/golem-other` and `golem-runner` from matching.
+ * A hint only, never the ownership gate.
+ */
+export function namesGolemPackage(cmd: string): boolean {
+  return /(?:@pliable[\\/]golem|golem-run)(?![\w-])/.test(cmd);
+}
+
 /** Spawn `cmd`, capture stdout, resolve on close, reject on a spawn error. */
 async function runCapture(cmd: string, args: string[]): Promise<string> {
   const proc = spawn(cmd, args);
@@ -416,14 +410,14 @@ async function runCapture(cmd: string, args: string[]): Promise<string> {
 }
 
 /**
- * Every live `node.exe` PID whose command line names `golem-run` and
+ * Every live `node.exe` PID whose command line names the Golem package and
  * `statusline` — the candidate set for the statusline kind. A commandline
  * match is a hint, never the gate: {@link findOwningClaude} still has to
  * prove each candidate's owning shell is dead before anything is pruned.
  */
 async function listStatuslineCandidates(): Promise<number[]> {
   const isCandidate = (cmd: string): boolean =>
-    cmd.includes("golem-run") && /\bstatusline\b/.test(cmd);
+    namesGolemPackage(cmd) && /\bstatusline\b/.test(cmd);
   if (process.platform === "win32") {
     try {
       if (!(await wmicAvailable())) throw new Error("wmic unavailable");
@@ -584,7 +578,7 @@ async function collectStatuslines(
 ): Promise<GolemProcess[]> {
   const out: GolemProcess[] = [];
   const isCandidate = (name: string, cmd: string): boolean =>
-    name === "node.exe" && cmd.includes("golem-run") && /\bstatusline\b/.test(cmd);
+    name === "node.exe" && namesGolemPackage(cmd) && /\bstatusline\b/.test(cmd);
 
   if (snapshot) {
     for (const [pid, entry] of snapshot) {
@@ -764,9 +758,7 @@ async function pruneProcesses(
 export default function register(program: Command): void {
   program
     .command("ps")
-    .description(
-      "List Golem-owned processes on this machine (proxy, mcp serve, statusline, dashboard)",
-    )
+    .description("List Golem-owned processes on this machine (proxy, mcp serve, statusline)")
     .option("--dir <path>", "project directory (limits to this project)", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .option("--prune", "remove stale/idle processes Golem owns and can prove are not live", false)
@@ -786,7 +778,7 @@ export default function register(program: Command): void {
       }) => {
         try {
           const projectDir = opts.dir;
-          const { settings } = await loadConfig({ projectDir });
+          const { settings } = await loadEffectiveConfig({ projectDir });
           const idleTimeoutMs =
             parseInt(opts.idleTimeoutMs, 10) > 0
               ? parseInt(opts.idleTimeoutMs, 10)

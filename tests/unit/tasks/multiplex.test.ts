@@ -187,6 +187,22 @@ describe("runQueueLocally", () => {
   });
 });
 
+describe("runQueueLocally and escalated tasks", () => {
+  it("does not re-service an escalated task (it is queued for the Claude tier)", async () => {
+    const dir = await newTempDir();
+    const store = new FileTaskStore(dir);
+    const local = await store.put(createTask({ prompt: "plain" }, undefined, "plain-1"));
+    const base = { ...createTask({ prompt: "hard" }, undefined, "esc-1"), result: "first pass" };
+    const escalated = await store.put(escalateTask(base, null, "2026-07-16T00:00:00.000Z"));
+    const res = await runQueueLocally(store, { inference: fakeInference() });
+    expect(res.total).toBe(1);
+    expect((await store.get(local.id))?.state).toBe("done");
+    const after = await store.get(escalated.id);
+    expect(after?.state).toBe("queued");
+    expect(after?.escalated).toBe(true);
+  });
+});
+
 describe("escalateTask", () => {
   it("folds the local result + grounding into the prompt and marks escalated", () => {
     const task = { ...createTask({ prompt: "original" }, undefined, "e1"), result: "local pass" };

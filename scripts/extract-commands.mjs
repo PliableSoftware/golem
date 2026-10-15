@@ -115,7 +115,7 @@ const MODS = {
   writeProxyPid: "cli:proxy-daemon.js", credentialEnvForProxy: "cli:proxy-daemon.js",
   buildProxyFromSettings: "cli:proxy-runtime.js",
   readProxyDesired: "cli:proxy-state.js", writeProxyDesired: "cli:proxy-state.js",
-  ensureProjectIndexed: "cli:auto-index.js", resolvePersistedEmbedMode: "cli:auto-index.js",
+  ensureProjectIndexed: "cli:auto-index.js",
   embedderSignature: "cli:auto-index.js", writeManifest: "cli:auto-index.js",
   buildKnowledgeStack: "cli:build-knowledge.js", ollamaHasModel: "cli:build-knowledge.js",
   mcpCompressionService: "cli:mcp-compression.js", statsSourceForCli: "cli:mcp-compression.js",

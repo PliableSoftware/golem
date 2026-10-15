@@ -9,6 +9,7 @@
 
 export { type InitPluginsOptions, initPlugins } from "./init.js";
 export { BUILTIN_MCP_TOOL_NAMES, type LoadPluginsOptions, loadPlugins } from "./loader.js";
+export { ensurePluginRedactionRules } from "./redaction-init.js";
 export type {
   GolemPlugin,
   GolemPluginApi,
@@ -17,6 +18,8 @@ export type {
   PluginMcpTool,
   PluginPipelineStage,
   PluginProblem,
+  PluginProblemKind,
+  PluginProblemSeverity,
   PluginRedactionRule,
   PluginSeam,
   PluginStageInput,

@@ -20,9 +20,10 @@
  * key was never the problem — the single slot was.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 
 /** Below this many chars of new code, a write is trivial — no nudge. */
 export const MIN_CODE_DRAFT_CHARS = 240;
@@ -173,7 +174,5 @@ export async function writeCoderFirstNudgeState(
   );
   const file = coderFirstNudgeStatePath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify({ nudgedSessionIds: next }, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify({ nudgedSessionIds: next }, null, 2)}\n`);
 }

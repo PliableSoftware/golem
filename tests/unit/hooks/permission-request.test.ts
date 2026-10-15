@@ -1,15 +1,15 @@
 /**
- * R12.12 — the PermissionRequest gate hook: emits a real `deny` (not an `ask`)
- * for destructive/outward, defers on everything else, and NEVER auto-allows.
+ * DUSTSEC.10 (USER decision 2026-10-09) — the PermissionRequest hook returns NO
+ * decision for any class at any autonomy level, so a destructive or outward call
+ * reaches Claude Code's NATIVE permission dialog and a human decides. The R12.12
+ * unconditional `deny` is gone; `allow` is never emitted (ADR-0002 invariant 5).
  *
- * Recorded-shape only, by design. What these tests CANNOT prove is that a
- * `PermissionRequest` deny pre-empts a connected channel's `permission_request`
- * relay in a live interactive session — that needs a real terminal and a real
- * channel, and is filed as `R12.13` (owner: user).
+ * Recorded-shape only. Whether a connected channel's permission relay is notified
+ * when that dialog opens is R12.13, still unconfirmed (owner: user).
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { setAutonomyGateEnabled } from "../../../src/autonomy/index.js";
+import { AUTONOMY_LEVELS, writeAutonomyLevel } from "../../../src/autonomy/index.js";
 import { runPermissionRequestHook } from "../../../src/hooks/permission-request.js";
 import { runPreToolUseHook } from "../../../src/hooks/pre-tool-use.js";
 import { useTempDirs } from "../../helpers/tmp.js";
@@ -62,51 +62,38 @@ describe("runPermissionRequestHook", () => {
     dir = await newTempDir();
   });
 
-  it("DENIES an outward Bash with the documented decision envelope", async () => {
+  // The pre-DUSTSEC.10 contract was a `deny` here. Native flow = no stdout.
+  it.each(AUTONOMY_LEVELS)("emits NO decision for an outward Bash at level %s", async (level) => {
+    await writeAutonomyLevel(dir, level);
     const h = io(payload("Bash", { command: "git push origin main" }, dir));
-    const code = await runPermissionRequestHook(h, { projectDir: dir });
-    expect(code).toBe(0);
-    const out = JSON.parse(h.stdout.text);
-    expect(out).toEqual({
-      hookSpecificOutput: {
-        hookEventName: "PermissionRequest",
-        decision: { behavior: "deny", message: expect.any(String) },
-      },
-    });
-    expect(out.hookSpecificOutput.decision.message).toContain("leaves the machine");
+    expect(await runPermissionRequestHook(h, { projectDir: dir })).toBe(0);
+    expect(h.stdout.text).toBe("");
   });
 
-  it("DENIES a destructive Bash", async () => {
+  it.each(
+    AUTONOMY_LEVELS,
+  )("emits NO decision for a destructive Bash at level %s", async (level) => {
+    await writeAutonomyLevel(dir, level);
     const h = io(payload("Bash", { command: "rm -rf node_modules" }, dir));
-    await runPermissionRequestHook(h, { projectDir: dir });
-    const out = JSON.parse(h.stdout.text);
-    expect(out.hookSpecificOutput.decision.behavior).toBe("deny");
-    expect(out.hookSpecificOutput.decision.message).toContain("destructive");
+    expect(await runPermissionRequestHook(h, { projectDir: dir })).toBe(0);
+    expect(h.stdout.text).toBe("");
   });
 
-  // The nesting is the whole point: `PreToolUse` uses a FLAT `permissionDecision`,
-  // `PermissionRequest` uses `decision.behavior`. Emitting the wrong one is a
-  // silent no-op, which is exactly the failure this shape test exists to catch.
-  it("uses decision.behavior, NOT PreToolUse's flat permissionDecision", async () => {
-    const h = io(payload("Bash", { command: "rm -rf /tmp/x" }, dir));
-    await runPermissionRequestHook(h, { projectDir: dir });
-    const out = JSON.parse(h.stdout.text);
-    expect(out.hookSpecificOutput.permissionDecision).toBeUndefined();
-    expect(out.hookSpecificOutput.decision.behavior).toBe("deny");
-  });
-
-  it("never emits `allow` — no class, no input, grants a permission", async () => {
-    for (const [tool, input] of [
-      ["Read", { file_path: "x" }],
-      ["Write", { file_path: "x" }],
-      ["Bash", { command: "ls -la" }],
-      ["Bash", { command: "rm -rf x" }],
-      ["Bash", { command: "git push" }],
-      ["SomeUnknownTool", {}],
-    ] as const) {
-      const h = io(payload(tool, input, dir));
-      await runPermissionRequestHook(h, { projectDir: dir });
-      expect(h.stdout.text, `${tool} ${JSON.stringify(input)}`).not.toContain("allow");
+  it("never emits `allow` or `deny` — no class, no level, no input", async () => {
+    for (const level of AUTONOMY_LEVELS) {
+      await writeAutonomyLevel(dir, level);
+      for (const [tool, input] of [
+        ["Read", { file_path: "x" }],
+        ["Write", { file_path: "x" }],
+        ["Bash", { command: "ls -la" }],
+        ["Bash", { command: "rm -rf x" }],
+        ["Bash", { command: "git push" }],
+        ["SomeUnknownTool", {}],
+      ] as const) {
+        const h = io(payload(tool, input, dir));
+        await runPermissionRequestHook(h, { projectDir: dir });
+        expect(h.stdout.text, `${level} ${tool} ${JSON.stringify(input)}`).toBe("");
+      }
     }
   });
 
@@ -124,15 +111,32 @@ describe("runPermissionRequestHook", () => {
 
   // Fail-closed at PreToolUse means `ask` — make the human decide. It does NOT
   // mean deciding for them one event earlier, so `unknown` defers here.
-  it("DEFERS for an unknown action — fail-closed is the human's `ask`, not our deny", async () => {
+  it("DEFERS for an unknown action — never allowed here, the human decides", async () => {
     const h = io(payload("SomeUnknownTool", { whatever: 1 }, dir));
     await runPermissionRequestHook(h, { projectDir: dir });
     expect(h.stdout.text).toBe("");
   });
 
-  it("DEFERS entirely when the autonomy gate is disabled", async () => {
-    await setAutonomyGateEnabled(dir, false);
-    const h = io(payload("Bash", { command: "rm -rf node_modules" }, dir));
+  // `permission_suggestions` are the dialog's "always allow" options. Echoing one
+  // back is how a hook grants a standing allow, so a payload carrying them must
+  // still produce nothing.
+  it("emits NOTHING when the payload carries permission_suggestions", async () => {
+    const raw = JSON.parse(payload("Bash", { command: "git push origin main" }, dir));
+    raw.permission_suggestions = [
+      {
+        type: "addRules",
+        rules: [{ toolName: "Bash", ruleContent: "git push:*" }],
+        behavior: "allow",
+        destination: "localSettings",
+      },
+    ];
+    const h = io(JSON.stringify(raw));
+    expect(await runPermissionRequestHook(h, { projectDir: dir })).toBe(0);
+    expect(h.stdout.text).toBe("");
+  });
+
+  it("emits NOTHING for a non-Bash outward tool (wiki_upsert)", async () => {
+    const h = io(payload("mcp__golem__wiki_upsert", { title: "x" }, dir));
     await runPermissionRequestHook(h, { projectDir: dir });
     expect(h.stdout.text).toBe("");
   });
@@ -155,28 +159,27 @@ describe("runPermissionRequestHook", () => {
     expect(h.stdout.text).toBe("");
   });
 
-  it("fails SAFE (exit 0, no stdout) when the gate-enabled read throws", async () => {
-    const h = io(payload("Bash", { command: "rm -rf node_modules" }, dir));
-    const code = await runPermissionRequestHook(h, {
-      projectDir: dir,
-      readGateEnabled: () => Promise.reject(new Error("disk gone")),
-    });
-    expect(code).toBe(0);
+  it("fails SAFE (exit 0, no stdout) when stdin errors mid-read", async () => {
+    const h = {
+      ...io(""),
+      stdin: (async function* () {
+        yield "{";
+        throw new Error("pipe gone");
+      })(),
+    };
+    expect(await runPermissionRequestHook(h, { projectDir: dir })).toBe(0);
     expect(h.stdout.text).toBe("");
-    expect(h.stderr.text).toContain("permission-request");
   });
 });
 
-describe("the PreToolUse layer is unchanged by R12.12", () => {
+describe("the PreToolUse layer is unchanged by DUSTSEC.10", () => {
   let dir: string;
   beforeEach(async () => {
     dir = await newTempDir();
   });
 
-  // Defense in depth: R12.12 adds a decision one event EARLIER, it does not
-  // replace the `ask`. If `PermissionRequest` is ever unwired, unsupported, or
-  // beaten by a foreign hook, this is still what stands between a destructive
-  // step and the machine.
+  // The PermissionRequest hook is now inert, so this `ask` is the ONLY Golem
+  // layer in front of a destructive step.
   it("still emits `ask` for a destructive Bash, byte-for-byte", async () => {
     const h = io(
       JSON.stringify({
@@ -206,22 +209,34 @@ describe("the PreToolUse layer is unchanged by R12.12", () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe("ask");
   });
 
-  // The two hooks quote the SAME text. A drift here would mean the human is told
-  // one thing at the dialog and Claude another at the deny.
-  it("emits the same reason text as the PermissionRequest deny message", async () => {
-    const pre = io(
+  it.each(
+    AUTONOMY_LEVELS,
+  )("never emits `allow` for destructive/outward at level %s", async (level) => {
+    for (const command of ["rm -rf node_modules", "git push origin main"]) {
+      const h = io(
+        JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: dir, session_id: "s1" }),
+      );
+      await runPreToolUseHook(h, { projectDir: dir, readLevel: () => Promise.resolve(level) });
+      expect(
+        JSON.parse(h.stdout.text).hookSpecificOutput.permissionDecision,
+        `${level} ${command}`,
+      ).toBe("ask");
+    }
+  });
+
+  // Non-Bash outward tool: the `ask` is the only Golem layer, so pin it per level.
+  it.each(
+    AUTONOMY_LEVELS,
+  )("emits `ask` for the outward wiki_upsert tool at level %s", async (level) => {
+    const h = io(
       JSON.stringify({
-        tool_name: "Bash",
-        tool_input: { command: "git push origin main" },
+        tool_name: "mcp__golem__wiki_upsert",
+        tool_input: { title: "x" },
         cwd: dir,
         session_id: "s1",
       }),
     );
-    await runPreToolUseHook(pre, { projectDir: dir, readLevel: () => Promise.resolve("manual") });
-    const perm = io(payload("Bash", { command: "git push origin main" }, dir));
-    await runPermissionRequestHook(perm, { projectDir: dir });
-    expect(JSON.parse(perm.stdout.text).hookSpecificOutput.decision.message).toBe(
-      JSON.parse(pre.stdout.text).hookSpecificOutput.permissionDecisionReason,
-    );
+    await runPreToolUseHook(h, { projectDir: dir, readLevel: () => Promise.resolve(level) });
+    expect(JSON.parse(h.stdout.text).hookSpecificOutput.permissionDecision).toBe("ask");
   });
 });

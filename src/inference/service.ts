@@ -6,9 +6,7 @@
  * Fallback ladder for chat(), per the contract's "never crash the pipeline"
  * rule: try the tier's model → if the model is missing on the endpoint, step
  * down one tier and retry (a smaller model is better than none) → if nothing
- * local works and Haiku fallback is enabled, signal that (the actual cloud call
- * is the caller's job — this service only routes local inference) → else reject
- * with CapabilityUnavailableError.
+ * local works, reject with CapabilityUnavailableError.
  */
 
 import {
@@ -34,28 +32,6 @@ import {
 export interface FallbackPolicy {
   /** Allow stepping down to a lower tier's (smaller) model. Default true. */
   readonly stepDownTier?: boolean;
-  /**
-   * If no local model works, permit a Claude Haiku fallback via the API. This
-   * service does NOT make the cloud call; it throws HaikuFallbackRequired so the
-   * caller (which owns API credentials) can. Default false.
-   */
-  readonly allowHaiku?: boolean;
-}
-
-/**
- * Thrown by chat() when local inference cannot serve the role but the policy
- * permits a Claude Haiku fallback. Carries the routing context so the caller
- * can make the cloud request.
- */
-export class HaikuFallbackRequired extends Error {
-  constructor(
-    readonly role: Role,
-    readonly messages: readonly ChatMessage[],
-    readonly opts: ChatOptions | undefined,
-  ) {
-    super(`local inference unavailable for role "${role}"; Haiku fallback permitted`);
-    this.name = "HaikuFallbackRequired";
-  }
 }
 
 export interface OllamaInferenceOptions {
@@ -82,14 +58,12 @@ export class OllamaInferenceService implements InferenceService {
   readonly #client: OllamaClient;
   readonly #tier: HardwareTier;
   readonly #stepDownTier: boolean;
-  readonly #allowHaiku: boolean;
   readonly #embedModels: { readonly text?: string; readonly code?: string };
 
   constructor(client: OllamaClient, facts: CapabilityFacts, options: OllamaInferenceOptions = {}) {
     this.#client = client;
     this.#tier = facts.tier;
     this.#stepDownTier = options.fallback?.stepDownTier ?? true;
-    this.#allowHaiku = options.fallback?.allowHaiku ?? false;
     this.#embedModels = options.embedModels ?? {};
   }
 
@@ -138,9 +112,6 @@ export class OllamaInferenceService implements InferenceService {
       };
     }
 
-    if (this.#allowHaiku) {
-      throw new HaikuFallbackRequired(modelRole, messages, opts);
-    }
     throw new CapabilityUnavailableError(modelRole, this.#tier, lastError);
   }
 

@@ -42,16 +42,7 @@ import { rmTemp } from "../helpers/tmp.js";
 // Unconditionally-registered tools (need no injected service): the P0 trio +
 // `devices` + `snooze` (park-until-reset, proposal golem-snooze.md).
 const P0_TOOLS = ["expand", "stats", "devices", "snooze"] as const;
-const ALL_PROMPTS = [
-  "slider",
-  "index",
-  "search",
-  "stats",
-  "expand",
-  "bypass",
-  "devices",
-  "coder",
-] as const;
+const ALL_PROMPTS = ["index", "search", "stats", "expand", "bypass", "devices", "coder"] as const;
 
 type Deps = ReturnType<typeof createStandaloneDeps>;
 
@@ -117,10 +108,18 @@ describe("golem MCP server (in-memory transport)", () => {
     }
   });
 
-  it("lists all 8 frozen prompts", async () => {
+  it("lists all 7 frozen prompts", async () => {
     const client = await connectInMemory(createStandaloneDeps());
     const { prompts } = await client.listPrompts();
     expect(prompts.map((p) => p.name).sort()).toStrictEqual([...ALL_PROMPTS].sort());
+    expect(prompts.map((p) => p.name)).not.toContain("slider");
+  });
+
+  // 2026-10-09 (M2): the `slider` prompt was removed with the contract amendment.
+  // BREAKING for any client that called it: it is now an unknown-prompt error.
+  it("rejects a call to the removed `slider` prompt as an unknown prompt", async () => {
+    const client = await connectInMemory(createStandaloneDeps());
+    await expect(client.getPrompt({ name: "slider" })).rejects.toThrow(/Prompt slider not found/);
   });
 
   describe("expand", () => {
@@ -363,24 +362,6 @@ describe("golem MCP server (in-memory transport)", () => {
   });
 
   describe("prompts", () => {
-    it("slider prompt embeds the requested level and points at the level tool", async () => {
-      const client = await connectInMemory(createStandaloneDeps());
-      const prompt = await client.getPrompt({ name: "slider", arguments: { level: "2" } });
-      const first = prompt.messages[0];
-      expect(first?.role).toBe("user");
-      const text = first?.content.type === "text" ? first.content.text : "";
-      expect(text).toContain("level tool");
-      expect(text).toContain("level 2");
-    });
-
-    it("slider prompt without args points at the stats tool instead", async () => {
-      const client = await connectInMemory(createStandaloneDeps());
-      const prompt = await client.getPrompt({ name: "slider", arguments: {} });
-      const first = prompt.messages[0];
-      const text = first?.content.type === "text" ? first.content.text : "";
-      expect(text).toContain("stats tool");
-    });
-
     it("expand prompt requires ref_id", async () => {
       const client = await connectInMemory(createStandaloneDeps());
       await expect(client.getPrompt({ name: "expand", arguments: {} })).rejects.toMatchObject({
@@ -393,14 +374,14 @@ describe("golem MCP server (in-memory transport)", () => {
       expect(text).toContain("abc123");
     });
 
-    it("bypass prompt explains the header and level options (0/1), mentioning the bypass header", async () => {
+    it("bypass prompt names bypass_all's CLI route and says the header is gone", async () => {
       const client = await connectInMemory(createStandaloneDeps());
       const prompt = await client.getPrompt({ name: "bypass" });
       const first = prompt.messages[0];
       const text = first?.content.type === "text" ? first.content.text : "";
-      expect(text).toContain("x-golem-bypass");
-      expect(text).toContain("level 1");
-      expect(text).toContain("level 0");
+      expect(text).toContain("`golem off`");
+      expect(text).toContain("golem compression off");
+      expect(text).toContain("no per-request bypass");
     });
   });
 });
@@ -753,6 +734,37 @@ describe("coder tool", () => {
     const sent = (fake.lastMessages ?? []).map((m) => String(m.content)).join("\n");
     expect(sent).toContain("refactor this function");
     expect(sent).toContain("function foo() { return 1; }");
+  });
+
+  it("DUST2.22: appends the fenced team prompt AFTER the coder framing in the dispatch system field", async () => {
+    const fake = new FakeInferenceService(async () => {
+      throw new Error("must dispatch through the target dispatcher");
+    });
+    const systems: Array<string | undefined> = [];
+    const client = await connectInMemory({
+      ...depsWithInference(fake),
+      coderPrompt: "Return only a diff.",
+      teamPrompt: "Team: cite the ticket id.",
+      targetDispatcher: {
+        selectableTargets: () => [],
+        dispatch: async (req) => {
+          systems.push(req.system);
+          return {
+            text: "d",
+            model: "m1",
+            targetId: "a",
+            trust: "third-party",
+            route: "explicit",
+            redactedCount: 0,
+          };
+        },
+      },
+    });
+    await client.callTool({ name: "coder", arguments: { task: "write a function" } });
+    expect(systems).toHaveLength(1);
+    expect(systems[0]?.startsWith("Return only a diff.\n\n")).toBe(true);
+    expect(systems[0]).toContain("--- BEGIN TEAM NOTE (advisory");
+    expect(systems[0]?.endsWith("\nTeam: cite the ticket id.\n--- END TEAM NOTE ---")).toBe(true);
   });
 
   it("surfaces a friendly isError result when the inference endpoint is unreachable", async () => {

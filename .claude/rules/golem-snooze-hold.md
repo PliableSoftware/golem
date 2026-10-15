@@ -16,9 +16,9 @@ call, `Bash` included, which is why `note` exists on the tool. `ToolSearch` and
 schema lookup made the one allowed call impossible (R9.23). Use them for that,
 nothing else.
 
-**Enforcing by default** (Decision 45): every other call is denied until you
-park — don't fight it. `snooze.enforce` false (or `GOLEM_SNOOZE_ENFORCE=false`)
-makes it advisory: one nudge per window. If the rate-limit feed goes cold (an
+**Advisory by default** (changed 2026-09-25, USER decision): a one-shot nudge
+per window, not a hard block. `snooze.enforce` true (or `GOLEM_SNOOZE_ENFORCE=true`)
+switches to ENFORCING — every other call denied until you park. If the rate-limit feed goes cold (an
 account whose responses carry no limit headers), Golem warns once that the
 auto-park is **blind** rather than failing silently — watch Claude Code's own
 limit indicator and park manually. `golem status` shows utilization, freshness

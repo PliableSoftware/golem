@@ -205,3 +205,26 @@ describe("describeCacheAge", () => {
     expect(describeCacheAge(now + 60_000, now)).toBe("less than a minute old");
   });
 });
+
+describe("DUST3.14: only 402 and 403 are entitlement verdicts", () => {
+  it("does not stamp not_entitled for a 4xx other than 402/403, even with a known code", () => {
+    // A 400/404/409/422 carrying `not_a_member` is a request fault, not an
+    // authorization verdict. Stamping the cache denied on it would withdraw a
+    // paid team's policy from every later config load.
+    for (const status of [400, 404, 409, 422, 429]) {
+      const d = classifyPortalResponse(status, "not_a_member");
+      expect(d.kind, `status ${status}`).toBe("api_error");
+    }
+  });
+
+  it("still denies on 402 and 403 with any code", () => {
+    expect(classifyPortalResponse(403, "insufficient_role").kind).toBe("not_entitled");
+    expect(classifyPortalResponse(402, "not_a_member").kind).toBe("not_entitled");
+  });
+
+  it("scopes the api_error notice to this sync, since it stamps nothing", () => {
+    const line = describeTeamOutcome(classifyPortalResponse(418), { orgId: ORG });
+    expect(line).toContain("this sync");
+    expect(line).not.toContain("team settings are NOT being applied");
+  });
+});

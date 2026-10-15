@@ -4,7 +4,7 @@ type: concept
 tags: [cache, telemetry, observability, r8, prompt-caching]
 sources: [src/proxy/cache-prefix.ts, src/telemetry/cache-report.ts, src/pipeline/pipeline.ts, docs/plan/verification-notes.md]
 created: 2026-07-30
-updated: 2026-08-21
+updated: 2026-10-08
 ---
 
 # Cache observability — hit rate, and what broke the prefix
@@ -29,6 +29,30 @@ They are printed side by side and never blended into one score. The billed numbe
 is true but silent about cause; the verdict explains but can be wrong at the
 margins. A single "cache health" figure would hide precisely the distinction a
 reader needs.
+
+Only the billed block is billed usage. The savings figures in `golem stats` and the
+dashboard (tokens saved, before and after) are estimates at about 4 characters per
+token (`src/compression/tokens.ts:17-21`, `src/cli/stats.ts:128`), not billed counts
+(2026-10-09, `readme-estimates-claim`).
+
+## On the dashboard (DUST2.18)
+
+The dashboard's "Usage and cost" tiles and `/api/state`'s `usage` block are folded by
+`buildUsageView` (`src/telemetry/usage-view.ts`) from the SAME rollups: `aggregateCacheStats`
+(this page) and `buildCostBenchmark` (`golem bench cost`). Billed tiles (cache hit rate,
+billed input tokens, cost = billed tokens x catalog prices, "(partial)" when a model could
+not be priced) carry no qualifier; the avoided-upstream tile is chars/4 and says "(est.)".
+No samples renders as "no usage data yet", never `0%` or `NaN`. Display strings are built
+once in `src/dashboard/usage-tiles.ts`; the page sets them with `textContent`/`escapeHtml`
+only. The LAN/auth behaviour is untouched.
+
+Cost and scope: the view is read through `collectUsageViewCached` (10 s TTL, keyed by project
+dir, single-flight, a failure serves the last good view or the empty state), so ~2 s polls
+do not each re-read the event log. Scope matches the page it sits on: `golem stats --cache`
+without `--project` aggregates every project recorded in this directory's telemetry, and the
+dashboard's other tiles (`collectStats` with no project id) do the same, so the usage tiles
+are likewise unscoped and all-time rather than per-project. See [[Blocked State Read Model]] for the sibling
+`/api/state` block.
 
 ## Verdicts
 
@@ -98,10 +122,16 @@ check on the predictor, not retired with the bug it caught.
   `cache_control` opens a second lookback window that would find the earlier write,
   so predicting a miss there would be a false positive. Claude Code uses several
   breakpoints, so this verdict is expected to be rare in practice.
-- **Only pipeline-transiting requests are classified.** A byte-faithful request
-  emits no event (the established convention shared with the semantic and
-  context-substitution stages), and level 0 is a full bypass. Unobserved requests
-  are counted and reported *as unobserved* — never as hits.
+- **Only pipeline-transiting requests are classified and reported.** A request
+  the pipeline leaves unchanged is forwarded as the original bytes and emits no
+  event (the established convention shared with the semantic and
+  context-substitution stages). It is still observed so the per-conversation chain
+  stays warm, and a bust on such a request is reported one request late rather
+  than lost (`src/pipeline/pipeline.ts:750-769`). A request under
+  `proxy.bypass_all` never enters the pipeline at all, so it is never observed.
+  There is no "level 0": the compression dial is `off | 1 | 2 | 3`, and `off` still
+  runs the pipeline (redaction only), so it is observed like any other level.
+  Unobserved requests are counted and reported *as unobserved* — never as hits.
 - **Fingerprints are hashes**, not bytes: nothing here holds prompt content.
 
 ## What it measured first — and why that changed the plan
@@ -123,6 +153,6 @@ of assuming.
 ## Related
 
 - [[Compression]] — why input-side compression pays ~0% on cached traffic (Decision 23)
-- [[Compression Levels]] — level 0 is a full bypass, so it is never observed
+- [[Compression Levels]] — the dial values, and why `proxy.bypass_all` (not a level) is the only unobserved path
 - [[Tool Search]] — why the `tools` block is the most expensive thing to churn
 - [[Managed Tools]] — the same honesty rule applied to capability reporting

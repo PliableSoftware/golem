@@ -95,13 +95,50 @@ export const RETIRED_SETTINGS: readonly RetiredSetting[] = [
       'inference.personas.coder.model (e.g. { "personas": { "coder": { "model": "…" } } })',
     since: "R14.1",
   },
+  // `inference.worker_targets` is NOT here: it is a live leaf (DUSTSEC.13, USER
+  // decision G1). A live setting is not retired.
+];
+
+/**
+ * A setting that is still ACCEPTED but does nothing, slated for removal.
+ *
+ * The third state beside {@link SETTING_MIGRATIONS} (renamed, still works) and
+ * {@link RETIRED_SETTINGS} (gone, raises). Use it when a key was public and
+ * documented but never took effect, so an existing file may carry it and a hard
+ * failure on load would break someone for a setting that never did anything.
+ * The loader warns once per declaration; the value is still applied as written
+ * (nothing reads it), and the key stays in
+ * the schema (and, if the team policy is total over the schema, in that table)
+ * until it is moved to {@link RETIRED_SETTINGS} one release later.
+ */
+export interface DeprecatedSetting {
+  /** The dotted path that is accepted and ignored. */
+  readonly path: string;
+  /** Why it does nothing, and what to do — prose, quoted in the warning. */
+  readonly note: string;
+}
+
+export const DEPRECATED_SETTINGS: readonly DeprecatedSetting[] = [
   {
-    path: "inference.worker_targets",
-    replacement:
-      'inference.personas[worker].model (e.g. { "personas": { "coder": { "model": "target-id" } } })',
-    since: "R14.3",
+    path: "knowledge.vector_db_url",
+    note:
+      "no external vector DB driver exists, so the value is ignored and the embedded store " +
+      "is always used; remove the key",
   },
 ];
+
+/** The deprecation record for a dotted path, or undefined if it is not deprecated. */
+export function deprecationFor(dotted: string): DeprecatedSetting | undefined {
+  return DEPRECATED_SETTINGS.find((d) => d.path === dotted);
+}
+
+/** The warning a deprecated key produces — names the file, the key, and what to do. */
+export function deprecationWarning(deprecated: DeprecatedSetting, label: string): string {
+  return (
+    `${label}: "${deprecated.path}" is deprecated and has no effect: ` +
+    `${deprecated.note}. It will be removed in a future release.`
+  );
+}
 
 /** The retirement record for a dotted path, or undefined if it is not retired. */
 export function retirementFor(dotted: string): RetiredSetting | undefined {
@@ -151,13 +188,6 @@ export function assertLeafRename(m: SettingMigration): string | undefined {
       return undefined;
     }
     if (m.from === "proxy.default_target" && m.to === "inference.model") {
-      return undefined;
-    }
-    // R14.3: worker_targets → personas is a structural change (map → record with
-    // different value shape). The old key is kept as a deprecated leaf with a
-    // warning; no automatic migration is performed. User manually migrates each
-    // entry: worker_targets."coder" = "target" → personas.coder.model = "target".
-    if (m.from === "inference.worker_targets" && m.to === "inference.personas") {
       return undefined;
     }
     return (

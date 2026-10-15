@@ -17,6 +17,11 @@ describe("buildResumeArgv", () => {
     ]);
   });
 
+  it("fresh starts a new session from the prompt: no --resume, no --continue", () => {
+    const task = createTask({ prompt: "brief", sessionId: "sess-123", continueLatest: true });
+    expect(buildResumeArgv(task, { fresh: true })).toEqual(["claude", "-p", "brief"]);
+  });
+
   it("falls back to --continue when no session id", () => {
     const task = createTask({ prompt: "keep going" });
     expect(buildResumeArgv(task)).toEqual(["claude", "--continue", "-p", "keep going"]);

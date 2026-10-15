@@ -17,6 +17,7 @@ import {
   ORIGIN_ORDER,
   writeSetting,
 } from "../../src/config/index.js";
+import { redactStandaloneText } from "../../src/pipeline/redaction.js";
 import { useTempDirs } from "../helpers/tmp.js";
 
 let base: string;
@@ -82,7 +83,8 @@ describe("the normal band is unchanged", () => {
   });
 
   it("puts a normal team value above user and below project", async () => {
-    await writeJson(userFile(), level("off"));
+    // The user is at "3", so the team's lower "1" is a tightening and may apply.
+    await writeJson(userFile(), level("3"));
     const teamLayer = { settings: level("1"), source: "acme" };
 
     const overUser = await loadConfig({ projectDir, userDir, env: {}, teamLayer });
@@ -340,5 +342,85 @@ describe("the floor: what a remote origin may never set", () => {
     });
     expect(config.settings.proxy.bypass_all).toBe(false);
     expect(config.settings.compression.level).toBe("1");
+  });
+});
+
+// DUSTSEC.14 (USER decision G2, ADR-0008): nothing about a team link may stop
+// the proxy. An invalid team value skips the WHOLE team layer with one warning;
+// an invalid value in any other layer still throws, as before.
+describe("an invalid team value skips the team layer (ADR-0008)", () => {
+  it("starts, warns once naming the key and the team source, and applies nothing from the team", async () => {
+    const teamLayer = {
+      settings: {
+        compression: { level: "not-a-level" },
+        proxy: { port: 4242 },
+      },
+      source: "acme-team.json",
+    };
+    const { settings, warnings, provenance } = await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer,
+    });
+    const mine = warnings.filter((w) => w.includes("compression.level"));
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toContain("acme-team.json");
+    expect(mine[0]).toContain("team layer SKIPPED");
+    // The WHOLE layer is skipped, not just the bad leaf.
+    expect(settings.proxy.port).toBe(DEFAULT_SETTINGS.proxy.port);
+    expect(settings.compression.level).toBe(DEFAULT_SETTINGS.compression.level);
+    expect(provenance["proxy.port"]?.layer).toBe("default");
+  });
+
+  it("skips an invalid !important team layer too, leaving lower layers intact", async () => {
+    await writeJson(userFile(), level("1"));
+    const { settings, warnings } = await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer: { settings: level("bogus", true), source: "acme" },
+    });
+    expect(settings.compression.level).toBe("1");
+    expect(warnings.filter((w) => w.includes("team layer SKIPPED"))).toHaveLength(1);
+  });
+
+  it("skips a team payload that is not an object", async () => {
+    const { warnings } = await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer: { settings: ["nope"], source: "acme" },
+    });
+    expect(warnings.some((w) => w.includes("team layer SKIPPED"))).toBe(true);
+  });
+
+  it("still applies a VALID team layer, with no skip warning", async () => {
+    const { settings, warnings } = await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer: { settings: level("1"), source: "acme" },
+    });
+    expect(settings.compression.level).toBe("1");
+    expect(warnings.some((w) => w.includes("team layer SKIPPED"))).toBe(false);
+  });
+
+  it("does not loosen redaction: the built-in rules still redact with the team layer skipped", async () => {
+    await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer: { settings: level("bogus"), source: "acme" },
+    });
+    const secret = `AKIA${"IOSFODNN7EXAMPLE"}`;
+    expect(redactStandaloneText(`key ${secret} end`)).not.toContain(secret);
+  });
+
+  it("an invalid value in a NON-team layer still throws, exactly as before", async () => {
+    await writeJson(projectFile(), level("bogus"));
+    await expect(loadConfig({ projectDir, userDir, env: {} })).rejects.toThrow(
+      /invalid value for "compression\.level"/,
+    );
   });
 });

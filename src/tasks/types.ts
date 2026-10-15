@@ -16,17 +16,16 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-/** Lifecycle states. `blocked` = waiting on the human; `paused` = capacity-gated. */
-export const TASK_STATES = [
-  "queued",
-  "running",
-  "blocked",
-  "paused",
-  "done",
-  "failed",
-  "cancelled",
-] as const;
+/**
+ * Lifecycle states. `paused` = capacity-gated. There is deliberately no `blocked`:
+ * blocked is the `plan.blocked` metadata on a `queued` task (USER decision H2,
+ * Decision 55(d)). An old `state: blocked` is still READ, see {@link LEGACY_BLOCKED_STATE}.
+ */
+export const TASK_STATES = ["queued", "running", "paused", "done", "failed", "cancelled"] as const;
 export type TaskState = (typeof TASK_STATES)[number];
+
+/** A state older task documents and task files may carry; read as `queued` + a blocked reason. */
+export const LEGACY_BLOCKED_STATE = "blocked";
 
 /** A terminal state never auto-resumes. */
 export const TERMINAL_TASK_STATES: ReadonlySet<TaskState> = new Set<TaskState>([
@@ -94,6 +93,8 @@ export type Checkpoint = z.infer<typeof checkpointSchema>;
 const worktreeSchema = z.object({
   path: z.string(),
   baseCommit: z.string(),
+  /** Branch checked out at capture time; absent on a detached HEAD. */
+  branch: z.string().optional(),
   /** Files dirty at capture time — restored/re-verified on resume. */
   dirtyFiles: z.array(z.string()).default([]),
 });
@@ -103,7 +104,10 @@ export const taskSchema = z.object({
   id: z.string().min(1),
   createdAt: z.string(),
   updatedAt: z.string(),
-  state: z.enum(TASK_STATES),
+  state: z.preprocess(
+    (value) => (value === LEGACY_BLOCKED_STATE ? "queued" : value),
+    z.enum(TASK_STATES),
+  ),
   /** The prompt/instructions the agent resumes with. */
   prompt: z.string(),
   /** Short human label for `task list` (defaults to a prompt prefix). */

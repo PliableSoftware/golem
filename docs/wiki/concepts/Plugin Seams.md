@@ -2,9 +2,9 @@
 title: Plugin Seams
 type: concept
 tags: [plugins, redaction, threat-model, trust, extensibility, adr-0005, r8]
-sources: [src/plugins/types.ts, src/plugins/loader.ts, src/plugins/init.ts, src/pipeline/redaction-rules.ts, src/cli/plugin.ts, docs/decisions/ADR-0005-plugin-seams-and-the-redaction-path.md]
+sources: [src/plugins/types.ts, src/plugins/loader.ts, src/plugins/regex-risk.ts, src/plugins/stage-runner.ts, src/plugins/init.ts, src/pipeline/redaction-rules.ts, src/cli/plugin.ts, docs/decisions/ADR-0005-plugin-seams-and-the-redaction-path.md]
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-10-14
 ---
 
 # Plugin seams — third-party code inside the redaction path
@@ -73,23 +73,54 @@ of this rests on review:
 
 - Built-ins run **first**, in their audited order; plugin rules are a **suffix**.
   A plugin can therefore only ever redact *more*.
-- `REDACTION_RULES` is never handed to a plugin, and there is **no remove,
-  replace, or reorder function** — those do not exist to be called.
+- There is **no remove, replace, or reorder function** in the plugin API — those
+  do not exist to be called. The exported `REDACTION_RULES` is a frozen **copy**
+  with its own `RegExp` objects (`src/pipeline/redaction-rules.ts:249`,
+  DUSTSEC.7), and the table redaction actually reads is a private, frozen array
+  (`:104`, `:245-246`), so splicing the export changes nothing. This is the
+  honest limit of the claim: **"cannot via the API"**, not "structurally
+  impossible". A plugin is in-process code with full process authority (see the
+  headline above), so it could still patch Node itself; the controls narrow what
+  a plugin is asked to do, not what it can do. (USER decision R5; the ADR-0005
+  wording is DUST2.3's.)
 - Rule kinds are namespaced `<plugin>/<rule>`, so a plugin cannot impersonate a
   built-in kind (`[REDACTED:acme/employee-id:1]`, never `[REDACTED:aws-key:1]`).
 - A plugin rule that matches something a built-in already replaced sees a
   **placeholder** — `[`, `]` and `:` are outside every rule's charset — so it
   cannot un-redact.
-- Registration happens **once, at startup**, and a second registration is
-  *refused*. Not tidiness: redaction must be a pure function of its input for
-  prompt-cache prefix stability (verification-notes §14), so a table that
-  changed mid-process would break caching for every later request.
+- Registration happens **once per process, at startup**, and a second
+  registration is *refused* (`registerExtraRedactionRules`,
+  `src/pipeline/redaction-rules.ts:483-490`). Not tidiness: within a process
+  redaction must be a stable function of its input for prompt-cache prefix
+  stability (verification-notes §14), so a table that changed mid-process would
+  break caching for every later request. Nothing enforces that a plugin's
+  `validate` is itself pure.
+
+## Plugin rules apply on every redaction path
+
+Plugin rules are process-global, so they apply wherever a process registers them,
+and since DUSTSEC.8 (USER decision R6) every Golem redaction path does. The proxy
+(`src/cli/commands/proxy.ts`) and `mcp serve` (`src/cli/commands/mcp-serve.ts`)
+call `initPlugins`; the processes that do not own plugin loading call
+`ensurePluginRedactionRules(projectDir)` (`src/plugins/redaction-init.ts:55`)
+before they redact, and it is a no-op in a process that already registered:
+
+- hooks: `src/hooks/post-tool-use.ts`, `src/hooks/web-fetch.ts`,
+  `src/hooks/session-state.ts`
+- the vibe store (`src/vibe/store.ts`), the join-queue (`src/session/join-queue.ts`),
+  notes (`src/cli/notes.ts`) and the Buzz ACP turn (`src/buzz/acp-turn.ts`)
+
+A failed load there warns and leaves the built-in rules in force; it never
+disables redaction. UNVERIFIED: that this list is exhaustive for every call site
+that redacts text; it is the set of importers of `ensurePluginRedactionRules`.
 
 ## A stage cannot smuggle a secret in, because redaction runs again
 
 The load-bearing property of the pipeline seam. A plugin stage receives
 already-redacted content, and **redaction re-runs over whatever it returns**.
-Redaction is idempotent, so the second pass renumbers nothing; what it buys is
+Redaction is idempotent for almost every rule (the known exception is
+`connection-password`, which can renumber its own placeholders on a second pass;
+see [[Redaction Stage]]); what the second pass buys is
 that a stage cannot introduce unredacted content — fetched, constructed, or
 restored from anywhere.
 
@@ -111,13 +142,132 @@ nothing more. Two details worth keeping:
   verdict as returning `false` — because a throw tells us nothing, and it must
   not abort a pass that still has built-ins to run.
 
+### A failing stage keeps the pre-stage body, which is already redacted
+
+Stage 1 (built-in redaction) runs before the plugin stages (stage 1.7,
+`src/pipeline/pipeline.ts`), so the body a stage receives has already been through
+every built-in rule. Restoring "the pre-stage body" after a failure therefore
+fails toward keeping built-in redaction applied. Redaction is unconditional
+(DUST2.23); `proxy.bypass_all` is the one documented exception (ADR-0004) and
+nothing a plugin does can turn it on.
+
+`runPluginStage` (`src/plugins/stage-runner.ts`) makes the claim true in three
+cases the old try/catch did not cover:
+
+- a stage that mutates `body` **in place and then throws** — a snapshot taken
+  before the call is what continues, not the half-edited object;
+- a stage whose promise **never settles** — skipped after 5s
+  (`PLUGIN_STAGE_TIMEOUT_MS`); a late write to the original object cannot reach
+  the restored copy;
+- a stage that rejects asynchronously, or throws something unprintable
+  (`Object.create(null)`, a throwing `message` getter): the error text is
+  converted inside its own try/catch, redacted (`redactStandaloneText`), then
+  truncated to 300 characters, before it reaches a fault reason or the proxy log.
+
+**Circuit breaker.** No abort signal reaches third-party code, so a hung stage
+would cost every request the full timeout. After 3 consecutive timeouts a stage
+is skipped for 60s ("stage disabled after repeated timeouts"); the tripping
+fault is always logged and skips during the cool-off are counted. The timeout,
+clock and breaker values are injectable (`pluginStageRun` on the pipeline
+options) but not user-configurable: there is no `plugins.*` setting for it, and
+adding one touches the schema, UI model and drift tests, so it is a follow-up
+(see DUST2.11).
+
+*Breaker semantics.* "Consecutive" is counted in invocation-start order, because
+requests overlap: it opens when the first of the last three timeouts started after
+the last completed non-timeout, so three concurrent hung requests with no success
+in between do open it, while a success in the middle prevents it. Opening starts a
+new generation; requests already in flight at that moment cannot re-open it when
+the cool-off ends. The cool-off uses a monotonic clock (`performance.now`), so a
+wall-clock step cannot end it early. The breaker state is per process: `golem
+plugin` is a separate process and cannot show the proxy's cool-offs.
+
+**A stage that scrubs content fails OPEN during the cool-off**: while a stage is
+skipped (or after any single skip), whatever it would have scrubbed passes
+through. Scrubbing belongs in a redaction RULE, which the built-in machinery
+applies and the breaker never touches; use a stage for transformations that are
+allowed to be skipped.
+
+Known limit: a stage's late write after a timeout can still reach `parsed`, the
+object the original request was parsed into (it only skews the telemetry
+`tokensBefore` estimate); it cannot reach the body that is forwarded.
+
+Every skip is counted per stage in the process (`pluginStageFaultCounts`) and
+logged to the proxy log — on the first fault from a stage and then every 100th,
+with the running total. Not covered: a stage that blocks the event loop
+synchronously (`while (true) {}`) cannot be interrupted in-thread. The cost of the
+snapshot is one `structuredClone` of the body per stage, paid only when a plugin
+stage is configured.
+
+## Diagnostics: every problem is counted and listed
+
+`golem plugin` prints `Problems: N (E error(s), W warning(s))` and one line per
+problem, tagged `[error/<kind>]` or `[warn/<kind>]` with the specifier or plugin
+name. Nothing the loader detects is dropped silently. Kinds:
+
+| Kind | Severity | Meaning |
+|---|---|---|
+| `unresolved`, `import-failed`, `invalid-module`, `duplicate-plugin`, `setup-threw` | error | the plugin did not load |
+| `invalid-registration` | error | a rule, stage or tool was rejected (bad id, no `g` flag, duplicate, shadows a built-in tool) |
+| `late-registration` | error | `api.add*` called after `setup()` settled; used to vanish silently |
+| `setup-timeout` | error | `setup()` did not settle within 10s (`--setup-timeout`); the plugin contributes nothing, in the proxy as well as the CLI |
+| `command-deadline` | error | `golem plugin` hit its overall deadline (30s, `--deadline`); the report is what was learned before it |
+| `empty-match` | warning | pattern can match `""`; rule stays active |
+| `dead-rule` | warning | `group` exceeds the pattern's capture groups, so it can never redact |
+| `validate-threw` | warning | a `validate` threw at runtime (treated as not-a-secret) |
+| `regex-backtracking` / `unanalysed-regex` | warning | see below |
+| `missing-metadata` | warning | stage without a description, or a non-string `version`/`description` |
+| `stage-probe-failed` | warning / error | the stage threw (warning) or timed out (error) on a synthetic probe request |
+
+Warnings from a plugin whose `setup()` threw are not shown, because that plugin
+contributes nothing. A bare path specifier is not pre-checked for existence, so a
+missing file shows up as `import-failed`.
+
+### Backtracking-shape check (warn only)
+
+`src/plugins/regex-risk.ts` statically flags four shapes in each plugin rule's
+regex: a repeated group holding a variable repeat with no distinct delimiter
+(`(a+)+`, including when the repeat sits in an inner group, `((a+))+`), an unbounded repeat of a group that can match empty (`(a?)*`),
+overlapping alternation under an unbounded repeat (`(\w|\d)+`, `(a|aa)+`), and
+adjacent overlapping unbounded repeats (`\d+\d+`, polynomial). It never rejects a
+rule: dropping a working redaction would be the worse failure. A delimited
+repeat such as `([a-z]+\.)+` stays quiet.
+
+Character sets are exact code-point intervals (not samples), so overlap is right for every script, and case folding under `i` covers code points below U+2000 plus fullwidth Latin. The loop-restart check honours nullability, so `(?:\d[ -]*?){13,16}` and `(?:\s*,\s*\w+)+` are quiet. Work is budgeted: a step counter, and repeated alternations wider than 64 branches are reported as `unanalysed` rather than compared, so a hostile pattern cannot stall startup (500 branches under `/i` finishes in well under 200 ms).
+
+False positives: polynomial-only shapes reported as nested (`(\s*,\s*)+`), and any character-set
+overlap treated as ambiguity. False negatives (a quiet result is **not** "safe"):
+backreferences and lookaround contents, overlap between non-adjacent repeats
+(`.*x.*y`), branch ambiguity beyond identical / single-atom / repeated-literal
+branches (`(a|ab|b)*`), and bounded repeats of 10 or fewer. V8 has no regex
+timeout, so this is a smoke alarm, not a guarantee.
+
 ## `golem plugin`
 
 ```
 golem plugin              # what loaded, from where, and what each registered
 golem plugin --verbose    # every rule, stage and tool contributed
-golem plugin --json       # machine-readable
+golem plugin --json       # machine-readable; problems + problemCounts
+golem plugin --check      # exit 1 if any ERROR-level problem was found
+golem plugin --strict     # exit 1 on any problem, warnings included
+golem plugin --deadline 5000 --setup-timeout 2000   # tighter limits
 ```
+
+Hook and CLI processes log loader problems at start: errors as `plugin problem (skipped, no-op)`, warnings as `plugin warning (rule stays active)`, each distinct warning (plugin + kind + text) once per process. Plugin text is redacted as a WHOLE (up to 64 KB; larger text is omitted and only its length logged) and only then truncated to 300 characters, dropping a partial trailing token: cutting first would let a secret straddling the cut shrink below its rule's minimum length and survive.
+
+Exit code: **0 by default**, always — the command is informational and scripts
+already parse its output. `--check` makes it a gate on errors (something was
+dropped or did not run); `--strict` also fails on warnings. Use `--check` in CI
+and `--strict` to keep a repo's plugin rules free of advisories. The command always exits explicitly after printing, so a plugin that leaves a timer or socket open cannot keep it alive. A synchronously blocking `setup()` or stage (`while (true) {}`) cannot be interrupted from inside the process and remains a documented limitation. It also runs each
+loaded stage once against a small synthetic request, so a throwing or hanging
+stage is found before a user's first request.
+
+`golem plugin` does a **fresh load in its own process** (`src/cli/plugin.ts:36`);
+it runs each plugin's `setup()`, so what it prints can differ from what the
+running proxy loaded (an edited plugin file or changed settings), and the in-process
+problems the proxy collects at runtime never reach it. A comment in the source
+says it is "the same code path the proxy runs, so what you see here is what the
+proxy got"; treat that as true of the code path, not of the running state.
 
 Read-only, with **no install verb**: offering one would imply a vetting Golem does
 not perform. It reports the **resolved path**, not just the specifier — "which
@@ -139,7 +289,8 @@ want it gone now.
 
 ## The bypass shim gets rules but not stages
 
-Decision 56's shim is "pipeline off", so no third-party *stage* runs on it. Plugin
+Decision 56's shim runs no compression (`SHIM_POLICY` is the `off` policy,
+`src/cli/proxy-runtime.ts:55`; DUSTSEC.12) and no third-party *stage*. Plugin
 redaction *rules* still do — the shim redacts, and dropping an org's own
 key-format rule the moment the proxy is "stopped" would weaken redaction exactly
 when the user thought they were safer.

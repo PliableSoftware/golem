@@ -8,11 +8,11 @@
  * fetch: `fetch()` → dispatch on content-type → HTML/PDF text extraction.
  *
  * The returned {@link RawPageHeaders} carry the HTTP validators so the caller
- * can seed the web cache's revalidation metadata from a real fetch (today they
- * only populate after a separate conditional GET).
+ * can seed the web cache's revalidation metadata from the PreToolUse hook's
+ * fetch.
  *
  * Dependency-free besides the shared extractors. Never called on the
- * latency-sensitive proxy path — only from the store-only PostToolUse hook.
+ * latency-sensitive proxy path — only from the PreToolUse WebFetch hook.
  */
 
 import { extractHtmlText, extractPdfText } from "./extractors.js";
@@ -23,6 +23,10 @@ export interface RawPageHeaders {
   readonly lastModified?: string;
   readonly cacheControl?: string;
   readonly expires?: string;
+  /** Response `Date` (clock-skew correction for `expires`). */
+  readonly date?: string;
+  /** The response carried `Set-Cookie`: per-user state, never cached or ingested. */
+  readonly setCookie?: boolean;
 }
 
 /** A fetched raw page: extracted text plus the response's cache headers. */
@@ -89,7 +93,10 @@ export async function fetchRawPage(
   const lastModified = res.headers.get("last-modified") ?? undefined;
   const cacheControl = res.headers.get("cache-control") ?? undefined;
   const expires = res.headers.get("expires") ?? undefined;
+  const date = res.headers.get("date") ?? undefined;
   const headers: RawPageHeaders = {
+    ...(date !== undefined ? { date } : {}),
+    ...(res.headers.get("set-cookie") !== null ? { setCookie: true } : {}),
     ...(etag !== undefined ? { etag } : {}),
     ...(lastModified !== undefined ? { lastModified } : {}),
     ...(cacheControl !== undefined ? { cacheControl } : {}),

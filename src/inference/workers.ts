@@ -19,10 +19,11 @@
  * config edit. `KNOWN_WORKERS` is gone; nothing should reintroduce a
  * compile-time list of who may exist.
  *
- * ## What R14.3 changed (worker_targets retirement)
+ * ## What R14.3 changed (personas[worker].model)
  *
- * The `inference.worker_targets` map is retired. The worker lane now reads
- * `inference.personas[worker].model` directly. A persona's `model` field
+ * The `inference.worker_targets` map is still LIVE and still wins (DUSTSEC.13).
+ * R14.3 added a second source: the worker lane also reads
+ * `inference.personas[worker].model`. A persona's `model` field
  * serves both lanes:
  *   - worker lane: Golem dispatches to the target (redacted)
  *   - harness lane: subagent runs on the model (your key)
@@ -72,8 +73,7 @@ export function isKnownWorker(
 /**
  * The target id a worker defaults to, or undefined for "not routed here".
  *
- * Now reads `inference.personas[worker].model` directly (worker_targets retired).
- * The deprecated `workerTargets` map is checked first for backward compat.
+ * Reads the live `workerTargets` map first, then `inference.personas[worker].model`.
  * An unknown *worker* key resolves to nothing rather than throwing: it is a
  * config typo, not a routing decision, and it must not stop the worker that IS
  * configured correctly from working. It is surfaced by {@link unknownWorkerWarnings}
@@ -86,7 +86,7 @@ export function workerTarget(
   worker: string,
   personas: Readonly<Record<string, PersonaConfig>> | undefined,
 ): string | undefined {
-  // First check deprecated worker_targets map for backward compat
+  // First the live worker_targets map (highest precedence)
   if (workerTargets !== undefined) {
     const id = workerTargets[worker];
     if (id !== undefined && id !== "") return id;

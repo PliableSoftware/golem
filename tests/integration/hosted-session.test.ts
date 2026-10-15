@@ -164,6 +164,19 @@ describe("runnerArgs", () => {
     const args = runnerArgs('{"hooks":{}}');
     expect(args[args.indexOf("--settings") + 1]).toBe('{"hooks":{}}');
   });
+
+  // R13.8 item 3 — `--resume` must reach the runner's OWN on-disk transcript,
+  // so a restarted process gets the earlier turns as actual context.
+  it("adds --resume <id> before --settings, when given", () => {
+    const args = runnerArgs("{}", "default", "runner-sess-1");
+    expect(args.indexOf("--resume")).toBeGreaterThan(-1);
+    expect(args[args.indexOf("--resume") + 1]).toBe("runner-sess-1");
+    expect(args.indexOf("--resume")).toBeLessThan(args.indexOf("--settings"));
+  });
+
+  it("omits --resume when no session id is given", () => {
+    expect(runnerArgs("{}")).not.toContain("--resume");
+  });
 });
 
 describe("HostedSession over a real spawned process", () => {

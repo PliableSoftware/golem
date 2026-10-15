@@ -3,7 +3,7 @@
  * date stamping across a changing clock, and the on-disk file shape.
  */
 
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -108,5 +108,39 @@ describe("FileWikiStore", () => {
   it("returns an empty page list (not a throw) when wikiDir does not exist yet", async () => {
     const store = new FileWikiStore({ wikiDir: path.join(dir, "missing"), now: () => today });
     await expect(store.resolveLink("Anything")).resolves.toBeUndefined();
+  });
+});
+
+describe("FileWikiStore upsert keeps untouched frontmatter as written (DUST3 leftover 8)", () => {
+  const HAND_WRITTEN = [
+    "---",
+    "title: Quoted Page",
+    "type: concept",
+    'tags: ["cache", plain]',
+    'sources: ["src/a.ts", "docs/b.md (R8d)", https://example.com/x]',
+    "updated: 2026-07-01",
+    "created: 2026-06-01",
+    "---",
+    "",
+    "Original body.",
+    "",
+  ].join("\n");
+
+  it("changes only the updated line and the body when the page is appended to", async () => {
+    const file = path.join(dir, "concepts", "Quoted Page.md");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, HAND_WRITTEN, "utf8");
+
+    const store = new FileWikiStore({ wikiDir: dir, now: () => "2026-10-14" });
+    await store.upsertPage({
+      relPath: "concepts/Quoted Page.md",
+      frontmatter: { title: "Quoted Page", type: "concept", tags: ["cache"], sources: [] },
+      body: "More.",
+    });
+
+    const after = (await readFile(file, "utf8")).split("\n");
+    const before = HAND_WRITTEN.split("\n");
+    // Frontmatter block is lines 0..7; everything but `updated` is byte-identical.
+    expect(after.slice(0, 8).filter((l, i) => l !== before[i])).toEqual(["updated: 2026-10-14"]);
   });
 });

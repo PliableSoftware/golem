@@ -102,6 +102,27 @@ describe("dashboard server", () => {
     expect(json.storage.webcache_bytes).toBe(4);
   });
 
+  it("passes an unknown compression level through /api/state untouched", async () => {
+    const state: SessionStateReport = {
+      project_dir: "/proj",
+      generated_at: "2026-07-16T00:00:00.000Z",
+      proxy: { running: null, upstream: "anthropic" },
+      compression: { level: "unknown", name: "unknown", redaction_off: false },
+      local_model: { reachable: null },
+      autonomy: { level: "manual" },
+      blocked: { waiting: false, status: "clear" },
+      savings: STATS,
+      storage: { ccr_bytes: 0, knowledge_bytes: 0, telemetry_bytes: 0, webcache_bytes: 0 },
+    };
+    handle = await startDashboard({
+      port: 0,
+      snapshot,
+      sessionState: () => Promise.resolve(state),
+    });
+    const json = (await (await fetch(`${handle.url}api/state`)).json()) as SessionStateReport;
+    expect(json.compression).toEqual({ level: "unknown", name: "unknown", redaction_off: false });
+  });
+
   it("404s /api/state when no session-state provider is wired", async () => {
     handle = await startDashboard({ port: 0, snapshot });
     const res = await fetch(`${handle.url}api/state`);

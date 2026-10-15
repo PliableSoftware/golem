@@ -3,7 +3,7 @@
  * R8.10 — generate `npm-shrinkwrap.json` for the published package.
  *
  * Why this exists: npm **ignores** a `package-lock.json` inside a published
- * tarball, so consumers of `golem-run` resolve transitive dependencies fresh at
+ * tarball, so consumers of `@pliable/golem` resolve transitive dependencies fresh at
  * install time — they get none of this repo's pinning. `npm-shrinkwrap.json` is
  * the one lockfile npm *does* honour when published, so a consumer installs the
  * exact tree that was tested here.

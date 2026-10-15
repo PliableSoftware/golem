@@ -40,7 +40,9 @@ export {
   OLLAMA_LINUX_INSTALL_SCRIPT_URL,
   OllamaNotReadyError,
   pullDrafterModel,
+  pullRoleModels,
   resolveInstallPlan,
+  roleModelsFor,
   smokeTestModel,
 } from "./ollama-bootstrap.js";
 export type { OllamaClientOptions } from "./ollama-client.js";
@@ -70,7 +72,4 @@ export type {
 } from "./providers.js";
 export { probeInferenceEndpoint, resolveChatModel } from "./providers.js";
 export type { FallbackPolicy, OllamaInferenceOptions } from "./service.js";
-export {
-  HaikuFallbackRequired,
-  OllamaInferenceService,
-} from "./service.js";
+export { OllamaInferenceService } from "./service.js";

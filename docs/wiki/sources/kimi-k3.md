@@ -84,3 +84,8 @@ Related: [[R6.1 b4-kimi — Kimi K3 upstream + reasoning/vision translator enhan
 (the implementation + verification), [[R6 — Multi-provider & remote batch retrospective]]
 (where this provider fits), [[Redaction Stage]] (redaction runs before the
 request is translated and forwarded to any provider).
+
+## Rebaseline 2026-10-08
+
+- `golem account login/add/use` (lines 57-62) is now `golem gateway login/add/use` (`src/cli/commands/gateway.ts:58,85,138`).
+- `--model kimi-k3` on `add` is now `--models <ids>` (comma-separated), `src/cli/commands/gateway.ts:145`; `--provider` and `--base-url` are still required (:143-144).

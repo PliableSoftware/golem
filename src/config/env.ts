@@ -44,6 +44,13 @@ import { leafSchema } from "./schema.js";
 
 export const ENV_PREFIX = "GOLEM_";
 
+/**
+ * `GOLEM_*` variables that are real switches read directly by the code that owns
+ * them, not `GOLEM_<SECTION>_<KEY>` settings. Listing them here keeps the loader
+ * from warning "does not match any known setting" for a documented variable.
+ */
+export const NON_SETTING_ENV: ReadonlySet<string> = new Set(["GOLEM_KB_WATCH"]);
+
 const TRUE_TOKENS = new Set(["true", "1", "yes", "on"]);
 const FALSE_TOKENS = new Set(["false", "0", "no", "off"]);
 
@@ -98,6 +105,7 @@ export function readEnvLayer(env: Readonly<Record<string, string | undefined>>):
     if (value === "") {
       continue; // rule 3: empty string means unset
     }
+    if (NON_SETTING_ENV.has(normalized)) continue; // a real switch read elsewhere, not a setting
     const rest = normalized.slice(ENV_PREFIX.length);
     const splitAt = rest.indexOf("_");
     const section = splitAt === -1 ? rest.toLowerCase() : rest.slice(0, splitAt).toLowerCase();

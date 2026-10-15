@@ -5,14 +5,14 @@
  * communicating over local HTTP, and exposes them to the rest of Golem only
  * through neutral seams:
  *
- * - {@link HeadroomSidecar} implements {@link SemanticCompressor} (slider ≥3
+ * - {@link HeadroomSidecar} implements {@link SemanticCompressor} (`compression.level` ≥2
  *   semantic compression, spec Decision 18/23).
  * - {@link HeadroomMemorySidecar} implements {@link MemorySearchProvider}
  *   (R3.6 MEMORY-scope federated search, spec Decisions 13/18).
  *
  * Architecture (verification-notes §34): we do NOT chain `headroom proxy` (it is
  * a competing Anthropic forwarder); each worker calls into `headroom` in-process
- * and Golem keeps the redaction-first, byte-faithful forward. Workers are
+ * and Golem keeps the redaction-first, lossless forward. Workers are
  * launched via `uv run --with <pin>` by default — an OPT-IN dependency, never
  * in Golem's core install (CLAUDE.md: no heavyweight deps by default).
  *
@@ -28,7 +28,7 @@
  * the public method resolves `null` so the caller skips the stage/contributes
  * nothing. Nothing here can break a request or a search.
  *
- * The exact PyPI pin lives in ./index.ts (CLAUDE.md); it is read lazily at spawn
+ * The exact PyPI pin lives in ./pins.ts (CLAUDE.md); it is read lazily at spawn
  * time so this module never bumps or hardcodes it.
  */
 
@@ -268,7 +268,7 @@ class HeadroomWorkerProcess {
     if (!existsSync(this.#workerPath)) {
       this.#log(
         `worker script not found at ${this.#workerPath} — this install did not ship it, so ` +
-          "the sidecar is unavailable and contributes nothing. Reinstall golem-run, or run " +
+          "the sidecar is unavailable and contributes nothing. Reinstall @pliable/golem, or run " +
           "`npm run build` if this is a source checkout.",
       );
       return false;
@@ -536,6 +536,7 @@ export const KNOWN_HEADROOM_CONFIG_FIELDS: readonly string[] = [
   "kompress_model",
   "savings_profile",
   "lossless_only",
+  "router",
 ];
 
 /**
@@ -579,7 +580,7 @@ export interface HeadroomSidecarOptions {
    * is not the coupling point. Keys the installed Headroom does not accept are
    * reported back and skipped, never passed. Layered UNDER Golem's per-mode
    * presets in the worker, so a caller can override one key without replacing the
-   * slider's behaviour wholesale.
+   * dial's behaviour wholesale.
    */
   readonly config?: Readonly<Record<string, unknown>>;
   /** Sink for diagnostics (default: stderr). Never stdout (would corrupt MCP stdio callers). */

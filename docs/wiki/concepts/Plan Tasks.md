@@ -4,7 +4,7 @@ type: concept
 tags: [planning, tasks, roadmap, workflow]
 sources: ["src/tasks/plan-task.ts", "src/cli/plan-index.ts", "docs/plan/tasks/README.md", "docs/golem-spec.md (Decision 55)"]
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-10-08
 ---
 
 # Plan Tasks
@@ -46,7 +46,7 @@ surfaces work unchanged instead of needing plan-specific variants: `golem task s
 prints the brief, and `golem task resume` can build a headless command from it.
 
 Frontmatter keys: `task` (stable human id, also the filename), `title`, `state`,
-`owner` (`agent`|`user`), `size` (`S`|`M`|`L`), `design`, `gate`, `blocked`,
+`owner` (`agent`|`user`), `size` (`S`|`M`|`L`; `XS` is rejected by `PLAN_TASK_SIZES`, `src/tasks/types.ts:50`, and per the DUST1.7 audit such docs are silently dropped from the index, not run here; DUST2.9 renames them to `S`), `design`, `gate`, `blocked`,
 `depends_on`, `touches`. See `docs/plan/tasks/README.md` for the full table and the
 house style.
 
@@ -71,12 +71,36 @@ golem task list --plan         # roadmap only
 golem task done R8.5 --note …  # close it, then regenerate
 ```
 
-### `blocked` is metadata, not a state
+### `blocked` is metadata, not a state (decided, H2)
 
-A blocked task stays `queued`. It is work that exists and will be done, and burying it
-in a terminal state is how items get lost — the roadmap's own "visible, not lost" rule
-for its loose ends. An **unfinished** `depends_on` also counts as blocked; a **dangling**
-one does not, so a typo cannot park a task forever.
+USER decision 2026-10-09 (DECISIONS.md H2), matching Decision 55(d) and CLAUDE.md:
+`blocked` is a frontmatter key on a `queued` task, not a lifecycle state. A blocked task
+is work that exists and will be done; burying it in a state is how items get lost. The
+`blocked:` key carries the reason, and `golem task index` treats a task with
+`plan.blocked` set, or an **unfinished** `depends_on`, as blocked
+(`src/cli/plan-index.ts:35-66`). A **dangling** dependency does not count, so a typo
+cannot park a task forever.
+
+- `TASK_STATES` no longer lists `blocked`, and the README's `state` row no longer offers it.
+- **Read compatibility is kept.** A document (or stored task file) that still says
+  `state: blocked` parses as `queued`; `parsePlanTask` keeps its `blocked:` reason, or
+  fills a placeholder reason when it has none, so the index still files it under blocked.
+  No existing task document was edited.
+
+## Escalating a task
+
+`golem task escalate <id>` (`src/cli/commands/tasks.ts:427-442`) hands a task to the
+Claude tier: `escalateTask` (`src/tasks/multiplex.ts:183-208`) folds the local first
+pass into the prompt, sets `escalated: true` and resets `state` to **`queued`**. The CLI
+passes `null` grounding, so no project context is added. Shipped caveats, read from the
+code and not run (DUST1.7 row 28):
+
+- `runQueueLocally` selects `state === "queued"` only (`multiplex.ts:139`), so an
+  escalated task is eligible for local servicing again unless something else filters on
+  `escalated`.
+- `notBefore` is not consulted by `golem task run` (the gate lives in `types.ts:192`).
+
+The resume path for plan tasks is not covered here (DUST2.12).
 
 ## Drift guards
 

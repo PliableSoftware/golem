@@ -13,7 +13,7 @@
  * the old name for this surface (kept as a CLI alias for backward compat).
  */
 
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import {
   type PkgAction,
   type PkgPlan,
@@ -32,7 +32,7 @@ export interface PkgReport {
 
 /** Resolve every registry row against this project's effective settings. */
 export async function collectPkg(projectDir: string): Promise<PkgReport> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   return { projectDir, rows: resolvePkgStatuses({ settings }) };
 }
 

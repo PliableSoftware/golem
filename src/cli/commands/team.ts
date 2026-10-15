@@ -1,10 +1,10 @@
 /**
  * `golem team` — sign this machine in to the hosted portal.
  *
- * `team-portal-auth`. Three subcommands and no more: this task ends at a stored
- * token and a working `GET /api/v1/me`. Choosing and recording a team is
- * `project-team-binding`, and fetching the team settings layer is
- * `team-layer-fetch`; neither is here.
+ * `team-portal-auth` started this file with three subcommands (a stored token and a
+ * working `GET /api/v1/me`). It now registers `link`, `status`, `sync`, `unlink`,
+ * `logout` and `skills`, and also does the project team binding and the team
+ * settings layer fetch.
  *
  * **Nothing printed by this file is a credential.** Every rendering path goes
  * through `describeTokenSet`, which returns issuer, scopes, expiry and a
@@ -17,10 +17,12 @@
 import { stat } from "node:fs/promises";
 import readline from "node:readline/promises";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { defaultUserDir } from "../../config/paths.js";
 import { createCredentialStore } from "../../credentials/index.js";
 import {
+  applyLinkOverrides,
+  assertLinkConfigTrusted,
   bindTeam,
   chooseOrganization,
   createPortalClient,
@@ -65,11 +67,30 @@ function _fail(err: unknown): never {
   process.exit(recoverable ? 2 : 1);
 }
 
-async function portalContext(dir: string) {
-  const { settings } = await loadConfig({ projectDir: dir });
-  const config = resolvePortalConfig(settings.portal);
+async function portalContext(
+  dir: string,
+  flags: { readonly portalUrl?: string; readonly issuer?: string } = {},
+) {
+  const loaded = await loadEffectiveConfig({ projectDir: dir });
+  const { settings } = loaded;
+  const applied = applyLinkOverrides(settings.portal, loaded.provenance, flags);
+  const provenance = applied.provenance;
+  const config = resolvePortalConfig(applied.settings);
   const tokens = portalTokenStore(createCredentialStore());
-  return { config, tokens, settings };
+  return { config, tokens, settings, provenance };
+}
+
+/** `golem team link`'s flags. Named so the action stays one line. */
+interface LinkOptions {
+  readonly dir: string;
+  readonly browser: boolean;
+  /** `--no-bind`: sign in without touching the project's settings. */
+  readonly bind: boolean;
+  readonly org?: string;
+  readonly timeout?: string;
+  readonly portalUrl?: string;
+  readonly issuer?: string;
+  readonly json: boolean;
 }
 
 /**
@@ -80,17 +101,6 @@ async function portalContext(dir: string) {
  * not (several teams and no `--org`), and reporting one as the other is how a
  * user ends up believing a repo is linked when only their keychain is.
  */
-/** `golem team link`'s flags. Named so the action stays one line. */
-interface LinkOptions {
-  readonly dir: string;
-  readonly browser: boolean;
-  /** `--no-bind`: sign in without touching the project's settings. */
-  readonly bind: boolean;
-  readonly org?: string;
-  readonly timeout?: string;
-  readonly json: boolean;
-}
-
 type BindOutcome =
   | {
       readonly kind: "bound";
@@ -253,10 +263,16 @@ export default function register(program: Command): void {
     .option("--org <id-or-slug>", "which team to bind this project to (skips the prompt)")
     .option("--no-bind", "sign in only — do not write team.org_id into this project")
     .option("--timeout <ms>", "override how long to wait for the browser round trip")
+    .option("--portal-url <url>", "portal API base to bind the token to (https or loopback)")
+    .option("--issuer <url>", "authorization server to bind the token to (https or loopback)")
     .option("--json", "machine-readable output", false)
     .action(async (opts: LinkOptions) => {
       try {
-        const { config, tokens } = await portalContext(opts.dir);
+        const { config, tokens, provenance } = await portalContext(opts.dir, {
+          ...(opts.portalUrl === undefined ? {} : { portalUrl: opts.portalUrl }),
+          ...(opts.issuer === undefined ? {} : { issuer: opts.issuer }),
+        });
+        assertLinkConfigTrusted(provenance);
         const timeoutMs = opts.timeout === undefined ? config.linkTimeoutMs : Number(opts.timeout);
         if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
           throw new Error(`--timeout must be a positive number of milliseconds`);
@@ -270,6 +286,7 @@ export default function register(program: Command): void {
 
         const result = await linkPortal({
           issuerUrl: config.issuerUrl,
+          apiBaseUrl: config.apiBaseUrl,
           clientId: config.clientId,
           tokens,
           browser: opts.browser
@@ -409,7 +426,7 @@ export default function register(program: Command): void {
         // setup as though it were the answer to "is this repo on a team?". The
         // answer is knowable with no portal at all, so a read-only status
         // command states it and exits 0.
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const project = await describeProjectBinding(settings.team);
         if (!portalIsConfigured(settings.portal)) {
           if (opts.json) {
@@ -444,7 +461,7 @@ export default function register(program: Command): void {
           return;
         }
         const token = status.token;
-        process.stdout.write(`Linked:  yes (OS keychain)\n`);
+        process.stdout.write(`Linked:  yes (stored token)\n`);
         process.stdout.write(`Scopes:  ${token?.scopes.join(" ") || "(none reported)"}\n`);
         process.stdout.write(
           `Expires: ${token?.expiresAt ?? "not stated"}${token?.expired === true ? " — EXPIRED, will refresh on next use" : ""}\n`,
@@ -489,7 +506,10 @@ export default function register(program: Command): void {
     .action(async (opts: { dir: string; all: boolean; json: boolean }) => {
       try {
         const userDir = defaultUserDir();
-        const { settings, config, tokens } = await portalContext(opts.dir);
+        // Read the binding BEFORE resolving the portal: `resolvePortalConfig`
+        // throws when no portal is configured, which is every solo user, and
+        // the unlinked answer needs no portal at all (same order as `status`).
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const state = readTeamBinding(settings.team);
 
         // Decision 64(c). No team named means no portal request, no cache read
@@ -513,6 +533,7 @@ export default function register(program: Command): void {
           return;
         }
 
+        const { config, tokens } = await portalContext(opts.dir);
         const { binding } = state;
         const targets: { orgId: string; portalUrl: string }[] = [
           { orgId: binding.orgId, portalUrl: teamApiBaseUrl(binding, config.apiBaseUrl) },
@@ -536,6 +557,9 @@ export default function register(program: Command): void {
             metadata: () => discoverAuthorizationServer(config.issuerUrl),
             tokens,
           });
+          // Fail loudly (non-zero) rather than degrade to the cache when the
+          // token may not go to this portal: no request is made (DUSTSEC.4).
+          await client.assertBound?.();
           const result = await syncTeamLayer({
             binding: { ...binding, orgId: target.orgId, portalUrl: target.portalUrl },
             userDir,
@@ -558,6 +582,11 @@ export default function register(program: Command): void {
             // team, says what is actually applied, and never says "failed".
             process.stdout.write(`${result.notice}\n`);
             for (const key of result.applied) process.stdout.write(`  ${key}\n`);
+            if (result.applied.some((k) => k.includes("[pending"))) {
+              process.stdout.write(
+                "  (applied = passed the static team policy; [pending] rules are judged against your own value at load)\n",
+              );
+            }
             for (const row of result.skipped) {
               process.stdout.write(`  skipped ${row.key} — ${row.reason}\n`);
             }
@@ -676,7 +705,7 @@ export default function register(program: Command): void {
     .option("--json", "machine-readable output", false)
     .action(async (opts: { dir: string; dryRun: boolean; json: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const state = readTeamBinding(settings.team);
 
         // Decision 64, at the earliest point it can be applied: an unlinked

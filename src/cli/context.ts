@@ -165,7 +165,7 @@ export function renderContextLedger(
   if (ledger === null) {
     out.push("No ledger recorded yet.");
     out.push("  The proxy writes one per request; run some traffic through it, then retry.");
-    out.push("  (Level 0 is a full bypass and is never recorded.)");
+    out.push("  (`proxy.bypass_all` is the full bypass and is never recorded.)");
     return `${out.join("\n")}\n`;
   }
 

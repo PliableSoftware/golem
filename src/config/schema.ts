@@ -16,8 +16,8 @@
  *   in docs/plan/verification-notes.md §17.
  * - `inference.ollama_base_url` — spec §6 (Ollama default backend,
  *   URL-addressable for LAN offload, Decision 12).
- * - `knowledge.*` — enabled toggle, optional external vector-DB URL (spec §6:
- *   embedded store by default, Qdrant server mode via config URL), watch paths.
+ * - `knowledge.*` — enabled toggle, watch paths (the embedded store is always
+ *   used; the former `vector_db_url` key is deprecated and ignored).
  * - `telemetry.*` — enabled toggle + dashboard port (spec §5).
  *
  * Section names MUST be single snake_case tokens without underscores — the
@@ -29,6 +29,7 @@ import { z } from "zod";
 
 import {
   PROXY_PROVIDERS,
+  perGatewayEnvVar,
   TARGET_TRUST_LEVELS,
   UPSTREAM_AUTH_SCHEMES,
   UPSTREAM_PROVIDERS,
@@ -183,7 +184,16 @@ export const SETTINGS_LEAVES = {
           models: z
             .array(
               z.union([
-                z.string(),
+                z
+                  .string()
+                  // Only `[<digits>]` is a context suffix. Anything else in a
+                  // trailing bracket (`[262k]`) would otherwise go upstream as
+                  // part of the model name, so refuse it here.
+                  .refine((m) => !/\[[^\]]*\]$/.test(m) || /\[\d+\]$/.test(m), {
+                    message:
+                      "a model's context suffix must be digits only, e.g. model[262144] " +
+                      "(k/m shorthand is not supported)",
+                  }),
                 z.object({
                   name: z.string().min(1),
                   contextSize: z.number().int().positive().optional(),
@@ -193,7 +203,7 @@ export const SETTINGS_LEAVES = {
             .transform((arr) =>
               arr.map((m) => {
                 if (typeof m === "string") {
-                  // Parse string like "model[262k]" or "model"
+                  // Parse string like "model[262144]" or "model"
                   const match = m.match(/^(.+?)(?:\[(\d+)\])?$/);
                   if (!match) {
                     // If parsing fails, treat as name only
@@ -214,6 +224,28 @@ export const SETTINGS_LEAVES = {
           extra_headers: z.array(z.tuple([z.string().min(1), z.string()])).optional(),
         }),
       )
+      // S16: ids normalise into the credential env var name (`work-1`, `work.1`
+      // and `Work_1` are all `..__WORK_1`), so two of them would be handed one
+      // key and the second gateway would send the first one's key to its own
+      // host. Fail closed at load rather than pick a winner.
+      .superRefine((gateways, ctx) => {
+        const seen = new Map<string, string>();
+        gateways.forEach((g, index) => {
+          const envName = perGatewayEnvVar(g.id);
+          const first = seen.get(envName);
+          if (first === undefined) {
+            seen.set(envName, g.id);
+            return;
+          }
+          ctx.addIssue({
+            code: "custom",
+            path: [index, "id"],
+            message:
+              `gateway id "${g.id}" collides with "${first}": both use the credential ` +
+              `variable ${envName}, so one gateway would be sent the other's key. Rename one.`,
+          });
+        });
+      })
       .optional(),
     // R9.1 renamed `active_account` → `model`; R9.6 retired the leaf and
     // moved the fallback into src/config/migrations.ts, so an existing file
@@ -264,6 +296,19 @@ export const SETTINGS_LEAVES = {
     /** Upstream TCP/TLS connect timeout. */
     connect_timeout_ms: timeoutMsSchema,
     /**
+     * DUSTSEC.21 — largest request body the proxy accepts, in bytes, on the wire
+     * and after decompression. Over it the proxy answers 413 and forwards
+     * nothing. It bounds the synchronous redaction walk (linear in body size) so
+     * one huge body cannot stall the event loop for every concurrent stream.
+     * Bounded on both sides: positive, and at most 256 MiB, so no layer (project,
+     * team) can configure an unbounded stall. Default 32 MiB.
+     */
+    max_request_body_bytes: z
+      .number()
+      .int()
+      .positive()
+      .max(256 * 1024 * 1024, "proxy.max_request_body_bytes may not exceed 268435456 (256 MiB)"),
+    /**
      * R13.x — idle timeout for project proxies (milliseconds). A proxy that has
      * served no requests for this duration exits on its own. Unset (default) means
      * never — today's behaviour is preserved by default so nobody's long-running
@@ -290,15 +335,18 @@ export const SETTINGS_LEAVES = {
     request_timeout_ms: timeoutMsSchema,
 
     /**
-     * R9.4 / R14.3 — DEPRECATED: use `inference.personas[worker].model` instead.
+     * R9.4 — LIVE (DUSTSEC.13, USER decision G1): worker name -> target id.
      *
-     * The worker lane now reads `inference.personas[worker].model` directly.
-     * A persona's `model` field serves both lanes:
-     *   - worker lane: Golem dispatches to the target (redacted)
-     *   - harness lane: subagent runs on the model (your key)
+     * Precedence for a worker's destination, highest first: an explicit target on
+     * the call; `worker_targets[worker]`; `inference.personas[worker].model`;
+     * `inference.model`; the harness's own upstream. So when both this map and a
+     * persona's `model` name a destination, THIS map wins — unset it to use the
+     * persona's model. A persona's `model` serves both lanes (worker lane:
+     * Golem dispatches to the target, redacted; harness lane: the subagent runs
+     * on the model with your key); this map affects the worker lane only.
      *
-     * Kept as a valid leaf so the migration table can forward old settings files.
-     * New configs should not use this key.
+     * Not retired and not migrated: it loads with no warning and is never
+     * rewritten into `personas`.
      */
     worker_targets: z.record(z.string().min(1), z.string().min(1)).default({}),
 
@@ -366,6 +414,23 @@ export const SETTINGS_LEAVES = {
      */
     coder_prompt: z.string().optional(),
     /**
+     * DUST2.22 — a team-wide guidance note, the ONE prompt-shaped leaf a team
+     * origin may set (see `team-policy.ts`, rule `bounded-text`).
+     *
+     * It is NOT a persona field and NOT `coder_prompt`: those stay denied to a
+     * team because a persona can carry `prompt_file` (a local read) and `tools`.
+     * This is plain text only. It is never the system prompt itself: the read
+     * side (`src/inference/team-prompt.ts`) APPENDS it to the `coder` dispatch
+     * `system` field only, fenced between BEGIN and END markers as team-supplied
+     * advisory text, and bounds it (`team-prompt-rules.ts`).
+     *
+     * An ordinary leaf, so the cascade is the ordinary one (default, user, team,
+     * project, ...): a project or local value, or a user value marked important
+     * (`user!`), replaces the team's, and an empty string at that level means "no
+     * team prompt". A plain USER value does NOT beat the team.
+     */
+    team_prompt: z.string().optional(),
+    /**
      * OPT-IN (R8.7, default **false**): offer `coder`'s `edit` mode — the local
      * model rewrites one small file, Golem validates the result (syntax must
      * still parse, no definition may disappear) and only then writes it.
@@ -422,7 +487,7 @@ export const SETTINGS_LEAVES = {
      *
      * - `off` — redaction only; nothing else touches the request. Nameable for
      *   the first time in R11.1.
-     * - `1` — + lossless (byte-faithful) compression. The default.
+     * - `1` — + lossless, prefix-stable compression. The default.
      * - `2` / `3` — + the lossy semantic stages, which Decision 31 gates OFF on
      *   a prompt-caching upstream, so what RAN can still differ from what was
      *   SET (`resolveEffectiveCompression`, §103). Every surface says which.
@@ -472,8 +537,13 @@ export const SETTINGS_LEAVES = {
   knowledge: {
     /** Master toggle for the vector knowledge base. */
     enabled: z.boolean(),
-    /** Optional external vector-DB URL (e.g. Qdrant server); embedded store when unset. */
-    vector_db_url: z.string().url().optional(),
+    /**
+     * DEPRECATED, no effect. No external vector-DB driver exists; the embedded
+     * store is always used. Still accepted (any value, so an old malformed
+     * or non-string value cannot fail a load) and warned about once per load; see
+     * `DEPRECATED_SETTINGS` in `./migrations.ts`.
+     */
+    vector_db_url: z.unknown().optional(),
     /** Paths auto-ingested and watched for changes. */
     watch_paths: z.array(z.string()),
     /**
@@ -519,7 +589,7 @@ export const SETTINGS_LEAVES = {
     /**
      * OPT-IN (R3.3): syntax-aware code chunking via `web-tree-sitter` (WASM,
      * TS/JS/TSX grammars). Off by default because the runtime + grammars are
-     * a separate, user-installed opt-in — never a `golem-run` dependency
+     * a separate, user-installed opt-in — never a `@pliable/golem` dependency
      * (CLAUDE.md: no heavyweight deps in the default install; verification-
      * notes §27 rejects native tree-sitter bindings for the default). Falls
      * back to the heuristic `chunkCode` when the packages aren't installed.
@@ -617,7 +687,7 @@ export const SETTINGS_LEAVES = {
     webcache_revalidate: z.boolean(),
     /**
      * Decision 42: on a WebFetch, fetch the RAW page ourselves in the
-     * PostToolUse hook and cache/ingest THAT — instead of caching Claude Code's
+     * PreToolUse hook, cache/ingest THAT and serve it via a deny — instead of caching Claude Code's
      * prompt-specific WebFetch answer (which is wrong for a later fetch with a
      * different prompt, and a poor KB source). On by default; set false to fall
      * back to the legacy answer-capture behavior. A raw fetch that fails caches
@@ -676,6 +746,16 @@ export const SETTINGS_LEAVES = {
      * hosts.
      */
     join_injection: z.boolean(),
+    /**
+     * R13.8 — gate-map item 2 (origination scope): which project roots a
+     * paired device may START a new hosted conversation in. Empty (the
+     * default) means "all known roots", matching ADR-0007 §3d's shipped
+     * default; a non-empty list is an allowlist of absolute paths, checked
+     * after the root is resolved (so a symlink or worktree cannot widen it).
+     * This is read from policy rather than hard-coded — a device that asks
+     * to originate in a root outside the list is refused, naming the root.
+     */
+    origination_roots: z.array(z.string()),
   },
   telemetry: {
     /** Master toggle for local telemetry collection (savings attribution). */
@@ -742,12 +822,12 @@ export const SETTINGS_LEAVES = {
   snooze: {
     /**
      * Enforce the document-and-hold park at the usage limit (spec Decision 45).
-     * **Default true (USER decision).** When true it is ENFORCING — while the
+     * **Default false (USER decision, 2026-09-25).** When true it is ENFORCING — while the
      * session (5h) window is at/above the threshold on a FRESH reading, every
      * tool call outside `PARK_EXEMPT_TOOLS` (`src/hooks/pre-tool-use.ts` —
      * `mcp__golem__snooze` plus the `ToolSearch`/`expand` pair needed to reach it,
-     * R9.23) is denied until the agent parks or the window resets. Set false for ADVISORY — a
-     * single one-shot redirect to `snooze` per window that the agent can work
+     * R9.23) is denied until the agent parks or the window resets. Default false is
+     * ADVISORY — a single one-shot redirect to `snooze` per window that the agent can work
      * past. Only ever fires on a fresh prediction — a stale/cold feed never hard-blocks
      * (it still just warns once). NOTE: a PreToolUse deny cannot stop the model
      * from spending tokens reacting to it — enforcement funnels the model to
@@ -756,14 +836,14 @@ export const SETTINGS_LEAVES = {
     enforce: z.boolean(),
     /**
      * Task `subagent-park`: refuse to START a subagent when the session window
-     * cannot pay for it. **Default true.** The park (`enforce`) is a tool-call
+     * cannot pay for it. **Default false (USER decision, 2026-09-25) — the gate
+     * is OFF unless turned back on.** The park (`enforce`) is a tool-call
      * gate and a subagent never reaches it — a child hits the limit on a MODEL
      * request and dies before it can propose a call to deny, taking uncommitted
      * work with it (observed 2026-08-22, two of three dispatched agents). The
      * spawn, however, IS a tool call the parent makes, so that is where the
-     * decision belongs. Refusal states what it measured, because a refusal that
-     * does not will be worked around. Fails to ON: a config-read failure cannot
-     * deadlock a session here, since the gate touches exactly one tool.
+     * decision belongs, when this is turned on. Refusal states what it measured,
+     * because a refusal that does not will be worked around.
      */
     spawn_gate: z.boolean(),
     /**
@@ -927,7 +1007,7 @@ export const SETTINGS_LEAVES = {
      */
     sync: z.boolean(),
     /**
-     * Whether to sync the team's skills into `.claude/skills/golem-team/`.
+     * Whether to sync the team's skills into the flat `.claude/skills/golem-team-<name>/`.
      * Separate from {@link sync} because settings and instructions are different
      * kinds of thing to accept from an organization, and a member may
      * reasonably want one without the other.
@@ -942,8 +1022,12 @@ export const SECTION_NAMES = Object.keys(SETTINGS_LEAVES) as readonly SectionNam
 
 /** Look up the leaf schema for a `section.key` pair; undefined if unknown. */
 export function leafSchema(section: string, key: string): z.ZodTypeAny | undefined {
+  // Own properties only: `proxy.constructor` or `toString.x` must read as
+  // "unknown key", never resolve to something inherited from Object.prototype.
+  if (!Object.hasOwn(SETTINGS_LEAVES, section)) return undefined;
   const sectionLeaves = (SETTINGS_LEAVES as Record<string, Record<string, z.ZodTypeAny>>)[section];
-  return sectionLeaves?.[key];
+  if (sectionLeaves === undefined || !Object.hasOwn(sectionLeaves, key)) return undefined;
+  return sectionLeaves[key];
 }
 
 /** All leaf paths as dotted `section.key` strings (stable declaration order). */
@@ -1059,7 +1143,7 @@ export type ClaudeSettings = GolemSettings["claude"];
  * Built-in defaults (the lowest layer). Where the spec is silent the choice is
  * recorded in docs/plan/verification-notes.md §17:
  * - proxy.port 4653 / telemetry.dashboard_port 4654 ("GOLE" on a phone keypad).
- * - compression.level 1 (lossless-only: byte-faithful with real savings, spec P0 DoD).
+ * - compression.level 1 (lossless-only: lossless and prefix-stable with real savings, spec P0 DoD).
  * - upstream https://api.anthropic.com; Ollama http://localhost:11434.
  */
 export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
@@ -1073,6 +1157,7 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     map_reasoning_to_thinking: true,
     request_timeout_ms: 600_000,
     connect_timeout_ms: 10_000,
+    max_request_body_bytes: 32 * 1024 * 1024,
     // R14.x: explicit proxy.targets retired — targets now derived from proxy.gateways
     gateways: [],
   },
@@ -1159,6 +1244,8 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     // A message from a phone landing in the session you are typing into is an
     // opt-in, never a default.
     join_injection: false,
+    // Empty — all known roots, per ADR-0007 §3d item 2's shipped default.
+    origination_roots: [],
   },
   telemetry: {
     enabled: true,
@@ -1182,8 +1269,8 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
     context_warn_fraction: 0.8,
   },
   snooze: {
-    enforce: true,
-    spawn_gate: true,
+    enforce: false,
+    spawn_gate: false,
     // ~171k–186k tokens per subagent, measured 2026-08-22 (task `subagent-park`).
     spawn_cost_fraction: 0.18,
   },

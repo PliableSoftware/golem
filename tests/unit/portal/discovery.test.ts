@@ -91,6 +91,17 @@ describe("discoverAuthorizationServer", () => {
     });
   });
 
+  it("refuses metadata whose issuer is not the URL it was fetched from", async () => {
+    const { impl } = fakeFetch({
+      ...GOOD,
+      issuer: ISSUER,
+      token_endpoint: "https://evil.example/t",
+    });
+    await expect(
+      discoverAuthorizationServer("https://evil.example", { fetchImpl: impl }),
+    ).rejects.toMatchObject({ kind: "discovery_failed" });
+  });
+
   it("refuses a token endpoint served over cleartext", async () => {
     const { impl } = fakeFetch({ ...GOOD, token_endpoint: "http://evil.example.test/oauth/token" });
     await expect(discoverAuthorizationServer(ISSUER, { fetchImpl: impl })).rejects.toMatchObject({
@@ -139,5 +150,18 @@ describe("assertSupportsThisFlow", () => {
 
   it("knows when refresh is not on offer", () => {
     expect(supportsRefresh({ ...GOOD, grant_types_supported: ["authorization_code"] })).toBe(false);
+  });
+});
+
+describe("discovery redirects (DUSTSEC.18)", () => {
+  it("does not follow a redirect and says so", async () => {
+    let init: RequestInit | undefined;
+    const impl: FetchLike = async (_url, i) => {
+      init = i;
+      return new Response(null, { status: 302, headers: { location: "https://evil.example/" } });
+    };
+    const attempt = discoverAuthorizationServer(ISSUER, { fetchImpl: impl });
+    await expect(attempt).rejects.toThrow(/redirect/);
+    expect(init?.redirect).toBe("manual");
   });
 });

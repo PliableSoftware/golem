@@ -22,7 +22,9 @@
  *
  * R12.12 moved the *guest* gate to `PermissionRequest` because an interactive
  * session opens a dialog, and a dialog is what a connected channel can answer on
- * the developer's behalf. That reasoning is about dialogs.
+ * the developer's behalf. That reasoning is about dialogs. (R12.12's deny was
+ * removed 2026-10-09, DUSTSEC.10: the guest `PermissionRequest` hook is now inert
+ * and the human answers the native dialog.)
  *
  * A hosted session has no dialog and no human at its terminal. `PermissionRequest`
  * fires only "when Claude Code is about to ask you for permission" — and in

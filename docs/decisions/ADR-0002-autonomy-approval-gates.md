@@ -136,3 +136,64 @@ Failure modes and why the design is safe by construction:
 
 Related: [[Redaction Stage]] (untouched), R5.1 `--permission-mode` plumbing
 (a resumed task can pair a launch mode with this gate), verification-notes §65.
+
+> **Amended 2026-10-08 (DUST2.3; DECISIONS.md R8; SUMMARY rows 1.7/r017, 1.7/r019).**
+> The decision text above is unchanged and is history. Two things drifted.
+>
+> **1. Destructive and outward now end in a `deny`, not a human prompt.** *(Superseded 2026-10-09: the deny was removed; see the final note below.)* The
+> `PreToolUse` gate still emits `ask` for both classes at every level
+> (`src/autonomy/gate.ts:27-34`). R12.12 added a second, earlier layer: the
+> `PermissionRequest` hook returns a real `deny` for `destructive` and `outward`
+> whenever the gate is enabled (`decidePermissionRequest`, `src/autonomy/gate.ts:81-86`;
+> `src/hooks/permission-request.ts:91-100`). The reason was to stop a connected
+> channel's permission relay from being triggered by the dialog opening
+> (verification-notes §141). The effect is that a human at the terminal is not
+> shown the dialog for these two classes: Claude gets the deny message. `allow`
+> is still never emitted for either class, so invariant 5 above holds. What no
+> longer holds is the reading "destructive/outward means a human decides".
+>
+> **USER decision R8 (2026-10-08):** the deny should apply only when a relay
+> channel is connected. That is not implemented. DUSTSEC.10 checked first
+> whether the `PermissionRequest` hook can observe a connected relay and found no
+> signal in the hook payload, an environment variable, or a Golem-owned marker
+> (verification-notes, 2026-10-08 DUSTSEC.10 entry). **The deny is currently
+> unconditional.** The decision stands; what is missing is a way to deliver it,
+> because Golem has no signal to key on. Open question, recorded and not decided
+> here: how to deliver it, for example a Golem-owned channel server that writes a
+> connected marker. Until then the unconditional deny is the interim state, not a
+> changed decision. DUSTSEC.10 stays queued until the user chooses. Separately,
+> R12.13 is unconfirmed: nobody has observed live whether the deny pre-empts the
+> relay (`owner: user`, needs an interactive session).
+>
+> **2. "Misclassification only escalates; unknown is never auto-allowed" was
+> false for newlines.** `SHELL_COMPOSITION_RE` lacked `\n` and `\r`, so a command
+> chained on a new line after a safe-listed read could classify as `read`
+> (SUMMARY S5). Fixed by DUSTSEC.5 (`7528c67`): the pattern now includes
+> both (`src/autonomy/classify.ts:129`, applied at `:318`),
+> and `git branch -D`, linter autofix flags and `git diff --output` no longer
+> classify as `read`. DUSTSEC.18 (`56983c4`) then judged git write flags on shell
+> words, so a quoted search term is data and an escaped flag is still a flag.
+
+> **Amended 2026-10-09 (DUSTSEC.10; USER DECISION; DECISIONS.md R8).** Item 1 of
+> the 2026-10-08 note above is superseded: the unconditional R12.12 `deny` is
+> **removed**. The `PermissionRequest` hook (`src/hooks/permission-request.ts`)
+> now returns NO decision for any action class at any autonomy level, so a
+> `destructive` or `outward` call reaches Claude Code's native permission dialog
+> and a human decides. "Destructive/outward means a human decides" holds again.
+>
+> - **Invariant 5 holds, strengthened.** `allow` is never emitted for either class
+>   by either hook; the `PermissionRequest` hook now emits nothing at all.
+>   `PreToolUse`'s `ask` is unchanged. `decidePermissionRequest` is deleted.
+> - **This was the USER's decision, against the recommendation** to keep the deny
+>   and amend this ADR to say so. The conditional version (deny only while a relay
+>   channel is connected) was not possible: no such signal exists at the hook
+>   (verification-notes, 2026-10-08).
+> - **Consequence accepted.** With a permission-relay channel connected, the relay
+>   may now be notified when the dialog opens. That is the effect R12.12 existed
+>   to prevent (verification-notes §141). **R12.13 stays unconfirmed**: nobody has
+>   observed live whether the relay fires (`owner: user`, needs an interactive
+>   session).
+> - The hook stays wired (inert) so existing installs' settings keep resolving
+>   `golem hook permission-request`; whether to stop wiring it is separate.
+> - Unchanged: the `PreToolUse` bypass guard and the deny of `golem off` /
+>   `proxy.bypass_all` (a different layer).

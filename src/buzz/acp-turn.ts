@@ -22,7 +22,7 @@
  */
 
 import { credentialEnvForProxy } from "../cli/gateways.js";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import { DEFAULT_KEY_ENV } from "../credentials/backends.js";
 import { readSnoozeNudgeState } from "../hooks/snooze-nudge.js";
 import { resolveCoderPrompt } from "../inference/coder-prompt.js";
@@ -39,6 +39,7 @@ import {
   type TargetDispatcherOptions,
 } from "../inference/target-dispatcher.js";
 import { persistSnoozeNote } from "../mcp/snooze-note.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { perGatewayEnvVar, withDefaultTarget } from "../providers/index.js";
 import { readLimitState } from "../proxy/limit-prediction.js";
 import { decideInFlight, decidePreflight, deferralChannelMessage } from "./limit-guard.js";
@@ -139,7 +140,7 @@ function resolveTargetCredential(
 }
 
 function buildDispatcher(
-  settings: Awaited<ReturnType<typeof loadConfig>>["settings"],
+  settings: Awaited<ReturnType<typeof loadEffectiveConfig>>["settings"],
   projectDir: string,
   deps: RunAcpTurnDeps | undefined,
 ): TargetDispatcher {
@@ -231,7 +232,10 @@ export async function runAcpTurn(input: RunAcpTurnInput): Promise<TurnResult> {
 
 async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
   const now = input.deps?.now ?? (() => Date.now());
-  const { settings } = await loadConfig({
+  // DUSTSEC.17 / R6: this process redacts and dispatches prompts to remote
+  // targets, so it needs the project's plugin rules. Never throws; built-ins stay.
+  await ensurePluginRedactionRules(input.projectDir);
+  const { settings } = await loadEffectiveConfig({
     projectDir: input.projectDir,
     ...(input.deps?.userDir !== undefined ? { userDir: input.deps.userDir } : {}),
   });
@@ -268,6 +272,9 @@ async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
     return { stopReason: "end_turn" };
   }
 
+  // DUST2.22: the team note is deliberately NOT appended here. An ACP turn runs
+  // with the member's own authority and tools, unlike the bounded `coder` worker
+  // lane that accepts a fenced advisory note. See src/inference/team-prompt.ts.
   const promptText = await resolvePromptText(
     input.personaId,
     config,

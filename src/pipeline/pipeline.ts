@@ -7,17 +7,18 @@
  * first**, before any content is transformed, stored, or forwarded; then the
  * lossless compression stage (A2) runs per the resolved PipelinePolicy.
  *
- * Byte-faithfulness (CLAUDE.md): the pipeline only rewrites the body of
- * `POST /v1/messages` requests carrying a JSON body. Anything else — other
- * paths, non-JSON bodies, or a request where no stage changed anything —
- * is returned unchanged (same object, original bytes), so streaming and
- * tool-use traffic and secret-free level-0 requests stay byte-identical.
+ * Lossless and prefix-stable at level <= 1 (CLAUDE.md): the full pipeline runs only on
+ * `POST /v1/messages` requests carrying a JSON object body; any other JSON object or array body
+ * gets redaction only (DUSTSEC.19). An absent, non-JSON or encoded body, or a request where
+ * no stage changed anything, is returned unchanged (same object, original bytes), so streaming and
+ * tool-use traffic and requests no stage touches stay byte-identical. A request
+ * a stage DOES rewrite (redaction, dedup/compaction) is lossless, not byte-identical.
  *
  * Prefix stability (verification-notes §14): at levels ≤1, redaction is a pure
  * function of the text and the lossless compression stage is deterministic per
  * A2's contract, so re-processing a previously-sent prefix reproduces identical
  * bytes and Anthropic prompt-cache hits survive. The OPTIONAL semantic stage
- * (slider ≥2, {@link SemanticCompressor}) is lossy and NOT prefix-stable, so it
+ * (`compression.level` ≥2, {@link SemanticCompressor}) is lossy and NOT prefix-stable, so it
  * is gated OFF on Anthropic-style caching upstreams (Decision 31) and only runs
  * against non-caching gateways; it always fails open (a null result leaves the
  * losslessly-compressed body untouched).
@@ -36,6 +37,7 @@ import type { CompressionService, TokenDelta } from "../interfaces/compression.j
 import type { JoinQueue, JoinQueueMessage } from "../interfaces/join-queue.js";
 import type { LocalAnswerService } from "../interfaces/local-answer.js";
 import { type BrevityLevel, compressionRank, type PipelinePolicy } from "../interfaces/policy.js";
+import { type PluginStageRunOptions, runPluginStage } from "../plugins/stage-runner.js";
 import type { PluginPipelineStage } from "../plugins/types.js";
 import {
   type CacheBustComponent,
@@ -44,13 +46,20 @@ import {
   conversationKeyOf,
 } from "../proxy/cache-prefix.js";
 import { buildContextLedger, type ContextLedgerCore } from "../proxy/context-ledger.js";
-import type { ProxyRequest, RequestPipeline } from "../proxy/types.js";
+import type { PipelineRunOptions, ProxyRequest, RequestPipeline } from "../proxy/types.js";
 import { isRecord } from "../shared/json.js";
 import { proxyLog } from "../shared/proxy-log.js";
+import {
+  parseJsonBody,
+  redactAnyBody,
+  redactAnyBodyAsync,
+  refuseDuplicateKeys,
+} from "./body-redaction.js";
 import { applyBrevity } from "./brevity.js";
 import { applyJoinMessages, canInject } from "./join-injection.js";
 import { eligibleLocalAnswerText, synthesizeLocalAnswerResponse } from "./local-answer-response.js";
-import { redactRequestBody } from "./redaction.js";
+import { assertRedactionOn } from "./policy-guard.js";
+import { RedactionPacer, redactRequestBody, redactRequestBodyAsync } from "./redaction.js";
 
 /**
  * Whether an upstream is known to do Anthropic-style prompt caching (byte-
@@ -159,7 +168,7 @@ export interface GolemPipelineOptions {
   readonly compression: CompressionService;
   /**
    * Resolve the active policy per request (e.g. from live settings). May
-   * return a promise so callers can re-read a persisted slider level on
+   * return a promise so callers can re-read the persisted compression level on
    * every request instead of freezing it at construction time.
    */
   readonly policy: () => PipelinePolicy | Promise<PipelinePolicy>;
@@ -206,7 +215,7 @@ export interface GolemPipelineOptions {
    */
   readonly onJoinInjected?: (messages: readonly JoinQueueMessage[], conversationId: string) => void;
   /**
-   * OPTIONAL semantic compressor (slider ≥3). When present and the policy's
+   * OPTIONAL semantic compressor (`compression.level` ≥2). When present and the policy's
    * `semanticCompression` is not "off", it runs after lossless compression.
    * It is lossy and fails open — a null result skips the stage. Provided by the
    * Headroom sidecar (headroom-adapter.ts); absent by default.
@@ -277,14 +286,14 @@ export interface GolemPipelineOptions {
     readonly minChars?: number;
   };
   /**
-   * R2.3 (spec Decision 24 sub-mode 2 / Decision 33): OPT-IN local-answer
+   * R2.3 (spec Decision 24 sub-mode 2 / Decision 33): local-answer
    * sub-mode. When present, runs right after redaction (stage 1) and before
    * any compression stage — only for requests {@link eligibleLocalAnswerText}
    * accepts (single-turn, plain-text user message). A confident result
    * short-circuits the whole request: `respondDirectly` is set on the
    * returned {@link ProxyRequest} and every later stage is skipped, since
    * there is no upstream call left to compress for. Independent of
-   * `slider.level` (Decision 31) and of the caching-upstream gate that
+   * the compression dial (Decision 31) and of the caching-upstream gate that
    * governs the semantic/context-substitution stages — this stage never
    * forwards a byte upstream, so there is no cached prefix to preserve or
    * break. Absent → stage does not run (today's behavior).
@@ -302,6 +311,8 @@ export interface GolemPipelineOptions {
    * so an install with no plugins behaves exactly as it did before R8.11.
    */
   readonly pluginStages?: readonly PluginPipelineStage[];
+  /** Timeout, clock and breaker settings for plugin stages. Tests inject short values. */
+  readonly pluginStageRun?: PluginStageRunOptions;
 }
 
 // Match the Anthropic Messages endpoint as the tail of the path — NOT anchored
@@ -374,27 +385,102 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
 
   return {
     name: "golem",
-    async process(request: ProxyRequest): Promise<ProxyRequest> {
+    // DUSTSEC.1 — the proxy's error path. Stage 1 alone, on the original
+    // request: the SAME `redactRequestBody` the full pipeline runs, so the same
+    // rules in the same order, plugin rules included. Deliberately has no other
+    // stage and no policy lookup, so nothing that can throw in `process` can
+    // throw here except redaction itself.
+    redactOnly(input: ProxyRequest): ProxyRequest {
+      if (input.body === null) return input;
+      if (!isMessagesRequest(input)) return redactAnyBody(input);
+      let parsed: unknown;
+      try {
+        parsed = parseJsonBody(input.body);
+      } catch {
+        // DUSTSEC.21: not JSON is no longer "forward raw": text bodies are redacted.
+        return redactAnyBody(input);
+      }
+      // An array or bare scalar is not a Messages body, but it is still scanned.
+      if (!isRecord(parsed)) return redactAnyBody(input);
+      // Duplicate keys: the parsed value hides a shadowed secret the bytes still carry.
+      refuseDuplicateKeys(input.body);
+      const redacted = redactRequestBody(parsed);
+      if (redacted.count === 0 || !isRecord(redacted.value)) return input;
+      return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
+    },
+    // DUSTSEC.23 — `redactOnly` with the walk sliced (see `redactRequestBodyAsync`),
+    // for the proxy's error path: the fail-safe re-walk must not freeze the event
+    // loop for as long as the walk that just failed. Same classification, same
+    // refusals, same bytes as `redactOnly` (a differential test holds it to that).
+    async redactOnlyAsync(
+      input: ProxyRequest,
+      runOptions: PipelineRunOptions = {},
+    ): Promise<ProxyRequest> {
+      const pacer = new RedactionPacer(runOptions.signal);
+      const walkOptions = {
+        pacer,
+        ...(runOptions.signal === undefined ? {} : { signal: runOptions.signal }),
+      };
+      if (input.body === null) return input;
+      if (!isMessagesRequest(input)) return redactAnyBodyAsync(input, walkOptions);
+      await pacer.pause();
+      let parsed: unknown;
+      try {
+        parsed = parseJsonBody(input.body);
+      } catch {
+        return redactAnyBodyAsync(input, walkOptions);
+      }
+      if (!isRecord(parsed)) return redactAnyBodyAsync(input, walkOptions);
+      await pacer.pause();
+      refuseDuplicateKeys(input.body);
+      const redacted = await redactRequestBodyAsync(parsed, walkOptions);
+      if (redacted.count === 0 || !isRecord(redacted.value)) return input;
+      await pacer.pause();
+      return {
+        ...input,
+        body: Buffer.from(redacted.json ?? JSON.stringify(redacted.value), "utf8"),
+      };
+    },
+    async process(input: ProxyRequest, runOptions: PipelineRunOptions = {}): Promise<ProxyRequest> {
+      // DUSTSEC.23: every redaction walk below yields to the event loop between slices
+      // and stops when the client goes away.
+      const pacer = new RedactionPacer(runOptions.signal);
+      const walkOptions = {
+        pacer,
+        ...(runOptions.signal === undefined ? {} : { signal: runOptions.signal }),
+      };
       // R10.23 — every stage below runs BEFORE the request is forwarded, so
       // whatever they cost, the user is watching the client say "waiting for
       // API" for exactly that long, with nothing in the log to say Golem is the
       // one holding it. Time the stages and, past the threshold, say so.
       const startedAt = performance.now();
       const stageMs: Record<string, number> = {};
-      if (request.body === null || !isMessagesRequest(request)) {
-        return request;
+      if (input.body === null) return input;
+      if (!isMessagesRequest(input)) {
+        // DUSTSEC.19 — redaction only. DUST2.23: the policy is still asked for and
+        // checked, so a policy that says redaction-off throws (the proxy then falls
+        // back to redaction alone) instead of being obeyed.
+        assertRedactionOn(await options.policy());
+        return redactAnyBodyAsync(input, walkOptions);
       }
 
       let parsed: unknown;
       try {
-        parsed = JSON.parse(request.body.toString("utf8"));
+        parsed = parseJsonBody(input.body);
       } catch {
-        // Not JSON we can safely rewrite — forward untouched.
-        return request;
+        // DUSTSEC.21: not JSON — redact it as text (or forward it if opaque).
+        return redactAnyBodyAsync(input, walkOptions);
       }
       if (!isRecord(parsed)) {
-        return request;
+        // DUSTSEC.21: an array or bare scalar to the messages route: redaction only.
+        return redactAnyBodyAsync(input, walkOptions);
       }
+      // DUSTSEC.21: a body with duplicate keys may hide a secret in a shadowed
+      // value the parse dropped: refuse it (400, nothing forwarded). DUSTSEC.23: a
+      // yield after the parse, so the parse and the scan do not run back to back.
+      await pacer.pause();
+      refuseDuplicateKeys(input.body);
+      const request = input;
 
       // R8.S3 — observe for session tree (fire-and-forget, never affects the request).
       if (options.sessionRecorder !== undefined) {
@@ -417,7 +503,8 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         }
       }
 
-      const policy = await options.policy();
+      // DUST2.23: throws on a policy with redaction off (fail closed, see policy-guard.ts).
+      const policy = assertRedactionOn(await options.policy());
       const stages = policy.stages;
       const stageSavings: Record<string, TokenDelta> = {};
       let body: Record<string, unknown> = parsed;
@@ -474,9 +561,10 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         }
       }
 
-      // Stage 1 — redaction (always first; runs at every level per the table).
-      if (stages.redaction) {
-        const redacted = redactRequestBody(body);
+      // Stage 1 — redaction (always first; unconditional since DUST2.23: the policy
+      // can no longer say otherwise, see policy-guard.ts).
+      {
+        const redacted = await redactRequestBodyAsync(body, walkOptions);
         stageSavings.redaction = redacted.delta;
         if (redacted.count > 0 && isRecord(redacted.value)) {
           body = redacted.value;
@@ -484,8 +572,8 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         }
       }
 
-      // Stage 1.5 — local-answer sub-mode (R2.3, opt-in, independent of
-      // slider level). Runs on the already-redacted body — the redaction
+      // Stage 1.5 — local-answer sub-mode (R2.3, on by default via knowledge.local_answer_enabled, independent of
+      // compression level). Runs on the already-redacted body — the redaction
       // hard rule applies here same as anywhere else. Only attempted for
       // requests eligibleLocalAnswerText() accepts; a confident result
       // short-circuits the whole request, so no compression stage below has
@@ -545,6 +633,9 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
                 brevity: "off",
                 brevityDirectiveTokens: 0,
               });
+              // The `finally` below has not run yet; record the stage first so
+              // the held-request line names it (it is the stage that held us).
+              stageMs["local-answer"] = performance.now() - localAnswerAt;
               reportHeldRequest(startedAt, stageMs, "answered locally");
               return { ...request, respondDirectly };
             }
@@ -572,42 +663,54 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       // local-answer short-circuit, so a request Golem answers itself does not
       // run third-party code at all.
       //
-      // Then redaction RE-RUNS over whatever a stage returned. Redaction is
-      // idempotent (placeholders are outside every rule's charset), so the second
-      // pass cannot renumber anything — what it buys is that a plugin stage
-      // cannot introduce unredacted content into the request, however it obtained
-      // it. That is a structural answer to "can a plugin weaken redaction",
-      // rather than a promise that we read the plugin.
+      // Then redaction RE-RUNS after ANY stage ran — not only when a stage
+      // returned a new object, because a stage may also mutate `body` in place
+      // (S8). Redaction is idempotent (proven per rule in
+      // redaction.test.ts), so the second pass cannot renumber anything — what it buys is
+      // that a plugin stage cannot introduce unredacted content into the request,
+      // however it obtained it. That is a structural answer to "can a plugin
+      // weaken redaction", rather than a promise that we read the plugin.
       if (options.pluginStages !== undefined && options.pluginStages.length > 0) {
         const pluginsAt = performance.now();
         let touched = false;
         for (const stage of options.pluginStages) {
-          try {
-            const next = await stage.transform({ body, projectId: options.projectId });
-            if (next !== undefined && isRecord(next) && next !== body) {
-              body = next;
-              touched = true;
+          // A plugin never fails a user's request. A stage that throws, hangs, or
+          // half-edits the body and then throws is skipped and the pre-stage body
+          // (already through built-in redaction) is kept; the fault is counted.
+          const outcome = await runPluginStage(
+            stage,
+            body,
+            options.projectId,
+            options.pluginStageRun,
+          );
+          body = outcome.body;
+          if (outcome.replaced) touched = true;
+          if (outcome.fault !== null) {
+            const f = outcome.fault;
+            // First fault per stage, every 100th, and the one that opens the
+            // breaker: loud enough to see, not a line per request.
+            if (f.total === 1 || f.total % 100 === 0 || f.tripped === true) {
+              const verb =
+                f.kind === "threw" ? "threw" : f.kind === "timed-out" ? "timed out" : "is disabled";
+              proxyLog(
+                `plugin stage ${f.stage} ${verb} and was skipped (${f.reason}); ` +
+                  `pre-stage body kept, ${f.total} fault(s) from this stage so far`,
+              );
             }
-          } catch (err) {
-            // A plugin never fails a user's request: skip the stage, keep the
-            // pre-stage body, say so once on stderr.
-            proxyLog(
-              `plugin stage ${stage.name} threw and was skipped (${
-                err instanceof Error ? err.message : String(err)
-              })`,
-            );
           }
         }
-        if (touched) {
-          changed = true;
-          if (stages.redaction) {
-            const reRedacted = redactRequestBody(body);
-            if (reRedacted.count > 0 && isRecord(reRedacted.value)) {
-              body = reRedacted.value;
-              // Attribute the extra pass separately — a plugin stage that keeps
-              // introducing secrets should be visible, not folded into stage 1.
-              stageSavings["redaction-after-plugins"] = reRedacted.delta;
-            }
+        if (touched) changed = true;
+        {
+          const reRedacted = await redactRequestBodyAsync(body, walkOptions);
+          if (reRedacted.count > 0 && isRecord(reRedacted.value)) {
+            body = reRedacted.value;
+            // An in-place mutation returns the same object, so `touched` is
+            // false; if the second pass had to redact, the body differs from
+            // the original and must be forwarded.
+            changed = true;
+            // Attribute the extra pass separately — a plugin stage that keeps
+            // introducing secrets should be visible, not folded into stage 1.
+            stageSavings["redaction-after-plugins"] = reRedacted.delta;
           }
         }
         stageMs.plugins = performance.now() - pluginsAt;
@@ -707,7 +810,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
             tokensAfter: substituted.tokensAfter,
           };
           avoidedUpstreamInputTokens = substituted.tokensBefore - substituted.tokensAfter;
-          ccrRefsStored += substituted.substitutions;
+          ccrRefsStored += substituted.ccrRefsStored;
           changed = true;
         }
       }
@@ -717,7 +820,7 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       // the caching-upstream rule that governs stages 3–4: this stage does not
       // rewrite history, it appends a byte-stable constant, so the cached prefix
       // survives (it is invalidated once when the LEVEL changes, then stable).
-      // `policy.brevity` is already resolved — "off" at slider 0 and, by
+      // `policy.brevity` is already resolved — "off" when the compression dial is off and, by
       // default, at every level until the operator opts in (see policy.ts).
       if (policy.brevity !== "off") {
         const brevity = applyBrevity(body, policy.brevity);

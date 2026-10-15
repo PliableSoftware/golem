@@ -25,7 +25,7 @@
  * already-tested Decision-31 pattern the semantic stage established: gate
  * the whole stage off on caching upstreams. On a non-caching upstream there
  * is no stable prefix to break, so any substitution there is unconditionally
- * cache-safe — satisfying §14 by construction. See pipeline.ts's
+ * cache-safe — satisfying §14 by construction. See effective-level.ts's
  * `isCachingUpstream` — the exact same gate is reused for this stage.
  *
  * Fidelity: only user-side text and tool_result text are candidates (proxy
@@ -154,6 +154,8 @@ function transformMessage(
 export interface ContextSubstitutionResult {
   readonly messages: ReadonlyArray<Readonly<Record<string, unknown>>>;
   readonly substitutions: number;
+  /** Refs newly written to the CCR store; a substitution whose blob already existed is not counted. */
+  readonly ccrRefsStored: number;
   readonly tokensBefore: number;
   readonly tokensAfter: number;
 }
@@ -180,14 +182,16 @@ export async function substituteKnownContent(
     pending: new Map(),
   };
   const out = messages.map((message) => transformMessage(message, ctx));
+  let ccrRefsStored = 0;
   for (const [refId, content] of ctx.pending) {
     try {
-      await ccr.putIfAbsent(refId, {
+      const stored = await ccr.putIfAbsent(refId, {
         v: 1,
         contentType: "text/plain",
         originalTokens: estimateTokens(content),
         content,
       });
+      if (stored) ccrRefsStored += 1;
     } catch {
       // Best-effort — a backfill failure must never break the request.
     }
@@ -195,6 +199,7 @@ export async function substituteKnownContent(
   return {
     messages: out,
     substitutions: ctx.substitutions,
+    ccrRefsStored,
     tokensBefore: ctx.tokensBefore,
     tokensAfter: ctx.tokensAfter,
   };

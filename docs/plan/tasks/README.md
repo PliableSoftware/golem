@@ -21,7 +21,36 @@ golem task show R8.5           # the full brief
 golem task index --summary     # one-screen ready/blocked view
 golem task index --write       # regenerate the ROADMAP.md index in place
 golem task done R8.5 --note …  # close it; re-run `index --write`
+golem task resume R8.5         # print the headless command that starts the work
 ```
+
+**A document that cannot be parsed is never dropped silently** (DUST2.12). `list`,
+`index`, `index --summary` and `index --json` each report every unreadable doc with its
+path and reason; `index` and `index --write` also splice an "Unparseable task documents"
+table into the generated ROADMAP region and **exit 1** (the index is still written, with
+the readable tasks), so a script or CI step cannot miss it. `list` exits 0 but prints the
+block (on stderr with `--json`, whose array shape is unchanged). The drift test in
+`tests/integration/plan-tasks-roadmap.test.ts` fails if this repo has one.
+
+### Resuming a plan task
+
+A plan task is a committed document, not a conversation, so `golem task resume <id>`
+means "start a fresh headless session from the brief": `claude -p "<brief>"` with no
+`--resume` or `--continue`. Without `--spawn` it only prints the command. Rules:
+
+- `owner: user` tasks are refused (an agent must not do them).
+- A task with a `blocked` reason or an unfinished `depends_on` prints a warning, and
+  `--spawn` is refused.
+- Resuming never writes the document: no `running` state, no attempt count. Committed
+  files are not machine bookkeeping. Close the task with `golem task done`.
+
+### Parked sessions record their worktree
+
+`golem task add` and the `snooze` park note (local tasks) capture the git worktree they
+were made in: path, branch, HEAD and the dirty files (capped at 50). `golem task show`
+prints it; `golem task resume` prints it, warns if the worktree is gone or HEAD moved,
+and with `--spawn` launches in that directory when it still exists. Nothing is recorded
+outside a git checkout.
 
 `ROADMAP.md` holds only a **generated** index of links to these files, between the
 `golem:task-index` markers. Edit the task document, never that table.
@@ -32,13 +61,15 @@ golem task done R8.5 --note …  # close it; re-run `index --write`
 |---|---|
 | `task` | stable id, also the filename (`R8.5`, `21e`). Never reused. |
 | `title` | one-line goal, as it appears in the index. |
-| `state` | `queued` · `running` · `blocked` · `paused` · `done` · `failed` · `cancelled`. |
+| `state` | `queued` · `running` · `paused` · `done` · `failed` · `cancelled`. There is no `blocked` state: blocked is the `blocked` key below, on a `queued` task. An old `state: blocked` is still read, as `queued` with its reason. |
 | `owner` | `agent` (an agent can do it) or `user` (an outward or credentialed act an agent must not take). |
 | `size` | `S` · `M` · `L` — rough effort, for picking work, not for scheduling. |
 | `discipline` | optional, free-form — which *kind* of worker should staff this (`code`, `review`, `write`, whatever a project decides). The routing axis, distinct from `owner` (the permission axis: may an agent do this at all). **Inert on an unrecognised value, and inert when absent**: no validation, no warning, no staffing lookup — a task naming a discipline nobody staffs behaves exactly as one naming none. That is deliberate (USER, 2026-08-30), not a gap to "fix" into a closed set; staffing becomes visible on demand via `golem personas` (R14.1), not by a warning here. |
 | `design` | where the design already lives, so the brief does not restate it. |
 | `gate` | the one-line definition of done / what decides it. |
-| `blocked` | why it cannot start *now*, when that is a fact about the world (no hardware, no keys, needs a decision). Keeps it visible rather than lost. |
+| `blocked` | metadata, not a state (USER decision H2): the task stays `queued`. Why it cannot start *now*, when that is a fact about the world (no hardware, no keys, needs a decision). Keeps it visible rather than lost. |
+| `created` | optional ISO date the doc was written; read into the task's `createdAt`. |
+| `updated` | optional ISO date of the last change; falls back to `created` when absent. |
 | `depends_on` | task ids that must land first. |
 | `touches` | directories the work is expected to reach — a starting map, not a contract. |
 

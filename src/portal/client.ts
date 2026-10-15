@@ -24,7 +24,7 @@ import { z } from "zod";
 import type { AuthorizationServerMetadata, FetchLike } from "./discovery.js";
 import { PortalAuthError } from "./errors.js";
 import { refreshTokens } from "./exchange.js";
-import { isExpired, type PortalTokenSet, type PortalTokenStore } from "./tokens.js";
+import { isExpired, type PortalTokenSet, type PortalTokenStore, portalOrigin } from "./tokens.js";
 
 /**
  * Accept `null` from the wire wherever an absent field is acceptable, and
@@ -82,6 +82,12 @@ export interface PortalClient {
   request(path: string, init?: RequestInit): Promise<Response>;
   /** `GET /api/v1/me`, validated. */
   me(): Promise<PortalIdentity>;
+  /**
+   * Throw `origin_mismatch` / `insecure_url` / `not_linked` WITHOUT sending
+   * anything, when the stored token may not be used against this client's API
+   * base. Lets a CLI fail loudly up front.
+   */
+  assertBound?(): Promise<void>;
   readonly stats: PortalClientStats;
 }
 
@@ -131,6 +137,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
     if (tokens.refresh_token === undefined) return null;
     stats.refreshAttempts += 1;
     const metadata = await options.metadata();
+    assertRefreshBound(tokens, metadata);
     let renewed: PortalTokenSet;
     try {
       renewed = await refreshTokens({
@@ -156,7 +163,57 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
     return await options.reauthorize();
   }
 
+  /**
+   * The one choke point every credentialed request passes through: the token
+   * goes only to the origin it was linked for, over https (DUSTSEC.4). Runs
+   * before the request, and so before any refreshed or re-linked token is sent
+   * anywhere. Messages name origins, never the token.
+   */
+  function assertTokenBound(tokens: PortalTokenSet): void {
+    const target = portalOrigin(options.apiBaseUrl);
+    if (tokens.api_origin === undefined) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        `the stored portal token is not bound to an origin, so it will not be sent to ${target}. ` +
+          "Run `golem team link` to sign in again.",
+      );
+    }
+    if (tokens.api_origin !== target) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        `refusing to send the portal token to ${target}: it was issued for ${tokens.api_origin}. ` +
+          "Check `team.portal_url` / `portal.url`, or run `golem team link` for this portal.",
+      );
+    }
+  }
+
+  /**
+   * The refresh_token is a credential too: it goes only to a token endpoint on
+   * the issuer origin recorded at link time. Runs before the POST.
+   */
+  function assertRefreshBound(tokens: PortalTokenSet, metadata: AuthorizationServerMetadata): void {
+    if (tokens.issuer_origin === undefined) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        "the stored portal token is not bound to an authorization server origin, so it will not be " +
+          "refreshed. Run `golem team link` to sign in again.",
+      );
+    }
+    const target = portalOrigin(metadata.token_endpoint);
+    if (target !== tokens.issuer_origin) {
+      throw new PortalAuthError(
+        "origin_mismatch",
+        `refusing to send the portal refresh token to ${target}: its token endpoint is not on ` +
+          `the origin that issued the token (${tokens.issuer_origin}), and a refresh token is only ` +
+          "ever sent to that origin. If this authorization server legitimately serves its token " +
+          "endpoint from another origin it cannot be refreshed here: run `golem team link` again " +
+          "when the token expires, or check `portal.issuer`.",
+      );
+    }
+  }
+
   async function send(path: string, init: RequestInit, tokens: PortalTokenSet): Promise<Response> {
+    assertTokenBound(tokens);
     stats.requests += 1;
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${tokens.access_token}`);
@@ -218,6 +275,9 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
   return {
     stats,
     request,
+    assertBound: async () => {
+      assertTokenBound(await current());
+    },
 
     me: async (): Promise<PortalIdentity> => {
       const response = await request("/api/v1/me");

@@ -17,7 +17,12 @@ import type {
   JoinQueueMessage,
   LiveConversation,
 } from "../interfaces/join-queue.js";
-import type { SessionEvent, SessionMessageResponse } from "../interfaces/session-events.js";
+import type {
+  SessionAttachedEvent,
+  SessionDroppedFrame,
+  SessionEvent,
+  SessionMessageResponse,
+} from "../interfaces/session-events.js";
 import { appendHostLog } from "./host-log.js";
 import { MessageLedger, type SessionBus } from "./session-bus.js";
 
@@ -124,6 +129,9 @@ export interface TransportOptions {
   readonly nowIso?: () => string;
 }
 
+/** Message ids currently being attributed/delivered, so a concurrent twin waits for the outcome. */
+const inFlight = new Map<string, Promise<void>>();
+
 /** Per-session idempotency ledgers, kept beside the transport rather than in it. */
 const ledgers = new Map<string, MessageLedger>();
 
@@ -167,9 +175,18 @@ export function parseSessionPath(
   return null;
 }
 
-/** One SSE frame. `id:` is the cursor a client resumes from. */
-export function sseFrame(event: SessionEvent): string {
-  return `id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+/**
+ * One SSE frame. `id:` is the cursor a client resumes from. A
+ * {@link SessionDroppedFrame} has no seq, so it gets NO `id:` line: an absent id
+ * leaves the client's `lastEventId` untouched, where any number could collide
+ * with a real event on resume (2026-10-09 amendment).
+ */
+export function sseFrame(event: SessionEvent | SessionDroppedFrame): string {
+  // `attached` is stamped seq 0 (it is not a ring event). `id: 0` would make a native
+  // EventSource reconnect send `Last-Event-ID: 0`, which the server reads as a fresh
+  // attach: events past the ring lost with no gap warning. So seq 0 gets no id either.
+  const id = "seq" in event && event.seq > 0 ? `id: ${event.seq}\n` : "";
+  return `${id}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
 function json(res: ServerResponse, status: number, payload: unknown): void {
@@ -227,14 +244,10 @@ export function handleStream(
   const attach = session.bus.subscribe(
     {
       send: (event) => write(sseFrame(event)),
-      close: (reason) => {
-        write(
-          sseFrame({
-            type: "ended",
-            seq: session.bus.cursor + 1,
-            reason,
-          } as SessionEvent),
-        );
+      close: (reason, kind) => {
+        // Only a backpressure drop sends the seq-less frame. A shutdown already
+        // delivered a real `ended` event through `send`; just close the stream.
+        if (kind !== "shutdown") write(sseFrame({ type: "ended", dropped: true, reason }));
         res.end();
       },
     },
@@ -248,9 +261,10 @@ export function handleStream(
       type: "attached",
       seq: 0,
       sessionId: session.bus.sessionId,
+      epoch: session.bus.epoch,
       resumedFrom: after,
       gap: attach.gap,
-    } as SessionEvent),
+    } satisfies SessionAttachedEvent),
   );
   for (const event of attach.replay) write(sseFrame(event));
 
@@ -258,6 +272,12 @@ export function handleStream(
   // than left to time out: silence never means "gone".
   const ended = session.bus.endedEvent;
   if (ended !== undefined) write(sseFrame(ended));
+  // A bus that was closed (host shutdown) accepts no new subscriber: the late
+  // attacher has been told everything, so end its stream rather than hold it open.
+  if (attach.closed) {
+    res.end();
+    return;
+  }
 
   const heartbeat = setInterval(() => {
     // An SSE comment: keeps the socket warm, carries no event, cannot be
@@ -309,6 +329,15 @@ export async function handleMessage(
   }
 
   const ledger = ledgerFor(session.bus.sessionId);
+  // Reserve the id SYNCHRONOUSLY, before any await: lookup and record are
+  // separated by the attribution write and the delivery, so two concurrent POSTs
+  // of one id would otherwise both pass the lookup and both deliver.
+  const flightKey = `${session.bus.sessionId}\u0000${messageId}`;
+  for (;;) {
+    const flight = inFlight.get(flightKey);
+    if (flight === undefined) break;
+    await flight.catch(() => undefined);
+  }
   const already = ledger.lookup(messageId);
   if (already !== undefined) {
     // A retry after a dropped connection. Do NOT deliver again — a duplicated
@@ -321,6 +350,30 @@ export async function handleMessage(
     return;
   }
 
+  let release: () => void = () => undefined;
+  inFlight.set(
+    flightKey,
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  try {
+    await deliverOnce(session, res, ledger, messageId, text, deviceId, options);
+  } finally {
+    inFlight.delete(flightKey);
+    release();
+  }
+}
+
+async function deliverOnce(
+  session: TransportSession,
+  res: ServerResponse,
+  ledger: MessageLedger,
+  messageId: string,
+  text: string,
+  deviceId: string,
+  options: TransportOptions,
+): Promise<void> {
   // Invariant 4: attribution BEFORE delivery, and awaited. A turn nobody can
   // attribute must not run, so a failure to record is a failure to send.
   const ts = options.nowIso?.() ?? new Date().toISOString();

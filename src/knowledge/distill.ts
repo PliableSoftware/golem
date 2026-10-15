@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import type { ChatMessage, InferenceService } from "../interfaces/inference.js";
+import { redactWikiText, safeDraftSlug, sha8 } from "../wiki/write-redaction.js";
 
 export interface DistillInput {
   readonly url: string;
@@ -281,7 +282,12 @@ function parseDistillResponse<T extends { title: string; slug: string; wikilinks
     );
   }
   const draft = parsed.data;
-  const slug = kebabCase(draft.slug) || kebabCase(draft.title);
+  // The slug becomes a file name and then a committed wiki path. The model's own
+  // slug is ignored: it arrives lowercased and kebab-cased, which hides case-sensitive
+  // key shapes (AIza..., AKIA...) from the redactor and splits keys into short runs.
+  // Deriving from the title AFTER redaction means those patterns have already fired.
+  const kebabTitle = kebabCase(redactWikiText(draft.title));
+  const slug = kebabTitle === "" ? `draft-${sha8(draft.title)}` : safeDraftSlug(kebabTitle);
 
   // Canonicalize casing to the caller's title, not the model's — the wiki's
   // titles are the source of truth for how a link should read.

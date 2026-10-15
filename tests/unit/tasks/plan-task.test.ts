@@ -16,6 +16,7 @@ import {
   planTaskSlug,
   planTasksDir,
   serializePlanTask,
+  TASK_STATES,
 } from "../../../src/tasks/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
@@ -41,6 +42,19 @@ Build the map.
 const newTempDir = useTempDirs("golem-plan-tasks-");
 
 describe("parsePlanTask", () => {
+  it("decodes quoted scalars: delimiters and escaped quotes do not reach the title", () => {
+    const task = parsePlanTask(
+      "---\ntask: Q1\ntitle: \"Say \\\"hi\\\" \\\\ there\"\ngate: 'it''s'\n---\n\nbody\n",
+    );
+    expect(task.title).toBe('Say "hi" \\ there');
+    expect(task.plan?.gate).toBe("it's");
+  });
+
+  it("round-trips a title that starts with a quote", () => {
+    const task = parsePlanTask('---\ntask: Q2\ntitle: "\\"x\\" is odd"\n---\n\nbody\n');
+    expect(parsePlanTask(serializePlanTask(task)).title).toBe('"x" is odd');
+  });
+
   it("maps frontmatter onto a Task and the body onto the prompt", () => {
     const task = parsePlanTask(DOC);
     expect(task.id).toBe("R8.5");
@@ -73,6 +87,24 @@ describe("parsePlanTask", () => {
   it("reads a `blocked` reason", () => {
     const task = parsePlanTask("---\ntask: R7.5\nblocked: needs credentials\n---\n\nbody\n");
     expect(task.plan?.blocked).toBe("needs credentials");
+  });
+
+  it("reads a legacy `state: blocked` as queued, keeping the stated reason", () => {
+    const task = parsePlanTask(
+      "---\ntask: R7.6\nstate: blocked\nblocked: needs credentials\n---\n\nbody\n",
+    );
+    expect(task.state).toBe("queued");
+    expect(task.plan?.blocked).toBe("needs credentials");
+  });
+
+  it("reads a legacy `state: blocked` with no reason as queued with a placeholder reason", () => {
+    const task = parsePlanTask("---\ntask: R7.7\nstate: blocked\n---\n\nbody\n");
+    expect(task.state).toBe("queued");
+    expect(task.plan?.blocked).toMatch(/state: blocked/);
+  });
+
+  it("does not list blocked among the states the tool writes", () => {
+    expect(TASK_STATES as readonly string[]).not.toContain("blocked");
   });
 
   it("reads a free-form `discipline`", () => {
@@ -208,6 +240,31 @@ describe("PlanTaskStore", () => {
     const listed = await store.list();
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe("R8.5");
+  });
+
+  it("reports an unparseable file with its path and reason, alongside the good ones", async () => {
+    const store = new PlanTaskStore(dir);
+    await store.put(parsePlanTask(DOC));
+    await writeFile(path.join(planTasksDir(dir), "broken.md"), "not a task", "utf8");
+    await writeFile(
+      path.join(planTasksDir(dir), "badstate.md"),
+      "---\ntask: X1\nstate: bogus\n---\n\nbody\n",
+      "utf8",
+    );
+    const { tasks, problems } = await store.listWithProblems();
+    expect(tasks.map((t) => t.id)).toStrictEqual(["R8.5"]);
+    expect(problems.map((p) => p.name)).toStrictEqual(["badstate.md", "broken.md"]);
+    expect(problems[1]?.path).toBe(path.join(planTasksDir(dir), "broken.md"));
+    expect(problems[1]?.reason).toContain("leading --- frontmatter delimiter");
+    expect(problems[0]?.reason).toContain('unknown state "bogus"');
+  });
+
+  it("reports nothing for a clean tree, README.md and non-markdown included", async () => {
+    const store = new PlanTaskStore(dir);
+    await store.put(parsePlanTask(DOC));
+    await writeFile(path.join(planTasksDir(dir), "README.md"), "# x\n", "utf8");
+    await writeFile(path.join(planTasksDir(dir), "notes.txt"), "x", "utf8");
+    expect((await store.listWithProblems()).problems).toStrictEqual([]);
   });
 
   it("ignores README.md and non-markdown files", async () => {

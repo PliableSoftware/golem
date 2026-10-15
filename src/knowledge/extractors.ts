@@ -8,7 +8,7 @@
  *
  * **`unpdf` is genuinely optional as of Decision 53 (Tier 2).** It was
  * *documented* as optional here and in the R3.2 debrief while actually being a
- * static import in `dependencies`, so it shipped to every `golem-run` user and
+ * static import in `dependencies`, so it shipped to every `@pliable/golem` user and
  * an install without it would have failed at module load. It is now loaded via
  * dynamic `import()` and cached, following the `tree-sitter-chunker.ts`
  * precedent, and `optionalDependencies` lets an install tolerate its absence.
@@ -38,19 +38,10 @@ export class PdfExtractionUnavailableError extends Error {
   constructor() {
     super(
       "PDF text extraction needs the optional `unpdf` package — install it " +
-        "(`npm install unpdf`) or see `golem ext status`. Skipping this file.",
+        "(`npm install unpdf`) or see `golem pkg`. Skipping this file.",
     );
     this.name = "PdfExtractionUnavailableError";
   }
-}
-
-/**
- * Whether `.pdf` extraction is currently possible on this machine — i.e.
- * whether `unpdf` resolves. Used by the `golem ext` registry to report the
- * capability without attempting an extraction.
- */
-export async function isPdfExtractionAvailable(): Promise<boolean> {
-  return (await loadUnpdf()) !== null;
 }
 
 const BLOCK_TAGS = "p|div|br|li|h[1-6]|tr|table|blockquote|section|article|header|footer|ul|ol";

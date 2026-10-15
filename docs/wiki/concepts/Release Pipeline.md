@@ -4,7 +4,7 @@ type: concept
 tags: [ci, release, branches, npm, github-actions, portal, webhook]
 sources: [.github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/release-prepare.yml, scripts/release.mjs, src/cli/commands/config.ts, "https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow"]
 created: 2026-09-04
-updated: 2026-09-06
+updated: 2026-10-14
 ---
 
 # Release Pipeline
@@ -27,9 +27,11 @@ Related pages: [[Portal Install Contract]] · [[Team Layer]] · [[Dogfooding Gol
 
 | workflow | trigger | does |
 |---|---|---|
-| `ci.yml` | PR to `main`; **`workflow_call`** | lint, typecheck, build, wiki lint, 10 sharded test jobs × 2 node versions, then one `CI gate` job |
+| `ci.yml` | PR to `main` **and** `development` (`.github/workflows/ci.yml:24-25`); **`workflow_call`** | lint, typecheck, build, wiki lint, 10 sharded test jobs on ubuntu (node 22 and 24) and windows (node 24), 30 jobs (`ci.yml:113-119`), then one `CI gate` job |
 | `release-prepare.yml` | manual, on `development` | bumps the version, pushes it, opens the release PR |
 | `release.yml` | push to `main` (i.e. the release PR merging) | calls `ci.yml`, tags, builds, publishes, notifies |
+
+**Runner images are pinned.** The gating jobs and every release job run on `ubuntu-24.04`, not `ubuntu-latest`, because GitHub moves `ubuntu-latest` to Ubuntu 26.04 over several weeks from 2026-10-19 (runner-images issue 14748) and that move would otherwise change what gates a merge and what builds a release (system libraries, glibc for the standalone binaries) with no edit in this repository. An advisory `test (advisory) / ubuntu-26.04` job (not in `CI gate`'s needs, like the macOS one) runs the suite on the new image so the breakage is seen first; when it has been green for a few runs the pin moves to `ubuntu-26.04` in one reviewed change. The action versions are the first majors that run on Node 24 (`checkout@v5`, `setup-node@v5`, `upload-artifact@v6`, `download-artifact@v7`), which ends the Node 20 deprecation annotation on every run. The `CI gate` message now says when a run was cancelled by a newer push rather than failed.
 
 `release.yml` **calls** `ci.yml` rather than repeating it. A second copy of the
 checks would drift, and the first anyone would know is a release that passed
@@ -66,7 +68,11 @@ most used on, and its defects have never been theoretical: `npm.cmd` with
 `fs.rename` calls on one source **both succeed** on Windows (§148) — a broken
 exclusive-claim that shipped and was caught by a human, not by CI.
 
-**macOS is advisory on purpose.** The suite has never run there, so making it a
+**macOS is advisory on purpose, and that is the shipped design** (Decision X5; default
+rule: doc follows code). `test-macos` has `continue-on-error: true` and is absent from
+`ci-gate`'s `needs: [quality, test]` (`ci.yml:145-148`, `:183-186`), and the gate job
+prints that it did not consult it. CLAUDE.md says the same: Ubuntu and Windows
+block, macOS is advisory until it has been green a few times. The suite has never run there, so making it a
 gate before it has ever been green would block every merge on unknown, unrelated
 failures. It reports and blocks nobody, and it is deliberately not in `ci-gate`'s
 `needs`. Promote it once it has been green for a few runs; if it is still red
@@ -91,8 +97,17 @@ reviewing it needs to see. `auto-bump.yml` was deleted rather than disabled: two
 mechanisms writing the same version is exactly the drift this repo keeps
 rediscovering.
 
-`scripts/release.mjs` moves `package.json`, `vscode-extension/package.json` and
-the compiled-in `VERSION` constant together, so all three move or none do.
+`scripts/release.mjs` moves `package.json`, `vscode-extension/package.json`,
+`package-lock.json` and the compiled-in `VERSION` constant together, so they all
+move or none do (DUST2.21). It computes and validates every edit in memory first
+(a corrupt file or malformed explicit version aborts before anything is written),
+writes each result to a temp file beside its target, then renames them into place.
+A failure at any step restores the targets already replaced (deleting a
+`src/version.ts` that did not exist before) and removes the temps. The failure
+path is tested with injected write and rename failures against temp copies of the
+layout (`tests/unit/release-script-atomic.test.ts`). The renames are sequential,
+not one OS-level transaction: a crash of the process itself between renames
+(kill -9, power loss) can still leave a mix, which `git checkout` repairs.
 
 **Merge the release PR with a merge commit, not a squash.** A squash rewrites the
 history `development` is built on, and the branches then diverge permanently —
@@ -135,8 +150,8 @@ is the whole stall.
 Either the Checks tab of the release PR → **Approve workflows to run**, or:
 
 ```sh
-gh api "repos/cloudcatalyst/golem/actions/runs?status=action_required&per_page=10"
-gh api -X POST repos/cloudcatalyst/golem/actions/runs/RUN_ID/approve
+gh api "repos/PliableSoftware/golem/actions/runs?status=action_required&per_page=10"
+gh api -X POST repos/PliableSoftware/golem/actions/runs/RUN_ID/approve
 ```
 
 **Approving only lets the tests run — it publishes nothing**, so an agent may
@@ -179,30 +194,41 @@ Every one of these is load-bearing for `golem.run`, which redirects to
 | `install.sh`, `install.ps1` | the bare domain, by User-Agent |
 | `golem-linux-x64`, `golem-linux-arm64`, `golem-darwin-x64`, `golem-darwin-arm64`, `golem-windows-x64.exe`, `golem-windows-arm64.exe` | `/bin/<asset>`, tier 2 of the install ladder |
 | `SHA256SUMS` | anyone verifying a binary |
-| `golem-run-<version>.tgz` | proof the package packs; an install path before npm |
+| `pliable-golem-<version>.tgz` | proof the package packs; an install path before npm |
 | `config-schema.json` | the portal, to validate team settings |
 
 The release job **asserts** every required asset is present after uploading,
-rather than trusting the upload.
+rather than trusting the upload. The list covers the installers, the schema, all
+six binaries, `SHA256SUMS`, and the npm tarball under its `@pliable/golem` name
+(`pliable-golem-${VERSION}.tgz`, from the `resolve` job's `version` output; DUST2.21).
+That the assertion actually fails on a missing asset can only be proven by a real
+release run (it needs `gh release view` against a published tag); locally only the
+list's text is tested.
 
-**Publishing to npm is an explicit opt-in**, not a consequence of a secret
-existing. The gate is `vars.NPM_PUBLISH == 'true'` **and** a non-empty
-`NPM_TOKEN`. That distinction was learned the hard way: the job originally fired
-whenever the token was non-empty, treating *a secret is configured* as a proxy
-for *we intend to publish*. A token was present but did not authenticate, so
-v0.50.0 and v0.51.0 each produced a complete, correct release and then reported
-FAILURE — and a run that is expected to be red is not a signal, it is training.
-(Same predicate-as-proxy mistake R13.11 recorded for `inherit` auth.)
+**Publishing to npm always runs** — no opt-in gate, as of v0.54.3. It used to be
+`vars.NPM_PUBLISH == 'true'` **and** a non-empty `NPM_TOKEN`, learned the hard
+way: the job originally fired whenever the token was non-empty, treating *a
+secret is configured* as a proxy for *we intend to publish*. A token was
+present but did not authenticate, so v0.50.0 and v0.51.0 each produced a
+complete, correct release and then reported FAILURE — and a run that is
+expected to be red is not a signal, it is training. (Same predicate-as-proxy
+mistake R13.11 recorded for `inherit` auth.)
 
-Setting the variable while the token is empty fails loudly rather than skipping
-silently, because that combination can only mean someone meant to publish.
+The fix wasn't a better gate — it was removing the static token the gate
+existed to protect. `npm-publish` now authenticates via npm's **OIDC Trusted
+Publisher** flow (folded in from the standalone `publish.yml`, deleted): the
+job requests `id-token: write`, mints a short-lived OIDC token scoped to this
+exact repo + workflow, and npm exchanges it for a publish grant — no
+`NPM_TOKEN` secret to set, rotate, or have go quietly stale. `npm publish
+--access public --provenance` attaches the same attestation npm's own
+provenance UI shows.
 
 Not `continue-on-error`: hiding a real publish failure in the one workflow whose
 job is to be trustworthy would be worse than the failure. The VS Code publish
 remains gated on `VSCE_PAT` alone — it has never mis-fired.
 
-Either way the release is complete: `golem-run-<version>.tgz` is attached to the
-Release, so nothing is lost by not publishing.
+`pliable-golem-<version>.tgz` is still attached to the Release either way, so a
+publish failure never leaves the release itself incomplete.
 
 ## `config-schema.json` must not describe the build machine
 
@@ -240,7 +266,7 @@ enforce and nothing on either side to rotate. Body — unchanged by the switch:
   "event": "release.published",
   "tag": "v0.48.0",
   "version": "0.48.0",
-  "repository": "cloudcatalyst/golem",
+  "repository": "PliableSoftware/golem",
   "commit": "<sha>",
   "released_at": "<iso8601>",
   "config_schema": { "url": "https://…/config-schema.json", "sha256": "<hex>" },
@@ -258,6 +284,14 @@ Three properties worth keeping, and kept when the portal side was built:
 - **It is inert until `PORTAL_WEBHOOK_URL` is set.** That is now a repository
   *variable*, not a secret: a URL is not a secret, and storing it as one makes it
   invisible in the log exactly when you want to read it.
+
+**Paused as of the `PliableSoftware/golem` move (v0.54.3).** The portal's OIDC
+check still hardcodes `repository must be cloudcatalyst/golem`, so every call
+401s from the portal's side — this workflow's own claims are correct (the repo
+in the token tracks `github.repository` dynamically). Paused by clearing the
+`PORTAL_WEBHOOK_URL` variable rather than editing the workflow, so the job's
+own "inert without it" behavior is doing the pausing. Re-set the variable once
+the portal accepts the new repo slug.
 
 The portal verifies the token, then fetches `config_schema.url` and checks it
 against `sha256` before caching it by `version`.
@@ -281,9 +315,13 @@ bearer. What the portal checks, in order, rejecting with a reason in its log:
    to the portal's public origin (`https://golem.run`); this repo sends
    `vars.PORTAL_OIDC_AUDIENCE` when set.
 5. `exp` / `nbf` / `iat`, with 60s of clock tolerance.
-6. `repository` is exactly `cloudcatalyst/golem`.
-7. `workflow_ref` starts with
-   `cloudcatalyst/golem/.github/workflows/release.yml@`.
+6. `repository` is exactly the slug the portal is configured with. The repository is
+   now `PliableSoftware/golem`; the portal's check was still hardcoded to the old
+   `cloudcatalyst/golem` when v0.54.3 was cut (`release.yml:309-312`), which is why the
+   webhook is paused (above). UNVERIFIED: whether the portal has since been updated; it
+   is another repo and its code was not read.
+7. `workflow_ref` starts with that same slug followed by
+   `/.github/workflows/release.yml@`.
 
 **Point 7 is load-bearing for anything that wants to send this webhook.** Only
 the release workflow may publish a schema, so *moving or renaming `release.yml`
@@ -402,7 +440,7 @@ repository variables. Checked against the receiving half point by point:
 | `permissions: id-token: write` | on the `notify-portal` job alone |
 | `Authorization: Bearer <OIDC token>` | yes, and no HMAC header remains to send |
 | `aud` exactly `https://golem.run` | `vars.PORTAL_OIDC_AUDIENCE`, defaulting to that string, asserted locally before the POST |
-| `repository` == `cloudcatalyst/golem` | `$GITHUB_REPOSITORY`, by construction |
+| `repository` == the portal's configured slug | `$GITHUB_REPOSITORY`, by construction (now `PliableSoftware/golem`) |
 | `workflow_ref` == `.github/workflows/release.yml` | asserted locally, and the re-push is a `notify_only` mode of this file for that reason |
 | a release-asset `config_schema.url` | `releases/download/<tag>/config-schema.json` for this repo |
 | a document with no `header` block | `config schema --json --no-header`, asserted header-free in the `assets` job |
@@ -422,7 +460,9 @@ table above records both shapes rather than picking one.
 ### Proven in production (2026-09-06)
 
 `v0.53.0` is the first release cut with the variables set, and the webhook was
-accepted **on the first attempt**:
+accepted **on the first attempt**. This is a dated record: the repository was
+`cloudcatalyst/golem` then and the claims below name it; it is `PliableSoftware/golem`
+now, and no equivalent proof has been recorded since the move.
 
 ```
 OIDC claims: {"aud":"https://golem.run","repository":"cloudcatalyst/golem",
@@ -453,14 +493,23 @@ Set 2026-09-04:
   Without that, a PR raised with no explicit `--base` targets `main`, which now
   means "release".
 - **`main` requires the `CI gate` check**, with force-pushes and deletions
-  blocked. `development` requires nothing, matching the decision that CI runs
-  only at the release boundary.
+  blocked. At the time this was first written `development` required nothing, and
+  the page justified that by "CI runs only at the release boundary". That
+  justification is gone: CI runs on every PR into `development` too (§ Where CI runs).
+
+  **Read live on 2026-10-08** (`gh api repos/PliableSoftware/golem/...`): `main` is
+  protected with the single required context `CI gate` (`strict: false`, force-pushes
+  and deletions disallowed); `development` returns "Branch not protected" and the
+  repository has no rulesets. So the `CI gate` check *runs* on `development` PRs but
+  nothing *requires* it there. The merge bar for `development` is convention: CLAUDE.md
+  requires `gh pr checks <n>` to show `CI gate` green before merging. The default
+  branch is `development`, the repository is public.
 
 That protection took two attempts and is worth recording, because the first one
 failed for a reason no amount of retrying would fix:
 
 ```
-PUT  repos/cloudcatalyst/golem/branches/main/protection  → 403
+PUT  repos/cloudcatalyst/golem/branches/main/protection  → 403   (then-name of the repo)
 POST repos/cloudcatalyst/golem/rulesets                  → 403
 "Upgrade to GitHub Pro or make this repository public to enable this feature."
 ```

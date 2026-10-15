@@ -21,6 +21,6 @@ The user wants to add this URL to the project's wiki: $ARGUMENTS
    configured), distill the note yourself instead.
 4. Call `wiki_upsert` with `rel_path: "sources/<slug>.md"`, `type: "source"`,
    `sources: ["$ARGUMENTS"]`, and the reviewed body — author it directly (spec
-   Decision 44); no prior approval needed, since the write is committed to git
-   and reviewable. Surface any contradiction with an existing page rather than
+   Decision 44); no prior approval needed, since the write is a file, not a
+   commit — commit it to review. Surface any contradiction with an existing page rather than
    silently overwriting it.

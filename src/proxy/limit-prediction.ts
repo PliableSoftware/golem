@@ -15,9 +15,10 @@
  * is captured, spawned, or resumed.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 
 const UTIL_5H = "anthropic-ratelimit-unified-5h-utilization";
 const RESET_5H = "anthropic-ratelimit-unified-5h-reset";
@@ -133,9 +134,7 @@ export function limitStatePath(projectDir: string): string {
 export async function writeLimitState(projectDir: string, state: LimitPrediction): Promise<void> {
   const file = limitStatePath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /** Read the latest persisted prediction, or null (missing/corrupt). */

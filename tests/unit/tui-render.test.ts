@@ -182,29 +182,26 @@ describe("renderPanel", () => {
   });
 
   it("shows the danger warning and the y/n prompt when confirming", () => {
+    // Fixture: the real danger toggle `proxy.bypass_all` (off; enabling it asks first).
     const danger: ControlSurface = {
       header: REPORT,
       warnings: [],
       groups: [
         {
-          id: "runtime",
-          title: "Runtime",
-          tab: "runtime",
+          id: "settings:proxy",
+          title: "Proxy",
+          tab: "settings",
           controls: [
             {
-              id: "runtime:slider",
-              family: "runtime",
-              label: "Savings level",
-              summary: "the dial",
-              kind: "enum",
-              value: "1",
-              options: [
-                { value: "0", label: "0 passthrough" },
-                { value: "1", label: "1 lossless" },
-              ],
-              danger: "Level 0 disables redaction",
-              layer: "local",
-              writableScopes: ["local"],
+              id: "setting:proxy.bypass_all",
+              family: "setting",
+              label: "Bypass everything (no redaction)",
+              summary: "Forward every request byte-faithfully",
+              kind: "toggle",
+              value: false,
+              danger: "This disables REDACTION: secrets and PII reach the upstream unredacted.",
+              layer: "default",
+              writableScopes: ["project", "local", "user"],
               advanced: false,
             },
           ],
@@ -212,11 +209,9 @@ describe("renderPanel", () => {
       ],
     };
     let state = initialState(danger, { version: "1.2.3", projectDir: "/tmp/demo" });
-    state = reducePanel(state, { kind: "key", key: { input: "", tab: true } }).state;
-    state = reducePanel(state, { kind: "key", key: { input: "", tab: true } }).state;
-    state = reducePanel(state, { kind: "key", key: { input: "", leftArrow: true } }).state;
+    state = reducePanel(state, { kind: "key", key: { input: " " } }).state;
     const text = frame(state).join("\n");
-    expect(text).toContain("Level 0 disables redaction");
+    expect(text).toContain("This disables REDACTION");
     expect(text).toContain("Apply it? y / n");
   });
 

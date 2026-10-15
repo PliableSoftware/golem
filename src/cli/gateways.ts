@@ -18,7 +18,7 @@
  *   de-registering a gateway never leaves its key behind in the OS store.
  */
 
-import { defaultUserDir, loadConfig, writeSetting } from "../config/index.js";
+import { defaultUserDir, loadEffectiveConfig, writeSetting } from "../config/index.js";
 import { type CredentialStore, createCredentialStore } from "../credentials/index.js";
 import {
   doubledVersionSegment,
@@ -63,7 +63,7 @@ export {
  *
  * **Credential preflight (Decision 46).** Before switching, resolve the target's
  * credential. If none resolves, fail closed with the remediation
- * (`golem gateway login <id>` or exporting the env var) unless `assumeYes` —
+ * (`golem gateway login <id>`) unless `assumeYes` —
  * there is no silent switch onto an account that cannot authenticate. This is
  * the check that turns "set the key first" from advice into a guarantee.
  */
@@ -78,7 +78,7 @@ export async function useGateway(
   } = {},
 ): Promise<{ readonly active: string | null }> {
   const env = opts.env ?? process.env;
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
 
   // Resolve the target: null / the default id both mean "clear inference.model
   // and revert to the top-level config". Any other id must be a known gateway OR
@@ -165,8 +165,8 @@ export interface NewGateway {
 
 /**
  * Register a new account in `proxy.gateways`. This is the registration leg the
- * credential commands depend on: until an id exists here, `account login <id>`
- * and `account use <id>` both reject it as unknown.
+ * credential commands depend on: until an id exists here, `gateway login <id>`
+ * and `gateway use <id>` both reject it as unknown.
  *
  * Written to the **local** scope (`settings.local.json`) — the top file layer —
  * because the proxy reads the MERGED config and a `proxy.gateways` array in any
@@ -178,7 +178,7 @@ export interface NewGateway {
  * Fail-closed and non-destructive: refuses a duplicate id, refuses to shadow
  * the synthetic default's id, preserves every existing entry and its key order
  * (read-modify-write of the whole array through the schema-validated
- * `proxy.gateways` leaf). Never touches a credential — that is `account login`'s
+ * `proxy.gateways` leaf). Never touches a credential — that is `gateway login`'s
  * job. Audit-logged.
  */
 export async function addGateway(
@@ -186,14 +186,14 @@ export async function addGateway(
   input: NewGateway,
   nowIso: string,
 ): Promise<{ readonly account: string }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const p = settings.proxy;
   const gateways = [...(p.gateways ?? [])];
 
   if (input.id === defaultGatewayId(p.upstream_provider) || input.id === DEFAULT_STORE_ID) {
     throw new InitError(
       `"${input.id}" is the default gateway (the top-level upstream config) — it is not a ` +
-        `registered gateway and needs no \`account add\`. Set its credential with ` +
+        `registered gateway and needs no \`gateway add\`. Set its credential with ` +
         `\`golem gateway login ${input.id}\` or edit proxy.upstream_* directly.`,
     );
   }
@@ -281,14 +281,14 @@ export async function removeGateway(
   /** Backends the credential was deleted from; empty when none held one or `keepCredential`. */
   readonly credential_removed: readonly string[];
 }> {
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
   const p = settings.proxy;
   const inf = settings.inference;
   const gateways = p.gateways ?? [];
   if (id === defaultGatewayId(p.upstream_provider) || id === DEFAULT_STORE_ID) {
     throw new InitError(
       `"${id}" is the default gateway (the top-level upstream config) — remove it by editing ` +
-        `proxy.upstream_* directly, not via \`account remove\`.`,
+        `proxy.upstream_* directly, not via \`gateway remove\`.`,
     );
   }
   if (!gateways.some((g) => g.id === id)) {

@@ -31,4 +31,4 @@ already has.
    until it's a wiki page. If the finding is durable, propose a wiki
    source-note (run `/golem-wiki-ingest <url>`) with real `[[wikilinks]]`,
    citing the source. Author wiki pages freely (spec Decision 44) — no prior
-   approval needed; every write is committed to git and reviewable.
+   approval needed; writes are files, not commits — commit them to review.

@@ -164,7 +164,7 @@ tasks, so the five-dep runtime pin holds.
 --input-format stream-json --output-format stream-json` accepts a second user
 message on stdin after the first turn's `result` event without exiting, holds
 one stable `session_id` across turns, emits tool calls and tool results as
-separable structured events, honours `ANTHROPIC_BASE_URL` (invariant 8), and
+separable structured events, honours `ANTHROPIC_BASE_URL` (invariant 7), and
 loads the project's `.claude/settings.json` hooks the same as an interactive
 session (invariant 2's precondition). The runner is confirmed; build on it.
 
@@ -245,7 +245,7 @@ control.
 | # | Capability | What it grants | Risk | Status |
 |---|---|---|---|---|
 | 1 | Observe | See project state, blocks, limits | Metadata disclosure | ADR-0006; R12.5 |
-| 2 | Authorize | Answer a permission prompt already open | Code execution | Carried first-party by Anthropic's channel relay (R12.7); class line needs R12.12; gate map item 3 |
+| 2 | Authorize | Answer a permission prompt already open | Code execution | Carried first-party by Anthropic's channel relay (R12.7); class line needs R12.12 *(superseded 2026-10-09: the R12.12 deny was removed, DUSTSEC.10; enforcement on the answer side is DUSTSEC.25)*; gate map item 3 |
 | 3 | **Author** | Send a message into an existing conversation | **Severe** — arbitrary instruction; the resulting tool calls are gated as any other | **This ADR, §3b/§3c.** Declined by Decision 59(g); permitted, unrestricted, by Revision 1 |
 | 4 | **Originate** | Start a new session in a project | **Severe** — as above, plus choosing *where* work happens | **This ADR, §3a.** New tier; gate map items 2 and 5 |
 
@@ -469,3 +469,42 @@ and verifies a second adapter.
 
 **Conclusion:** Build R13.3 using separate-invocation chaining (fork/exec pipeline), matching
 the existing `src/tasks/resume.ts` pattern. Do not attempt persistent daemon or multi-turn stdin.
+
+## Amendment (2026-10-08, DUST2.3)
+
+**Amended 2026-10-08 (DUST2.3; DECISIONS.md P1 and P2, default rule "doc follows
+shipped code"; SUMMARY row 1.10/r012; DUST1.10 C1 and C2).** The text above is
+unchanged and is history, including Revision 2. Two things in it disagree with
+the rest of this ADR or with the code.
+
+**1. The runner follows section 3a. Revision 2's "do not attempt" is superseded
+(P1).** Section 3a, Decision 60 and the code all describe one long-lived
+`claude -p --input-format stream-json --output-format stream-json` process that
+holds a single `session_id` across turns. `src/session/host.ts:6-9` says so and
+cites section 3a, verification-notes section 142 and its re-confirmation on
+client 2.1.246 in section 147 (2026-08-29). `runnerArgs` builds exactly that
+argument list, with `--verbose` required for the per-event stream
+(`host.ts:31-60`). Revision 2 (2026-08-23) concluded that multi-turn stdin "could
+NOT be reproduced" on client 2.1.235 and told R13.3 to chain separate `-p`
+invocations. R13.3 did not do that. Where the two passages conflict, section 3a
+and the code stand. `--resume <id>` survives in a narrower role: it restores a
+conversation's earlier turns when a hosted session is reopened
+(R13.8 item 3, `runnerArgs`'s `resumeSessionId`), not as per-turn chaining.
+Revision 2's other findings (hooks firing in non-bare `-p` sessions, `--bare`
+isolation, SIGINT unreliability on Windows) are not re-assessed by this note.
+UNVERIFIED: the multi-turn behaviour was not re-run against the current `claude`
+client in this pass; the evidence is sections 142 and 147 and the code.
+
+**2. Invariant numbering (P2).** Section 5 numbers "A hosted session is not a
+privileged session" as **invariant 7**, and "Enrolment is local-only, forever" as
+**invariant 8**. The code and the wiki call "no exemption" invariant 8:
+`src/session/host.ts:21,112,211,278`, `src/interfaces/session-events.ts:89`, and
+`docs/wiki/concepts/Hosted Session.md:36`. Read each of those as section 5's
+**invariant 7**. Two other places cite "invariant 8" correctly, for local-only
+enrolment (`src/config/schema.ts:645`, `src/cli/commands/device.ts:6`), so a bare
+"invariant 8" in this codebase is ambiguous until the stale sites are fixed (a
+code-comment task, DUST2.10, and a wiki task). Revision 2's "invariants 2
+(enforcement) and 7 (identity)" matches neither: attribution is section 5's
+invariant 4.
+
+*Amendment, 2026-10-14 (DUST3 leftover 7):* §3a cited the base-URL rule as "invariant 8"; it is section 5's invariant 7 (no exemption) and now says so. The §7a and §7d citations of invariant 8 are for local-only enrolment and were already correct, so they are unchanged.

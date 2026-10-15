@@ -1,10 +1,13 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkForUpdate,
   detectInstallMethod,
+  fetchLatestVersion,
+  PACKAGE_NAME,
   readCachedUpdateCheck,
+  registryPackagePath,
   semverGt,
   upgradeCommand,
 } from "../../../src/update/index.js";
@@ -38,13 +41,13 @@ describe("detectInstallMethod", () => {
     expect(
       detectInstallMethod({
         bun: false,
-        argv1: "/usr/lib/node_modules/golem-run/dist/cli/main.js",
+        argv1: "/usr/lib/node_modules/@pliable/golem/dist/cli/main.js",
       }),
     ).toBe("npm");
     expect(
       detectInstallMethod({
         bun: false,
-        argv1: "C:\\npm\\node_modules\\golem-run\\dist\\cli\\main.js",
+        argv1: "C:\\npm\\node_modules\\@pliable\\golem\\dist\\cli\\main.js",
       }),
     ).toBe("npm");
   });
@@ -57,7 +60,7 @@ describe("detectInstallMethod", () => {
 
 describe("upgradeCommand", () => {
   it("uses npm for npm installs", () => {
-    expect(upgradeCommand("npm", "linux")).toBe("npm install -g golem-run@latest");
+    expect(upgradeCommand("npm", "linux")).toBe("npm install -g @pliable/golem@latest");
   });
   it("uses the platform installer one-liner otherwise", () => {
     expect(upgradeCommand("binary", "win32")).toBe("irm https://golem.run | iex");
@@ -85,7 +88,7 @@ describe("checkForUpdate", () => {
       latest: "0.2.0",
       updateAvailable: true,
       method: "npm",
-      command: "npm install -g golem-run@latest",
+      command: "npm install -g @pliable/golem@latest",
     });
     // Cache written and readable without a network call.
     const cached = await readCachedUpdateCheck(dir);
@@ -204,5 +207,21 @@ describe("checkForUpdate", () => {
 
   it("readCachedUpdateCheck returns null when absent", async () => {
     expect(await readCachedUpdateCheck(dir)).toBeNull();
+  });
+});
+
+describe("canonical package name (DUSTSEC.16)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("checks @pliable/golem, with the scope slash percent-encoded", async () => {
+    expect(PACKAGE_NAME).toBe("@pliable/golem");
+    expect(registryPackagePath("@pliable/golem")).toBe("@pliable%2fgolem");
+    expect(registryPackagePath("left-pad")).toBe("left-pad");
+    const fetchMock = vi.fn(async (_url: string) => Response.json({ version: "0.54.2" }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchLatestVersion()).toBe("0.54.2");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://registry.npmjs.org/@pliable%2fgolem/latest");
   });
 });

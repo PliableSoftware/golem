@@ -14,22 +14,25 @@
  * of its models). The writer accepts either.
  */
 
-import { loadConfig } from "../../config/index.js";
+import { loadEffectiveConfig } from "../../config/index.js";
 import { resolveUpstreamDisplay } from "../../providers/index.js";
-import { collectGateways, credentialEnvForProxy, useGateway } from "../gateways.js";
+import { collectGateways, useGateway } from "../gateways.js";
 import { InitError } from "../init.js";
-import { portInUse, startDetached, stopProxy, waitForPortFree } from "../proxy-daemon.js";
+import { portInUse } from "../proxy-daemon.js";
+import { restartProxyDetached } from "./proxy.js";
 
 /**
  * The port (and display upstream) this project's proxy uses. Moved here from
  * `commands/gateway.ts` in R10.24 so `gateway use` and `target use` cannot
- * resolve it two different ways.
+ * resolve it two different ways. (`proxy.ts` still keeps its own private
+ * `resolvePort` for `golem on`/`off`/`proxy`, so this is the one resolver for
+ * the gateway and target commands only.)
  */
 export async function resolvePort(
   dir: string,
   portOpt?: string,
 ): Promise<{ port: number; upstream: string; compression: string }> {
-  const { settings } = await loadConfig({ projectDir: dir });
+  const { settings } = await loadEffectiveConfig({ projectDir: dir });
   const port = portOpt === undefined ? settings.proxy.port : Number(portOpt);
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new InitError(`invalid port "${portOpt}"`);
@@ -38,20 +41,6 @@ export async function resolvePort(
     upstream: resolveUpstreamDisplay(settings.proxy).baseUrl,
     compression: settings.compression.level,
   };
-}
-
-/** Stop, wait for the port, and start a fresh detached proxy. */
-export async function restartProxyDetached(
-  dir: string,
-  portOpt?: string,
-): Promise<{ pid: number; port: number; upstream: string }> {
-  const { port, upstream } = await resolvePort(dir, portOpt);
-  await stopProxy(dir);
-  await waitForPortFree(port);
-  const credEnv = await credentialEnvForProxy(dir);
-  const pid = await startDetached(dir, port, process.argv[1] ?? "", credEnv);
-  if (pid === null) throw new InitError(`proxy did not come up on port ${port}`);
-  return { pid, port, upstream };
 }
 
 /**

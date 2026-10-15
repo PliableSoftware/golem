@@ -185,3 +185,47 @@ describe("backend fault contract", () => {
     expect(stubKeychain("v").describe().protection).toBe("os-keychain");
   });
 });
+
+/** DUST3.6: a backend that cannot be read is a fault, not "nothing stored". */
+describe("forget() backend faults", () => {
+  it("throws naming the backend when the keychain read faults, instead of reporting absence", async () => {
+    const store = createCredentialStore({
+      userDir,
+      platform: "linux",
+      keychain: stubKeychain(null, "keyring locked"),
+    });
+    await expect(store.forget("faulty")).rejects.toThrow(/keychain.*keyring locked/s);
+  });
+
+  it("still removes from the working backend before reporting the fault", async () => {
+    const b = fileBackend(userDir, "linux");
+    await b.set("partial", "sk-partial");
+    const store = createCredentialStore({
+      userDir,
+      platform: "linux",
+      keychain: stubKeychain(null, "keyring locked"),
+    });
+    await expect(store.forget("partial")).rejects.toThrow(/keyring locked/);
+    expect(await b.get("partial")).toBeNull();
+  });
+
+  it("returns [] when every backend is readable and empty", async () => {
+    const store = createCredentialStore({
+      userDir,
+      platform: "linux",
+      keychain: stubKeychain(null),
+    });
+    expect(await store.forget("never-there")).toEqual([]);
+  });
+});
+
+describe("forget() with an unavailable backend", () => {
+  it("does not throw for a keychain that is unavailable (e.g. no libsecret)", async () => {
+    const unavailable: CredentialBackend = {
+      ...stubKeychain(null, "secret-tool: not found"),
+      available: async () => false,
+    };
+    const store = createCredentialStore({ userDir, platform: "linux", keychain: unavailable });
+    await expect(store.forget("headless")).resolves.toEqual([]);
+  });
+});

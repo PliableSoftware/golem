@@ -3,7 +3,7 @@
  * corruption tolerance, per-project scoping, concurrent-append safety.
  */
 
-import { appendFile, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEvent } from "../../../src/telemetry/index.js";
 import {
@@ -248,71 +248,7 @@ describe("recordRetrieval (T1, §25)", () => {
   });
 });
 
-describe("recordUsageEvent + aggregateUsageByLevel (R1.1, §30-37)", () => {
-  it("rolls up usage totals and request counts per slider level", async () => {
-    const store = new JsonlTelemetryStore(dir);
-    await recordUsageEvent(
-      store,
-      {
-        projectId: "projA",
-        level: 1,
-        usage: {
-          inputTokens: 2095,
-          cacheCreationInputTokens: 1024,
-          cacheReadInputTokens: 1024,
-          outputTokens: 89,
-        },
-      },
-      "2026-07-11T00:00:00.000Z",
-    );
-    await recordUsageEvent(
-      store,
-      {
-        projectId: "projA",
-        level: 1,
-        usage: {
-          inputTokens: 100,
-          cacheCreationInputTokens: 0,
-          cacheReadInputTokens: 500,
-          outputTokens: 20,
-        },
-      },
-      "2026-07-11T00:00:01.000Z",
-    );
-    await recordUsageEvent(
-      store,
-      {
-        projectId: "projA",
-        level: 3,
-        usage: {
-          inputTokens: 472,
-          cacheCreationInputTokens: 0,
-          cacheReadInputTokens: 448,
-          outputTokens: 189,
-        },
-      },
-      "2026-07-11T00:00:02.000Z",
-    );
-
-    const byLevel = await store.aggregateUsageByLevel("projA");
-    expect(byLevel.projectId).toBe("projA");
-    expect(byLevel.byLevel[1]).toStrictEqual({
-      requests: 2,
-      inputTokens: 2195,
-      cacheCreationInputTokens: 1024,
-      cacheReadInputTokens: 1524,
-      outputTokens: 109,
-    });
-    expect(byLevel.byLevel[3]).toStrictEqual({
-      requests: 1,
-      inputTokens: 472,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: 448,
-      outputTokens: 189,
-    });
-    await store.close();
-  });
-
+describe("recordUsageEvent (R1.1, §30-37)", () => {
   it("keeps usage events out of the gross-token aggregate() headline", async () => {
     const store = new JsonlTelemetryStore(dir);
     await store.record(ev()); // one ordinary pipeline request
@@ -335,55 +271,9 @@ describe("recordUsageEvent + aggregateUsageByLevel (R1.1, §30-37)", () => {
     await store.close();
   });
 
-  it("scopes aggregateUsageByLevel by projectId, and global sees all", async () => {
-    const store = new JsonlTelemetryStore(dir);
-    await recordUsageEvent(
-      store,
-      {
-        projectId: "projA",
-        level: 1,
-        usage: {
-          inputTokens: 10,
-          cacheCreationInputTokens: 0,
-          cacheReadInputTokens: 0,
-          outputTokens: 1,
-        },
-      },
-      "2026-07-11T00:00:00.000Z",
-    );
-    await recordUsageEvent(
-      store,
-      {
-        projectId: "projB",
-        level: 1,
-        usage: {
-          inputTokens: 20,
-          cacheCreationInputTokens: 0,
-          cacheReadInputTokens: 0,
-          outputTokens: 2,
-        },
-      },
-      "2026-07-11T00:00:01.000Z",
-    );
-    expect((await store.aggregateUsageByLevel("projA")).byLevel[1]?.requests).toBe(1);
-    expect((await store.aggregateUsageByLevel("projB")).byLevel[1]?.requests).toBe(1);
-    expect((await store.aggregateUsageByLevel()).byLevel[1]?.requests).toBe(2);
-    await store.close();
-  });
-
-  it("returns an empty byLevel map when no telemetry file exists yet", async () => {
-    const store = new JsonlTelemetryStore(dir);
-    const byLevel = await store.aggregateUsageByLevel();
-    expect(byLevel.byLevel).toStrictEqual({});
-    expect(byLevel.projectId).toBeNull();
-    await store.close();
-  });
-
-  it("old lines without kind/usage still parse and are ignored by aggregateUsageByLevel", async () => {
+  it("old lines without kind/usage still parse as ordinary requests", async () => {
     const store = new JsonlTelemetryStore(dir);
     await store.record(ev()); // no `kind`, no `usage` field at all
-    const byLevel = await store.aggregateUsageByLevel();
-    expect(byLevel.byLevel).toStrictEqual({});
     const stats = await store.aggregate();
     expect(stats.requests).toBe(1); // unaffected — still parses as an ordinary request
     await store.close();
@@ -734,6 +624,51 @@ describe("aggregate() rollup cache + rotation", () => {
     // stale 3-event total.
     const afterRotation = await store.aggregate();
     expect(afterRotation.requests).toBe(2); // events 1+2 fell off the retained window
+    await store.close();
+  });
+
+  it("a rotation that leaves the new file larger than the old watermark is distrusted, never spliced (DUST3.12 D3)", async () => {
+    const store = new JsonlTelemetryStore(dir);
+    const file = telemetryFilePath(dir);
+    await store.record(ev());
+    await store.record(ev());
+    expect((await store.aggregate()).requests).toBe(2); // rollup watermark = 2 events
+
+    // Rotate by hand: the old file becomes `.1`, a NEW file grows past the old
+    // watermark. Size and mtime both look like growth; only the inode differs.
+    await rename(file, `${file}.1`);
+    for (let i = 0; i < 3; i++) await appendFile(file, `${JSON.stringify(ev())}\n`, "utf8");
+
+    // Truth: `.1` (2) + current (3) = 5. A splice reads the new file from the
+    // old offset and adds it to the old totals: 2 + 1 = 3.
+    expect((await store.aggregate()).requests).toBe(5);
+    await store.close();
+  });
+
+  it("a partial trailing line is not lost when its newline arrives later (DUST3.12 D4)", async () => {
+    const store = new JsonlTelemetryStore(dir);
+    const file = telemetryFilePath(dir);
+    await store.record(ev());
+    expect((await store.aggregate()).requests).toBe(1); // warm rollup
+
+    const full = JSON.stringify(ev({ ccrRefsStored: 7 }));
+    await appendFile(file, full.slice(0, 20), "utf8"); // writer mid-line
+    expect((await store.aggregate()).requests).toBe(1); // incremental path, partial ignored
+
+    await appendFile(file, `${full.slice(20)}\n`, "utf8"); // line completes
+    expect((await store.aggregate()).requests).toBe(2);
+    await store.close();
+  });
+
+  it("a full reparse over a partial trailing line does not checkpoint past it (DUST3.12 D4)", async () => {
+    const file = telemetryFilePath(dir);
+    const store = new JsonlTelemetryStore(dir);
+    await store.record(ev());
+    const full = JSON.stringify(ev());
+    await appendFile(file, full.slice(0, 20), "utf8");
+    expect((await store.aggregate()).requests).toBe(1); // cold: full reparse
+    await appendFile(file, `${full.slice(20)}\n`, "utf8");
+    expect((await store.aggregate()).requests).toBe(2);
     await store.close();
   });
 

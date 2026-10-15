@@ -5,7 +5,7 @@
  * construction + distill call is unit-testable without spawning the CLI.
  */
 
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import {
   createProbeRunner,
   detectCapability,
@@ -62,7 +62,7 @@ export async function distillOne(options: DistillOneOptions): Promise<DistillOne
     );
   }
 
-  const { settings } = await loadConfig({ projectDir });
+  const { settings } = await loadEffectiveConfig({ projectDir });
 
   let inference = options.inference;
   if (inference === undefined) {

@@ -10,9 +10,10 @@
 
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { stripKnownSecrets } from "../hooks/redact.js";
 import type { WikiFrontmatter } from "../interfaces/index.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { parseFrontmatter, serializeFrontmatter } from "../wiki/frontmatter.js";
+import { redactWikiText as redact, safeDraftSlug, sha8 } from "../wiki/write-redaction.js";
 import type { DistillDraft, NoteDraft, SynthesisDraft } from "./distill.js";
 
 /** Provenance marker stored in `sources` for a note-derived draft (R3.5). */
@@ -29,8 +30,64 @@ function draftPath(projectDir: string, slug: string): string {
   return path.join(distillDir(projectDir), `${slug}.md`);
 }
 
+/**
+ * Redact every model- or source-derived string of a draft before it is stored.
+ * Plugin rules are loaded first (DUSTSEC.8); built-ins always run.
+ */
+async function redactedDraft<T extends DistillDraft | NoteDraft | SynthesisDraft>(
+  projectDir: string,
+  draft: T,
+): Promise<T> {
+  await ensurePluginRedactionRules(projectDir);
+  return {
+    ...draft,
+    // A slug is a file name, then a committed wiki path (see write-redaction.ts).
+    slug: safeDraftSlug(draft.slug),
+    title: redact(draft.title),
+    tags: draft.tags.map(redact),
+    summary: redact(draft.summary),
+    wikilinks: draft.wikilinks.map(redact),
+  };
+}
+
+/**
+ * Where a draft goes. The slug is the model's choice, so two sources can pick the
+ * same one: the plain `<slug>.md` is used when it is free or `owns` says it is
+ * this source's, otherwise `<slug>-<sha8 of the ORIGINAL source>` is used, so a
+ * colliding slug never overwrites another source's draft (DUST3.8 D11).
+ *
+ * `key` is what is stored in the draft (redacted); `original` is what the caller
+ * passed. When redaction changed it, the stored value cannot tell two sources
+ * apart (they differ only in the redacted secret), so the hashed path is used
+ * outright. A truncated hash does not expose the secret.
+ */
+async function sourceKeyedPath(
+  projectDir: string,
+  slug: string,
+  original: string,
+  key: string,
+  owns: (frontmatter: WikiFrontmatter) => boolean,
+): Promise<string> {
+  const hashed = draftPath(projectDir, `${slug}-${sha8(original)}`);
+  if (original !== key) return hashed;
+  const plain = draftPath(projectDir, slug);
+  let raw: string;
+  try {
+    raw = await readFile(plain, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return plain;
+    throw err;
+  }
+  try {
+    if (owns(parseFrontmatter(raw).frontmatter)) return plain;
+  } catch {
+    // An unparsable file is not this source's draft either.
+  }
+  return hashed;
+}
+
 function draftBody(draft: DistillDraft, url: string): string {
-  const summary = stripKnownSecrets(draft.summary);
+  const summary = draft.summary;
   const lines = [`# ${draft.title}`, "", summary, "", `Source: ${url}`];
   if (draft.wikilinks.length > 0) {
     lines.push("", "## Candidate wikilinks", "", ...draft.wikilinks.map((t) => `- [[${t}]]`));
@@ -45,10 +102,12 @@ function draftBody(draft: DistillDraft, url: string): string {
  */
 export async function writeDraftFile(
   projectDir: string,
-  url: string,
-  draft: DistillDraft,
+  rawUrl: string,
+  rawDraft: DistillDraft,
   nowIso: string,
 ): Promise<string> {
+  const draft = await redactedDraft(projectDir, rawDraft);
+  const url = redact(rawUrl);
   const date = nowIso.slice(0, 10);
   const frontmatter: WikiFrontmatter = {
     title: draft.title,
@@ -58,14 +117,16 @@ export async function writeDraftFile(
     created: date,
     updated: date,
   };
-  const file = draftPath(projectDir, draft.slug);
+  const file = await sourceKeyedPath(projectDir, draft.slug, rawUrl, url, (fm) =>
+    fm.sources.includes(url),
+  );
   await mkdir(distillDir(projectDir), { recursive: true });
   await writeFile(file, `${serializeFrontmatter(frontmatter)}\n\n${draftBody(draft, url)}`, "utf8");
   return file;
 }
 
 function noteDraftBody(draft: NoteDraft): string {
-  const summary = stripKnownSecrets(draft.summary);
+  const summary = draft.summary;
   const lines = [`# ${draft.title}`, "", summary];
   if (draft.wikilinks.length > 0) {
     lines.push("", "## Candidate wikilinks", "", ...draft.wikilinks.map((t) => `- [[${t}]]`));
@@ -83,9 +144,10 @@ function noteDraftBody(draft: NoteDraft): string {
 export async function writeNoteDraftFile(
   projectDir: string,
   noteTs: string,
-  draft: NoteDraft,
+  rawDraft: NoteDraft,
   nowIso: string,
 ): Promise<string> {
+  const draft = await redactedDraft(projectDir, rawDraft);
   const date = nowIso.slice(0, 10);
   const frontmatter: WikiFrontmatter = {
     title: draft.title,
@@ -95,14 +157,17 @@ export async function writeNoteDraftFile(
     created: date,
     updated: date,
   };
-  const file = draftPath(projectDir, draft.slug);
+  const marker = noteSourceMarker(noteTs);
+  const file = await sourceKeyedPath(projectDir, draft.slug, marker, marker, (fm) =>
+    fm.sources.includes(marker),
+  );
   await mkdir(distillDir(projectDir), { recursive: true });
   await writeFile(file, `${serializeFrontmatter(frontmatter)}\n\n${noteDraftBody(draft)}`, "utf8");
   return file;
 }
 
 function synthesisDraftBody(draft: SynthesisDraft): string {
-  const summary = stripKnownSecrets(draft.summary);
+  const summary = draft.summary;
   const lines = [`# ${draft.title}`, "", summary];
   if (draft.wikilinks.length > 0) {
     lines.push("", "## Candidate wikilinks", "", ...draft.wikilinks.map((t) => `- [[${t}]]`));
@@ -119,10 +184,12 @@ function synthesisDraftBody(draft: SynthesisDraft): string {
  */
 export async function writeSynthesisDraftFile(
   projectDir: string,
-  sources: readonly string[],
-  draft: SynthesisDraft,
+  rawSources: readonly string[],
+  rawDraft: SynthesisDraft,
   nowIso: string,
 ): Promise<string> {
+  const draft = await redactedDraft(projectDir, rawDraft);
+  const sources = rawSources.map(redact);
   const date = nowIso.slice(0, 10);
   const frontmatter: WikiFrontmatter = {
     title: draft.title,
@@ -132,7 +199,16 @@ export async function writeSynthesisDraftFile(
     created: date,
     updated: date,
   };
-  const file = draftPath(projectDir, draft.slug);
+  // A weekly synthesis is keyed by its slug among synthesis drafts only: a
+  // re-synthesis rewrites its own file, but never a URL or note draft.
+  const synthKey = `synthesis:${draft.slug}`;
+  const file = await sourceKeyedPath(
+    projectDir,
+    draft.slug,
+    synthKey,
+    synthKey,
+    (fm) => fm.type === "synthesis",
+  );
   await mkdir(distillDir(projectDir), { recursive: true });
   await writeFile(
     file,

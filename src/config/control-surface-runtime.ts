@@ -1,7 +1,7 @@
 import { proxyStatus, startDetached, stopProxy } from "../cli/proxy-daemon.js";
 import { proxyBaseUrl, readWiringState, type WiringState, wiringGap } from "../cli/proxy-wiring.js";
 // costs ~530ms to load, and collecting the surface only needs to READ the level.
-// `setSliderLevel` is imported lazily in applyRuntime. (verification-notes §86)
+// `setDial` is imported lazily in applyRuntime. (verification-notes §86)
 import { coerceCompressionLevel, compressionName } from "../interfaces/policy.js";
 import {
   type ApplyControlOptions,
@@ -10,10 +10,27 @@ import {
   type Control,
   type ControlGroup,
   ENV_LOCKED,
+  IMPORTANT_LOCKED,
 } from "./control-surface-types.js";
+import { loadEffectiveConfig } from "./effective.js";
 import { ConfigError } from "./errors.js";
-import { loadConfig } from "./loader.js";
 import { settingMeta } from "./ui-model.js";
+
+/**
+ * Why a runtime control cannot be written, from the provenance of the setting
+ * behind it. Importance is checked before `env` for the same reason as in
+ * `settingControl`: an important declaration is the one actually in force, and
+ * it is the one whose recourse the reader needs (origin + what can override it).
+ */
+function lockedReason(
+  entry:
+    | { readonly layer: string; readonly source?: string; readonly important?: true }
+    | undefined,
+): string | undefined {
+  if (entry === undefined) return undefined;
+  if (entry.important === true) return IMPORTANT_LOCKED(entry.layer, entry.source);
+  return entry.layer === "env" ? ENV_LOCKED(entry.source) : undefined;
+}
 
 /** Compression level, active account, and the proxy daemon. */
 export async function runtimeControlGroup(shared: {
@@ -21,7 +38,7 @@ export async function runtimeControlGroup(shared: {
   userDir?: string;
   env?: Readonly<Record<string, string | undefined>>;
 }): Promise<ControlGroup> {
-  const { settings, provenance } = await loadConfig(shared);
+  const { settings, provenance } = await loadEffectiveConfig(shared);
   const proxy = await proxyStatus(shared.projectDir, settings.proxy.port);
 
   // R11.1 / ADR-0004: the panel's headline runtime control is the compression
@@ -29,7 +46,7 @@ export async function runtimeControlGroup(shared: {
   // two controls for one thing, on the one surface that shows them side by side.
   const compMeta = settingMeta("compression.level");
   const compEntry = provenance["compression.level"];
-  const compLocked = compEntry?.layer === "env" ? ENV_LOCKED(compEntry.source) : undefined;
+  const compLocked = lockedReason(compEntry);
   const compressionControl: Control = {
     id: "runtime:compression",
     family: "runtime",
@@ -58,7 +75,7 @@ export async function runtimeControlGroup(shared: {
   const registered = settings.proxy.gateways ?? [];
   const defaultId = settings.proxy.upstream_provider;
   const accountEntry = provenance["inference.model"];
-  const accountLocked = accountEntry?.layer === "env" ? ENV_LOCKED(accountEntry.source) : undefined;
+  const accountLocked = lockedReason(accountEntry);
   const accountControl: Control = {
     id: "runtime:account",
     family: "runtime",
@@ -119,9 +136,9 @@ export async function runtimeControlGroup(shared: {
 // Apply
 // ---------------------------------------------------------------------------
 /**
- * Runtime controls decide their own storage (the slider always writes local
- * scope per Decision 43; the account writes project scope; the proxy writes
- * nothing), so the caller's `scope` is deliberately ignored here.
+ * Runtime controls decide their own storage (the compression dial writes local
+ * scope per Decision 43; the account switch writes `inference.model` at local
+ * scope too; the proxy writes nothing), so the caller's `scope` is deliberately ignored here.
  */
 export async function applyRuntime(
   name: string,
@@ -150,12 +167,15 @@ export async function applyRuntime(
         message: `compression ${result.info.setting} (${result.info.label})`,
         file: result.file,
         ...(result.overriddenBy !== undefined && {
-          overridden: `a higher layer wins — the effective value comes from ${result.overriddenBy.layer}`,
+          overridden:
+            result.overriddenBy.important === true
+              ? `${result.overriddenBy.layer} pins it as !important — effective value stays ${JSON.stringify(result.info.effective)}`
+              : `a higher layer wins — the effective value comes from ${result.overriddenBy.layer}`,
         }),
       };
     }
     case "account": {
-      const { settings } = await loadConfig(shared);
+      const { settings } = await loadEffectiveConfig(shared);
       const raw = typeof value === "string" ? value : String(value);
       // The synthetic default id and "none" both clear `inference.model`.
       const target =
@@ -172,7 +192,7 @@ export async function applyRuntime(
       };
     }
     case "proxy": {
-      const { settings } = await loadConfig(shared);
+      const { settings } = await loadEffectiveConfig(shared);
       if (value === true) {
         const script = options.cliPath;
         if (script === undefined || script === "") {
@@ -181,7 +201,13 @@ export async function applyRuntime(
             { key: "runtime:proxy" },
           );
         }
-        const pid = await startDetached(shared.projectDir, settings.proxy.port, script);
+        const { credentialEnvForProxy } = await import("../cli/gateways.js");
+        const pid = await startDetached(
+          shared.projectDir,
+          settings.proxy.port,
+          script,
+          await credentialEnvForProxy(shared.projectDir),
+        );
         if (pid === null) {
           throw new ConfigError(
             `the proxy did not come up on port ${settings.proxy.port} — run \`golem proxy\` to see why`,

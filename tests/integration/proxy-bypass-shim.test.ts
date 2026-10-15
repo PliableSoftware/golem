@@ -134,4 +134,45 @@ describe("bypass shim (R10.12 / Decision 56)", () => {
     );
     expect(sentUpstream).toContain(secret());
   });
+
+  // Decision 56(c): the shim runs NO compression. A repeated large tool_result is
+  // exactly what level-1 dedup rewrites into a CCR marker; the shim must forward
+  // it verbatim (redaction only).
+  describe("no compression (D56(c))", () => {
+    const BIG = Array.from({ length: 30 }, (_, i) => `tool output line ${i}`).join("\n");
+    const repeated = () => ({
+      model: { name: "claude-opus-5" },
+      max_tokens: 16,
+      messages: [
+        { role: "user", content: "read it twice" },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_a", name: "Read", input: {} }],
+        },
+        {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_a", content: BIG }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_b", name: "Read", input: {} }],
+        },
+        {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_b", content: BIG }],
+        },
+      ],
+    });
+
+    it("forwards a body level-1 dedup would rewrite, unchanged", async () => {
+      const { sentUpstream } = await postThrough({ shim: true }, repeated());
+      expect(sentUpstream.split(JSON.stringify(BIG).slice(1, -1)).length - 1).toBe(2);
+      expect(sentUpstream).not.toMatch(/[0-9a-f]{64}/);
+    });
+
+    it("CONTROL: a non-shim build at the default level does rewrite it", async () => {
+      const { sentUpstream } = await postThrough({ shim: false }, repeated());
+      expect(sentUpstream.split(JSON.stringify(BIG).slice(1, -1)).length - 1).toBe(1);
+    });
+  });
 });

@@ -10,6 +10,7 @@ import {
   renderTask,
   renderTaskList,
   type ScopedTask,
+  spawnResume,
   taskTitle,
 } from "../../../src/cli/task.js";
 import { createTask, parsePlanTask, type Task } from "../../../src/tasks/index.js";
@@ -162,5 +163,59 @@ describe("renderScopedTaskList", () => {
 
   it("omits a scope's heading entirely when it is empty", () => {
     expect(renderScopedTaskList([{ task: A, scope: "local" }])).not.toContain("plan (committed");
+  });
+});
+
+describe("spawnResume", () => {
+  it("reports the real spawn error when the binary cannot be launched", async () => {
+    const result = await spawnResume(["golem-no-such-binary-for-spawn-test", "--resume", "x"]);
+    expect(result.spawned).toBe(false);
+    expect(result.pid).toBeUndefined();
+    expect(result.command).toContain("golem-no-such-binary-for-spawn-test");
+    // The OS error (ENOENT) reaches the user; "produced no pid" hid it.
+    expect(result.note).toMatch(/ENOENT/);
+    expect(result.note).toMatch(/run it manually/);
+  });
+
+  it("reports a spawn with a pid when the binary launches", async () => {
+    const result = await spawnResume([process.execPath, "-e", "0"]);
+    expect(result.spawned).toBe(true);
+    expect(typeof result.pid).toBe("number");
+  });
+
+  it("refuses an empty command", async () => {
+    const result = await spawnResume([]);
+    expect(result.spawned).toBe(false);
+    expect(result.note).toBe("empty command");
+  });
+});
+
+describe("renderScopedTaskList with unparseable plan docs", () => {
+  const problems = [{ name: "b.md", path: "/r/b.md", reason: "bad" }];
+
+  it("appends the loud block after the table", () => {
+    const plan = parsePlanTask("---\ntask: P1\ntitle: T\n---\n\nbody\n");
+    const out = renderScopedTaskList([{ task: plan, scope: "plan" }], problems);
+    expect(out).toContain("P1");
+    expect(out).toContain("UNPARSEABLE plan task documents — 1");
+    expect(out).toContain("/r/b.md: bad");
+  });
+
+  it("does not claim 'no tasks' without the problem list when only broken docs exist", () => {
+    const out = renderScopedTaskList([], problems);
+    expect(out).toContain("/r/b.md: bad");
+  });
+});
+
+describe("spawnResume cwd", () => {
+  it("launches in the given directory", async () => {
+    const result = await spawnResume([process.execPath, "-e", "0"], process.cwd());
+    expect(result.spawned).toBe(true);
+  });
+
+  it("reports a missing cwd as a failed launch, not a crash", async () => {
+    const result = await spawnResume([process.execPath, "-e", "0"], "/golem-no-such-dir-xyz");
+    expect(result.spawned).toBe(false);
+    expect(result.note).toMatch(/run it manually/);
   });
 });

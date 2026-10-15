@@ -41,6 +41,11 @@ function matchesFilter(entry: ModelCatalogEntry, filter: string): boolean {
  * substring over `"<provider> <id>"` — 5,900 entries is a normal size for the
  * fetched half, so an unfiltered dump is rarely what a reader wants.
  */
+/** Fit an id in the 33-char column, ending in `…` when it was cut so it is not mistaken for the full id. */
+function fitId(id: string): string {
+  return id.length > 33 ? `${id.slice(0, 32)}…` : id;
+}
+
 export function renderModelCatalog(
   catalog: ModelCatalog,
   opts: { readonly nowMs: number; readonly maxAgeDays: number; readonly filter?: string },
@@ -82,7 +87,7 @@ export function renderModelCatalog(
   );
   for (const entry of rows) {
     out.push(
-      `${entry.provider.slice(0, 13).padEnd(14)}${entry.id.slice(0, 33).padEnd(34)}` +
+      `${entry.provider.slice(0, 13).padEnd(14)}${fitId(entry.id).padEnd(34)}` +
         `${usd(entry.inputUsdPerMTok).padStart(9)}${usd(entry.outputUsdPerMTok).padStart(10)}` +
         `${usd(entry.cacheReadUsdPerMTok).padStart(10)}${usd(entry.cacheWriteUsdPerMTok).padStart(10)}` +
         `${tokens(entry.contextTokens).padStart(12)}${tokens(entry.maxOutputTokens).padStart(10)}`,

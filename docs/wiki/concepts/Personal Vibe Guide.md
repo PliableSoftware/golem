@@ -4,7 +4,7 @@ type: concept
 tags: [vibe, personal-scope, skills, guidance, context-budget, redaction]
 sources: [docs/plan/tasks/vibe-personal-style.md, src/vibe/, src/cli/commands/vibe.ts]
 created: 2026-09-13
-updated: 2026-09-13
+updated: 2026-10-08
 ---
 
 # Personal Vibe Guide
@@ -110,14 +110,35 @@ Every byte written to the guide is derived from the user's real source files, so
 it passes through the pipeline redactor BEFORE the write, never after. There is
 no window in which unredacted text exists on disk.
 
+The rule is one redactor, `VibeStore.redact` (`src/vibe/store.ts:144-147`): the
+built-in rules **plus the project's plugin rules** (DUSTSEC.8), loaded first via
+`ensurePluginRedactionRules`. The two files this page's table calls "never" read
+are written through it too (DUSTSEC.9, USER decision R7):
+
+- `sources.json` — `recordSource` redacts the `path` field (the only string that can
+  carry a secret) with `redactIdentifier`, the rule table without the entropy sweep,
+  so ordinary long paths are not mangled; the entry is keyed on the redacted value
+  (`src/vibe/store.ts:268-283`).
+- `candidates.jsonl` — `append` redacts the free-text `note` before the row is
+  written (`src/vibe/candidates.ts:80-88`). `key`, `from`, `to` and the `files`
+  list are left exact: the first three are derived from style metrics, and `files`
+  is a distinct-set of source paths (so a path there is not passed through the
+  redactor; UNVERIFIED whether any other writer adds a path-bearing `files`
+  entry).
+
 ## Surfaces
 
 - `golem vibe show` — the brief, as a turn sees it
 - `golem vibe seed <path...>` — measure from files or projects the user names
 - `golem vibe sources` — what it was seeded from, with dates
 - `golem vibe path` — where it lives on this machine
-- `/vibe` — the skill: the same verbs plus `quiz`, which is the only surface
-  allowed to write a *stated* preference, because it is the only one that can ask
+- `golem vibe candidates` / `confirm <key>` / `reject <key>` / `sweep` — the noticed
+  signals, and the CLI way to act on them (`src/cli/commands/vibe.ts:145-225`).
+  `confirm` runs `applyConfirmed`, so it also writes a stated preference into the
+  guide, and `reject` tombstones one
+- `/vibe` — the skill: the same verbs plus `quiz`, which is the *interactive*
+  surface that writes a *stated* preference, because it can ask. It is **not** the
+  only writer: `golem vibe confirm` writes one too, with no quiz (DUST1.8 row 52)
 - the `vibe` guidance rule — seeded by `golem init`, always in context, which is
   what makes the guide passive rather than something to invoke
 

@@ -3,7 +3,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { LAN_HOST, startDashboard } from "../../dashboard/index.js";
 import { InitError } from "../init.js";
 import { statsSourceForCli } from "../mcp-compression.js";
@@ -96,7 +96,7 @@ export default function register(program: Command): void {
     )
     .action(async (opts: { dir: string; port?: string; lan?: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const port =
           opts.port === undefined ? settings.telemetry.dashboard_port : Number(opts.port);
         if (!Number.isInteger(port) || port < 0 || port > 65535)
@@ -104,7 +104,6 @@ export default function register(program: Command): void {
         // The flag is a one-run override of the config setting; neither can be
         // set from the phone, which is the point (see `telemetry.dashboard_lan`).
         const lan = opts.lan === true || settings.telemetry.dashboard_lan;
-        const source = await statsSourceForCli(opts.dir);
         const handle = await startDashboard({
           port,
           ...(lan ? { host: LAN_HOST } : {}),
@@ -112,10 +111,14 @@ export default function register(program: Command): void {
             const { getDialInfo } = await import("../dials.js");
             const { blockedView } = await import("../blocked-view.js");
             const { readSessionState, resolveBlock } = await import("../../hooks/session-state.js");
-            const [dial, stats, session] = await Promise.all([
+            const { collectUsageViewCached } = await import("../../telemetry/index.js");
+            const [dial, stats, session, usage] = await Promise.all([
               getDialInfo("compression", { projectDir: opts.dir }),
-              collectStats(source),
+              // Resolved per poll: the source flips from the in-memory live one to
+              // durable telemetry once the proxy records its first request.
+              statsSourceForCli(opts.dir).then((source) => collectStats(source)),
               readSessionState(opts.dir),
+              collectUsageViewCached(opts.dir),
             ]);
             return {
               project_dir: opts.dir,
@@ -124,6 +127,7 @@ export default function register(program: Command): void {
               // R12.2: the same blocked read model `/api/state` serves, so the
               // page itself renders it instead of only the JSON endpoint.
               blocked: blockedView(resolveBlock(session)),
+              usage,
               generated_at: new Date().toISOString(),
             };
           },
@@ -176,7 +180,9 @@ export default function register(program: Command): void {
         await runWatch({
           dir: opts.dir,
           ...(refreshMs !== undefined ? { refreshMs } : {}),
-          ...(opts.color !== undefined ? { color: opts.color } : {}),
+          // commander's `--no-color` defaults the value to true; only an explicit
+          // flag (false) overrides the runWatch TTY / NO_COLOR check.
+          ...(opts.color === false ? { color: false } : {}),
         });
         process.exit(0);
       } catch (err) {

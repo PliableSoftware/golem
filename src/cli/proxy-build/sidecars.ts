@@ -35,7 +35,7 @@ export function buildProxySidecars(
   build: BuildProxyOptions,
 ): ProxySidecars {
   // OPT-IN semantic sidecar (Headroom) for compression.level ≥2 — off unless configured.
-  // Started lazily on first ≥3 request; fails open so the proxy never depends on it.
+  // Started lazily on first ≥2 request; fails open so the proxy never depends on it.
   // Decision 53: the opaque `headroom_config` bag rides through to the worker, so
   // Headroom options Golem has never heard of are reachable from settings alone.
   // `projectDir` is lifecycle bookkeeping, not behaviour: it stamps the worker's
@@ -62,12 +62,12 @@ export function buildProxySidecars(
   // (the thunk, not a cached value) so newly-fetched pages are recognized
   // without a restart; acceptable cost at realistic project webcache sizes.
   const webCache = new WebCache(webCacheDir(dir));
-  // R2.3 (spec Decision 24 sub-mode 2 / Decision 33): OFF by default. When
-  // enabled, opens the SAME embedded KnowledgeBase `golem index`/`mcp serve`
+  // R2.3 (spec Decision 24 sub-mode 2 / Decision 33): ON by default
+  // (`knowledge.local_answer_enabled`). When enabled, opens the SAME embedded KnowledgeBase `golem index`/`mcp serve`
   // build (FileVectorDriver under `.golem/knowledge`), choosing ONE embedder
   // the way build-knowledge.ts does — semantic when an inference service was
   // provided, else the zero-setup hashing fallback. Static per-run, like
-  // `headroom_sidecar` above — this is an opt-in gate, not something the live
+  // `headroom_sidecar` above — this is a settings gate, not something the live
   // dial ever toggles (Decision 31: compression stays a pure compression dial).
   const localAnswer =
     settings.knowledge.local_answer_enabled &&

@@ -2,9 +2,9 @@
 title: Guidance Rules
 type: concept
 tags: [guidance, init, claude-code, rules, toggle]
-sources: [src/hooks/guidance.ts, src/cli/main.ts, https://code.claude.com/docs/en/memory]
+sources: [src/hooks/guidance.ts, src/cli/commands/prompt-guidance.ts, https://code.claude.com/docs/en/memory]
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-10-08
 ---
 
 # Guidance Rules
@@ -30,17 +30,33 @@ launch); disabling removes it. **Golem never edits the user's `CLAUDE.md`.**
 
 ### Features (`GUIDANCE_FEATURES` in `src/hooks/guidance.ts`)
 
-Seeded by `golem init` (on by default):
+Seeded by `golem init` (on by default) — nine (`src/hooks/guidance.ts:337-407`):
 - **ccr-refs** — the oversized-output → CCR-ref swap + how to `expand`.
 - **wiki-kb-first** — the wiki → local KB → web ladder ([[Wiki-First Knowledge]]),
   framed as a proactive default.
-- **local-coder** — draft non-trivial code with the local `coder` model first.
+- **coder-first** — draft non-trivial code with the local `coder` model first.
+  (The key is `coder-first`; earlier text of this page called it `local-coder`.)
+- **local-answer** — the proxy may answer simple questions locally; keep the wiki
+  current.
+- **snooze-hold** — park at the usage limit instead of losing work
+  ([[Usage Limit Park]]). The rule text says the park is advisory by default.
+- **long-run-visibility** — stream long runs (`golem verify`) rather than leave a
+  silent gap.
+- **subagent-headroom** — why the park cannot reach a subagent: gate the spawn,
+  commit early, capture deaths ([[Spawn Headroom Gate]]; the gate is off by default).
+- **vibe** — consult the personal style guide ([[Personal Vibe Guide]]).
+- **parallel-agent-isolation** — give every parallel agent its own git worktree.
 
-Opt-in (not seeded; enable when wanted):
+Opt-in (not seeded; enable when wanted) — two:
 - **prompt-translation** — sharpen rough prompts via the local model
   (`golem prompt translate`, show-first, never silent).
 - **durable-tasks** — queue interruptible work as durable tasks + explicit
   escalation (`golem task add/run/escalate`).
+
+Not in the registry, and not managed here: `.claude/rules/golem-prefer-persona-agents.md`
+is generated from the staffed personas at `golem init` ([[Persona Registry]]), and
+rules such as `golem-close-out-checklist.md` or `golem-stepwise.md` are local to this
+repo (their own banner says so; `golem guidance list` does not show them).
 
 ## Seed-once, per FEATURE (so opt-outs stick AND new rules arrive)
 
@@ -92,7 +108,7 @@ golem guidance enable  <name> [--user]   # write the rule file (default: project
 golem guidance disable <name> [--user]   # remove it (default: both scopes)
 ```
 
-Wiring lives in `src/cli/main.ts` (the `guidance` command group) and
+Wiring lives in `src/cli/commands/prompt-guidance.ts:230-298` (the `guidance` command group; `src/cli/main.ts` no longer holds it) and
 `src/hooks/guidance.ts` (`seedDefaultGuidance`, `writeGuidanceRule`,
 `removeGuidanceRule`, `removeAllGuidanceRules`). Rule bodies carry a stripped
 `<!-- Managed by Golem … -->` banner so they're recognizable in-editor without

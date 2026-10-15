@@ -79,3 +79,7 @@ posture as re-openable afterwards: several deliberate cost decisions
 ## Outcome
 
 shipped — repo made public; main now requires CI gate, force-pushes and deletions blocked
+
+## Dust 2026-10-08 note
+
+Dust 2026-10-08: gate no longer met because `enforce_admins` is `false` (admin bypass) and the doc names `cloudcatalyst/golem`; the repo is `PliableSoftware/golem`. Not reopened. (source: DUST1.11 audit, `docs/plan/audit/dust-1/DUST1.11.md` Plan hygiene; not re-verified live)

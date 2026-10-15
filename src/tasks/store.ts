@@ -7,8 +7,9 @@
  * the session/proxy state writers. Non-frozen seam (memo R5.1).
  */
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { replaceViaTemp } from "../config/file-io.js";
 import { type Task, taskSchema } from "./types.js";
 
 /** Persistence boundary for durable tasks. Implemented by {@link FileTaskStore}. */
@@ -60,9 +61,7 @@ export class FileTaskStore implements TaskStore {
     const stored = taskSchema.parse({ ...task, updatedAt: nowIso });
     await mkdir(this.#dir, { recursive: true });
     const file = this.#pathFor(stored.id);
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(stored, null, 2)}\n`, "utf8");
-    await rename(tmp, file);
+    await replaceViaTemp(file, `${JSON.stringify(stored, null, 2)}\n`);
     return stored;
   }
 

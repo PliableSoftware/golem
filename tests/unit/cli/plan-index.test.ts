@@ -60,6 +60,28 @@ describe("groupPlanTasks", () => {
     expect(ready.map((t) => t.id)).toStrictEqual(["B"]);
   });
 
+  it("files a legacy `state: blocked` doc under blocked, shown as queued with its reason", () => {
+    const legacy = task("L", { blocked: "no keys" }, "blocked");
+    const { ready, blocked } = groupPlanTasks([task("A"), legacy]);
+    expect(ready.map((t) => t.id)).toStrictEqual(["A"]);
+    expect(blocked.map((t) => t.id)).toStrictEqual(["L"]);
+    expect(legacy.state).toBe("queued");
+  });
+
+  it("renders both a `blocked:` doc and a legacy `state: blocked` doc in the blocked section", () => {
+    const out = renderPlanIndex([
+      task("A", { blocked: "needs hardware" }),
+      task("L", { blocked: "no keys" }, "blocked"),
+      task("R"),
+    ]);
+    expect(out).toContain("1 ready, 2 blocked, 0 done");
+    const section = out.split("### Blocked or waiting (visible, not lost)")[1] ?? "";
+    expect(section).toContain("[A](tasks/A.md)");
+    expect(section).toContain("[L](tasks/L.md)");
+    expect(section).toContain("no keys");
+    expect(section).not.toContain("[R](tasks/R.md)");
+  });
+
   it("keeps a blocked task in a non-terminal state — blocked is metadata, not a state", () => {
     const { blocked } = groupPlanTasks([task("B", { blocked: "no keys" })]);
     expect(blocked[0]?.state).toBe("queued");
@@ -208,5 +230,25 @@ describe("renderPlanSummary", () => {
   it("an unrecognised discipline renders unchanged — free-form, not validated", () => {
     const out = renderPlanSummary([task("A", { discipline: "astrology" })]);
     expect(out).toContain("[discipline: astrology]");
+  });
+});
+
+describe("unparseable documents", () => {
+  const problems = [{ name: "broken.md", path: "/r/docs/plan/tasks/broken.md", reason: "no ---" }];
+
+  it("renderPlanIndex lists them inside the generated region", () => {
+    const out = renderPlanIndex([], problems);
+    expect(out).toContain("Unparseable task documents");
+    expect(out).toContain("[broken.md](tasks/broken.md) | no ---");
+    expect(out.indexOf("Unparseable")).toBeLessThan(out.indexOf(PLAN_INDEX_END));
+  });
+
+  it("renderPlanIndex has no such section when everything parsed", () => {
+    expect(renderPlanIndex([], [])).not.toContain("Unparseable");
+  });
+
+  it("renderPlanSummary reports them with the full path", () => {
+    expect(renderPlanSummary([], problems)).toContain("UNPARSEABLE (1)");
+    expect(renderPlanSummary([], problems)).toContain("/r/docs/plan/tasks/broken.md: no ---");
   });
 });

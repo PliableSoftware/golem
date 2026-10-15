@@ -5,7 +5,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   buildHookCommand,
   defaultRevalidate,
@@ -50,7 +50,7 @@ function _fail(err: unknown): never {
 
 async function _buildInferenceForDir(dir: string) {
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const client = new OllamaClient({
       baseUrl: settings.inference.ollama_base_url,
       requestTimeoutMs: settings.inference.request_timeout_ms,
@@ -310,6 +310,8 @@ export default function register(program: Command): void {
   const hookCmd = buildHookCommand({
     buildKnowledge: async (projectDir) => {
       try {
+        // DUST2.13: fetched pages are ingested only while the KB is enabled.
+        if (!(await loadEffectiveConfig({ projectDir })).settings.knowledge.enabled) return null;
         return (await buildKnowledgeStack({ projectDir })).knowledge;
       } catch {
         return null;
@@ -318,14 +320,14 @@ export default function register(program: Command): void {
     revalidate: defaultRevalidate,
     revalidateEnabled: async (projectDir) => {
       try {
-        return (await loadConfig({ projectDir })).settings.knowledge.webcache_revalidate;
+        return (await loadEffectiveConfig({ projectDir })).settings.knowledge.webcache_revalidate;
       } catch {
         return false;
       }
     },
     skeletonEnabled: async (projectDir) => {
       try {
-        return (await loadConfig({ projectDir })).settings.knowledge.read_skeleton_enabled;
+        return (await loadEffectiveConfig({ projectDir })).settings.knowledge.read_skeleton_enabled;
       } catch {
         return true;
       }
@@ -333,7 +335,7 @@ export default function register(program: Command): void {
     fetchRaw: fetchRawPage,
     fetchRawEnabled: async (projectDir) => {
       try {
-        return (await loadConfig({ projectDir })).settings.knowledge.webcache_fetch_raw;
+        return (await loadEffectiveConfig({ projectDir })).settings.knowledge.webcache_fetch_raw;
       } catch {
         return true;
       }
@@ -352,16 +354,16 @@ export default function register(program: Command): void {
         } catch {
           /* no/!json payload */
         }
-        const { settings } = await loadConfig({ projectDir: cwd });
+        const { settings } = await loadEffectiveConfig({ projectDir: cwd });
         const port = settings.proxy.port;
         // R9.23: if the URL is in settings, the daemon should be alive.
-        // If it's not, restart it.
+        // If it's not, start it — unless the recorded desired state says otherwise (below).
         const wiring = await readWiringState(cwd, proxyBaseUrl(port));
         if (wiring.owner !== "golem") return;
         // Resync Claude Code's own wiring (hooks/statusLine/permissions) with
         // whatever `golem` version is running THIS session, independent of
         // whether the daemon below needs (re)starting — see version-sync.ts.
-        // A long-lived daemon can outlive several `npm i -g golem-run`
+        // A long-lived daemon can outlive several `npm i -g @pliable/golem`
         // upgrades; this is the path that still catches drift every session.
         await syncProjectVersion({ projectDir: cwd, version: VERSION, proxyPort: port });
         if ((await proxyStatus(cwd, port)).running) return;
@@ -374,11 +376,13 @@ export default function register(program: Command): void {
         // desired state on the floor.
         const desired = await readProxyDesired(cwd);
         if (desired === "stopped") return;
+        // Lazy: the credential stores are only needed on this recovery path.
+        const { credentialEnvForProxy } = await import("../gateways.js");
         await startDetached(
           cwd,
           port,
           process.argv[1] ?? "",
-          {},
+          await credentialEnvForProxy(cwd),
           ...(desired === "bypass" ? [{ shim: true } as const] : []),
         );
       } catch {

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileChangeBatch, FileWatcher } from "../../../src/knowledge/file-watcher.js";
-import { watchPath } from "../../../src/knowledge/file-watcher.js";
+import { WatchCapExceededError, watchPath } from "../../../src/knowledge/file-watcher.js";
 import { rmTemp } from "../../helpers/tmp.js";
 
 let dir: string;
@@ -246,5 +246,78 @@ describe("watchPath", () => {
       const batch = await nextBatch(batches, 6000);
       expect(batch.changed).toEqual([nested]);
     });
+  });
+});
+
+describe("watchPath hardening (DUST2.14)", () => {
+  it("a throwing consumer is swallowed and counted, and the watcher keeps delivering", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const errors: unknown[] = [];
+    let calls = 0;
+    watcher = await watchPath(
+      dir,
+      () => {
+        calls += 1;
+        if (calls === 1) throw new Error("consumer blew up");
+      },
+      { debounceMs: 50, pollMs: 60, onError: (e) => errors.push(e) },
+    );
+    await writeFile(path.join(dir, "a.md"), "a");
+    await advanceOnePoll(watcher);
+    await vi.advanceTimersByTimeAsync(50);
+    await waitUntil(() => calls === 1, "the first batch");
+    await waitUntil(() => watcher?.errors === 1, "the swallowed error to be counted");
+    expect(errors).toHaveLength(1);
+
+    await writeFile(path.join(dir, "b.md"), "bb");
+    await advanceOnePoll(watcher);
+    await vi.advanceTimersByTimeAsync(50);
+    await waitUntil(() => calls === 2, "a batch after the failure");
+  });
+
+  it("refuses a baseline over maxFiles", async () => {
+    for (const n of ["a", "b", "c"]) await writeFile(path.join(dir, `${n}.md`), n);
+    await expect(watchPath(dir, () => {}, { maxFiles: 2 })).rejects.toBeInstanceOf(
+      WatchCapExceededError,
+    );
+  });
+
+  it("pauses (reports once, delivers nothing) while the tree is over the cap, then resumes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await writeFile(path.join(dir, "a.md"), "a");
+    const batches: FileChangeBatch[] = [];
+    const errors: unknown[] = [];
+    watcher = await watchPath(dir, (b) => batches.push(b), {
+      debounceMs: 50,
+      pollMs: 60,
+      maxFiles: 2,
+      onError: (e) => errors.push(e),
+    });
+    await writeFile(path.join(dir, "b.md"), "b");
+    await writeFile(path.join(dir, "c.md"), "c"); // 3 files > cap of 2
+    await advanceOnePoll(watcher);
+    await advanceOnePoll(watcher);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(batches).toHaveLength(0);
+    expect(errors).toHaveLength(1); // once per excursion, not once per poll
+
+    await rm(path.join(dir, "c.md"));
+    await advanceOnePoll(watcher);
+    await vi.advanceTimersByTimeAsync(50);
+    await waitUntil(() => batches.length > 0, "delivery to resume under the cap");
+    expect(batches[0]?.changed).toEqual([path.join(dir, "b.md")]);
+  });
+
+  it("close() clears timers, drops pending work and is idempotent", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const batches: FileChangeBatch[] = [];
+    watcher = await watchPath(dir, (b) => batches.push(b), { debounceMs: 50, pollMs: 60 });
+    await writeFile(path.join(dir, "a.md"), "a");
+    await advanceOnePoll(watcher); // debounce armed
+    watcher.close();
+    watcher.close();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(batches).toHaveLength(0);
   });
 });

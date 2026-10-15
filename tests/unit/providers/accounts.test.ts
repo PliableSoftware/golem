@@ -84,7 +84,7 @@ describe("resolveActiveUpstream", () => {
     expect(resolved.apiKey).toBeUndefined(); // fail-closed: no fallback to legacy/other keys
   });
 
-  it("falls back to legacy + a warning for a selector in neither registry (no silent switch)", () => {
+  it("returns legacy (for construction only) + a refusal warning for a selector in neither registry", () => {
     const { resolved, warning } = resolveActiveUpstream(
       { legacy, gateways, activeAccount: "ghost", legacyApiKey: "sk-legacy" },
       {},

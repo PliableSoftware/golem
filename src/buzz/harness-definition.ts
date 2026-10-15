@@ -7,8 +7,8 @@
  * `buzz-agent`) plus the tier-2 presets, and `golem` is none of those.
  *
  * This module only EMITS the definition. Installing it into Buzz Desktop's
- * app-data directory is R14.2's job (`golem buzz install-harness`), offered
- * behind an explicit command — never a side effect of `golem init` or of
+ * app-data directory is not done here (there is no `golem buzz install-harness`
+ * command; only `golem buzz acp` exists), and would be offered behind an explicit command — never a side effect of `golem init` or of
  * anything in this task.
  */
 

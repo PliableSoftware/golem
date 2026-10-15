@@ -5,8 +5,8 @@
  * `session-tree.ts` (R8.S3) deliberately stores *content hashes, no prompt
  * content* — this is the deliberate, argued exception to that, made by
  * ADR-0007 §6 (a USER DECISION, spec Decision 60): scrollback ("see the
- * previous messages") and continuation (R13.8) both need real turn text on
- * disk, which hashes cannot provide. What changed: prompt content is now
+ * previous messages") needs real turn text on disk, which hashes cannot provide
+ * (continuation, R13.8, shipped without consuming this store). What changed: prompt content is now
  * persisted, here, and only here. What did NOT change: `session-tree.ts`
  * keeps recording hashes only, for its own branch-detection purpose; this
  * store does not replace it, does not read it, and does not weaken its
@@ -45,9 +45,10 @@
  * `.golem/conversations` a main-checkout reader would see.
  */
 
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import type {
   ConversationRecord,
   ConversationStore,
@@ -106,6 +107,9 @@ export function conversationStoreDir(projectRoot: string): string {
 }
 
 /** How many conversations to keep before evicting the oldest (by `lastTurnAt`). */
+/** Conversation ids are fingerprints/keys: no separators, no dots, so no `..`. */
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
 const DEFAULT_MAX_CONVERSATIONS = 32;
 
 /**
@@ -149,6 +153,11 @@ export class LocalConversationStore implements ConversationStore {
   }
 
   #fileFor(conversationId: string): string {
+    // Ids are written by this store (hex/word keys). Anything with a separator
+    // or `..` would escape the directory before `rm`/`readFile`.
+    if (!SAFE_ID.test(conversationId)) {
+      throw new Error(`invalid conversation id: ${JSON.stringify(conversationId)}`);
+    }
     return path.join(this.#dir, `${conversationId}.json`);
   }
 
@@ -170,12 +179,7 @@ export class LocalConversationStore implements ConversationStore {
   async #writeRecord(record: ConversationRecord): Promise<void> {
     const file = this.#fileFor(record.conversationId);
     await mkdir(this.#dir, { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await rename(tmp, file);
+    await replaceViaTemp(file, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   }
 
   /**
@@ -241,6 +245,7 @@ export class LocalConversationStore implements ConversationStore {
 
   /** Delete one conversation. Returns whether it existed before deletion. */
   async forget(conversationId: string): Promise<boolean> {
+    if (!SAFE_ID.test(conversationId)) return false;
     const file = this.#fileFor(conversationId);
     try {
       await stat(file);

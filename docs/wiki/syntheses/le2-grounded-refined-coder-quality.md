@@ -59,3 +59,11 @@ Verdict count: **1 accept / 4 revise / 0 reject** vs R4.7's 2 / 3 / 0.
 The co-developer thesis holds: grounding makes local drafts *cheaper to finish*,
 which is the point (leave the paid model the judgment calls). The measured lever
 to improve next is **refine**, not grounding. See [[PRE-R6 loose-ends closeout]].
+
+## Rebaseline 2026-10-08
+
+Findings above stand as the 2026-07-17 record. Drift against shipped code:
+
+- `clampSliderLevel` and `MAX_SLIDER_LEVEL` no longer exist (`grep` over `src/` finds them only in a lint comment, `src/cli/wiki.ts:232`). The slider was retired (ADR-0004); the dial is `compression.level` (`off` | 1 | 2 | 3), `src/interfaces/policy.ts:37`. The "0-4 vs 0-3" finding is historical.
+- `src/mcp/server.ts:670` is stale: `gatherGrounding` now lives at `src/mcp/search.ts:256`; `refineDraft` at `src/mcp/coder-refine.ts:156`. The coder tool is `src/mcp/coder-tools.ts`.
+- `policy.ts:45` `MAX_SLIDER_LEVEL` search hit: that symbol is gone, so the rerank spot-check is not reproducible as written.

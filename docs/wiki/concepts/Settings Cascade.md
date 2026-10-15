@@ -4,7 +4,7 @@ type: concept
 tags: [config, settings, precedence, cascade, important, team, css, provenance]
 sources: [docs/decisions/ADR-0008-settings-cascade-and-importance.md, docs/golem-spec.md, src/config/loader.ts, docs/plan/verification-notes.md#154]
 created: 2026-09-04
-updated: 2026-09-06
+updated: 2026-10-14
 ---
 
 # Settings Cascade
@@ -122,7 +122,11 @@ local file.
 So, as invariants rather than configuration:
 
 1. The `team` origin has a **compiled-in deny-list** of keys it may never
-   contribute at any importance. `proxy.bypass_all` is on it.
+   contribute at any importance (`REMOTE_DENIED_SETTINGS`, `src/config/loader.ts:144-153`).
+   `proxy.bypass_all` is on it, and so are the identity keys that say which portal
+   and which organization to trust: `portal.url`, `portal.issuer`, `portal.client_id`,
+   `team.org_id`, `team.portal_url`, `team.sync`, `team.skills`. A layer must not be
+   the thing that decides it is allowed to be a layer.
 2. A payload naming a denied key is **dropped with a loud local warning** —
    refused, never sanitised in silence.
 3. A list the remote could edit would not be a floor, which is why it is
@@ -184,17 +188,55 @@ origin, so there is only one.
   locked reason, deriving the recourse from `ORIGIN_ORDER` rather than spelling
   it out per origin — so it stays true when an origin is added. `default` is
   filtered out of the recourse: it outranks everything, but nobody can write it.
+- **`DEFAULT_IMPORTANT_KEYS`** (`src/config/default-floor.ts`, DUST2.16) is the
+  `default!` mechanism. See the section
+  "`default!` is a floor, and only ever a stricter one" below.
 - **`tests/unit/config-cascade-importance.test.ts`** asserts the reversal per
   pair. Reversing pass 2 back to forward order fails four of its tests, which is
   the check that it is testing the ordering and not merely the outcome.
 
-**The `team` origin is a slot, not a feature.** It has its rank and its
-`LayerName` value, and `loadConfig`'s `teamLayer` option is where an
-already-resolved payload goes — but nothing fetches one yet, and
-`team-settings-layer` is retired rather than pending ([[Team Layer]] describes
-the mechanism ADR-0008 replaced). Filling the slot is `team-layer-fetch`.
-Marking an origin remote is what arms the floor, so today the floor is a
-mechanism with no origin using it, exercised by tests that construct one.
+### `default!` is a floor, and only ever a stricter one
+
+*Shipped 2026-10-14 (DUST2.16 / DUST1.8 r004).* The loader applies the registry
+after both bands, so nothing above it can move a key it names. The semantics, as
+implemented — not a new precedence:
+
+- A `default!` key resolves to its **compiled-in default**, whatever `user!`,
+  `team!`, `project!`, `local!`, `GOLEM_*` or a header say. Its provenance is
+  `{ layer: "default", important: true }`, so every surface renders it locked,
+  by "Golem itself", with the recourse "No origin can override it."
+- Each origin that declared the key gets one warning naming the origin and the
+  key. **The value is never printed**, so a team's value for a key it cannot set
+  cannot leak through the warning.
+- **Stricter or equal, by construction.** A key is admitted only if it is a
+  boolean the team policy gives a stricter direction (`true-only` / `false-only`,
+  see [[Team Layer]]) **and** its compiled default is already that strict value.
+  `proxy.bypass_all` is refused by name (CLI-only; a pin would also lock out
+  `golem off`). Numbers, lists, `settable` and `denied` keys are rejected
+  because this module cannot verify which value is stricter. `assertFloor`
+  enforces this when the loader runs and a test enforces it for the registry.
+- **The registry is empty today.** The mechanism is shipped and tested through a
+  seam; which values Golem should pin is an open USER decision recorded in
+  `docs/plan/tasks/DUST2.16.md`. Because it is empty, every existing install
+  resolves identically.
+
+**The `team` origin is populated on every surface (G3).** It has its rank and its
+`LayerName` value, and `loadConfig`'s `teamLayer` option
+(`src/config/loader.ts:209`) is where an already-resolved payload goes. This page
+once said nothing fetched one; that stopped being true when `team-layer-fetch`
+shipped. `loadEffectiveConfig` (`src/config/effective.ts`, the only production entry point; a
+test fails if a file calls the raw `loadConfig`) does the two-pass
+load: an ordinary load to learn the `team` binding, then a second load with the cached
+payload supplied (an unlinked project never pays the second pass). It reads a
+file already on disk; only `golem init` and `golem team sync` open a socket
+(`syncTeamLayer`, `src/cli/init.ts:556`, `src/cli/commands/team.ts:559`).
+Marking an origin remote arms the floor, so a real payload now reaches
+`REMOTE_DENIED_SETTINGS`. **Which callers apply it** is narrower than "every load":
+the proxy foreground (`src/cli/commands/proxy.ts:192`) and `golem status`
+(`src/cli/status-collect.ts:145`). `golem config` and the panel use plain `loadConfig`
+([[Configuration Surfaces]]). Where enforced team policy ought to apply is an open
+question (Phase 1 contradiction G3), not settled here. `team-settings-layer`
+stays retired ([[Team Layer]] describes the mechanism ADR-0008 replaced).
 
 ## What did not change
 
@@ -203,10 +245,26 @@ offline cache and its age report; the rule that nothing about a team link may
 stop the proxy starting; retirement and migration handling (both run before
 importance is considered); and every frozen `src/interfaces/` contract.
 
+**Failure rule: a bad team value skips the layer, it never stops the proxy.** For
+every other origin an invalid value is a hard `ConfigError` naming the file. The
+`team` origin is the one exception (ADR-0008, USER decision G2, DUSTSEC.14): a
+`ConfigError` from the team payload is caught, the whole layer is dropped
+all-or-nothing (it is dry-run through both bands against a scratch copy first, so no
+half-applied layer is left), and one warning says `team layer SKIPPED` — the proxy
+still starts (`buildTeamOrigin`, `src/config/loader.ts:324-361`). Only a
+`ConfigError` is swallowed; any other exception still surfaces. Skipping cannot loosen
+redaction: the origin is remote, so it can only add to the floor, and the built-in
+rules are not a setting. A broken *binding* (the `team` section naming an org the
+project cannot resolve) is handled one step earlier and also degrades to local
+configuration with a notice (`resolveTeamLayerForProject`,
+`src/portal/team-layer.ts:543-560`). Before DUSTSEC.14 an invalid cached team row
+threw through `loadEffectiveConfig` into the proxy start; the code now matches
+the rule this page always stated.
+
 The cache's *path* did change later, but not because of this design: Decision 63
 (2026-09-06) keys it per org as `~/.golem/teams/<org_id>.json`, because one
 machine holds projects belonging to different teams and one file has one slot for
 two team layers. Its role in the cascade is exactly as described above.
 
 **Existing installs resolve identically.** Nothing declares importance until
-someone writes it, and no client ships a team layer yet.
+someone writes it, and a project with no `team` binding resolves with no team origin at all.

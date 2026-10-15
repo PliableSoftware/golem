@@ -20,8 +20,11 @@ Bump all of them at once:
 npm run release -- patch      # or: minor | major | 1.2.3
 ```
 
-This edits both `package.json` files, regenerates `src/version.ts`, and prints
-the remaining steps. It does **not** commit, tag, or publish.
+This edits both `package.json` files, `package-lock.json` and `src/version.ts` as
+one unit and prints the remaining steps. It computes and validates every edit in
+memory, writes temp files, then renames them into place; if any step fails
+part-way the files already replaced are restored, so a failed run leaves the tree
+unchanged. It does **not** commit, tag, or publish.
 
 ## Cut a release (automated)
 
@@ -56,13 +59,13 @@ To publish manually instead (requires `npm login`):
 npm run verify:deps                  # exact pins + .npmrc posture (R8.10)
 npm run deps:shrinkwrap              # generate npm-shrinkwrap.json — see below
 npm publish --dry-run                # inspect the tarball contents first
-npm publish                          # publishes golem-run
+npm publish                          # publishes @pliable/golem
 ```
 
 ### Why the shrinkwrap step matters (R8.10)
 
 npm **ignores** a `package-lock.json` inside a published tarball, so without this
-step consumers of `golem-run` resolve transitive dependencies fresh at install
+step consumers of `@pliable/golem` resolve transitive dependencies fresh at install
 time and inherit none of this repo's pinning. `npm-shrinkwrap.json` is the one
 lockfile npm honours when published, so generating it means a consumer installs
 the exact tree that was tested here.

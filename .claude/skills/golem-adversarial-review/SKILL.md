@@ -93,7 +93,7 @@ since that drives promotion), then produce:
 BLOCK = 1+ CRITICAL. CONCERNS = no criticals but 2+ warnings. CLEAN = notes only.
 Judge this repo's hard rules while reviewing, not generic taste: a frozen
 interface under `src/interfaces/` changing shape, redaction weakened or
-reordered, or a byte-faithful proxy path losing that guarantee is CRITICAL
+reordered, or the proxy losing its lossless, prefix-stable guarantee at level <= 1 is CRITICAL
 regardless of what the diff's author intended.
 
 ## Anti-patterns to avoid

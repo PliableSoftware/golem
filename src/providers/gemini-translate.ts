@@ -209,7 +209,9 @@ export function anthropicToGemini(
 
   const model = stripVendorPrefix(opts.model ?? parsed.model ?? "");
   if (model === "") {
-    throw new Error("no upstream model: set proxy.upstream_model for this provider");
+    throw new Error(
+      "no upstream model: set proxy.upstream_model for this provider, or the target's `models[]` / `golem target add --model`",
+    );
   }
 
   const names = toolNameById(parsed.messages);

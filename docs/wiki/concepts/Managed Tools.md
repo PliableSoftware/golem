@@ -4,7 +4,7 @@ type: concept
 tags: [dependencies, policy, pkg, ext, headroom, caveman, rtk, ollama]
 sources: [src/pkg/manifest.ts, src/pkg/detect.ts, src/pkg/status.ts, src/pkg/install.ts, src/cli/pkg.ts, docs/golem-spec.md, docs/plan/verification-notes.md]
 created: 2026-07-30
-updated: 2026-08-21
+updated: 2026-10-08
 ---
 
 # Managed tools — spawned or detected, never shipped
@@ -23,7 +23,12 @@ The rule underneath it is four things:
 1. `npx golem-run init` works on all three OSes with no toolchain.
 2. Every external thing is **opt-in, off by default, and degrades to a no-op** —
    never an error path.
-3. **Exact pins, one quarantine adapter file, never in `dependencies`.**
+3. **Exact pins, one quarantine adapter file, never in `dependencies`.** This holds
+   for the spawned or detected tools (Headroom is pinned `==0.30.0`, `unpdf` is exact
+   `1.6.2` in `optionalDependencies`). It does **not** hold for `web-tree-sitter`: it is
+   a caret range, `^0.26.10`, in `devDependencies` (`package.json:68`), and the manifest
+   row calls it tier 2 (`src/pkg/manifest.ts:261`). The page's invariant and the
+   manifest disagree there; flagged for the `src/pkg` owner, not resolved here.
 4. **Golem distributes no third-party bytes** — nothing to audit, no licence to
    relay.
 
@@ -35,7 +40,7 @@ vendored.
 
 | Tier | Mechanism | Examples | Ships their bytes? |
 |---|---|---|---|
-| 1 | npm `dependencies` — pure JS, no native build, deliberately tiny | the 5 runtime deps | yes |
+| 1 | npm `dependencies` — pure JS, no native build, deliberately tiny | the 6 runtime `dependencies` (`@agentclientprotocol/sdk`, `@modelcontextprotocol/sdk`, `commander`, `env-paths`, `undici`, `zod`; `package.json:49-56`) | yes |
 | **2** | Spawn or resolve a pinned tool the user provides; off by default; one adapter | Headroom (`uv run --with headroom-ai==0.30.0`), Ollama, `unpdf`, `web-tree-sitter` | **no** |
 | **3a** | Detect a peer and interoperate or defer | Caveman's marker, RTK's hook | **no** |
 | **3b** | Re-implement the idea as Golem's own data, cite the source, copy nothing | Decision 52's brevity profiles | **no** |
@@ -68,12 +73,17 @@ tokens per turn, its installer targets one agent's skill directory, and there is
 no API — the skill *is* a prompt. A proxy injecting the same directive in-flight,
 for every client, with zero dependencies, is strictly better. Golem detects it
 only so the two never stack. Its two adjacent components (`/caveman-compress`,
-`caveman-shrink`) *do* qualify and are tracked as follow-ups.
+`caveman-shrink`) *do* qualify, and both have shipped as Golem's own code: the compress
+idea as P3a (`src/prompt/compact.ts`, tier 3b) and `caveman-shrink` as P3b
+(`src/tools/ext-shrink.ts`, bench mode `ext-caveman-shrink`, run through
+`golem bench tools`).
 
 ## `golem pkg`
 
-The surface was named `golem ext` when Decision 53 landed; R10.1 renamed the module
-to `src/pkg/` and the command to `golem pkg`, keeping `ext` as an alias.
+The surface was named `golem ext` when Decision 53 landed; R9.23
+(commit `6865594`, which also added `src/pkg/manifest.ts`) renamed the command to
+`golem pkg` and the module to `src/pkg/`. It is not R10.1, and there is no `ext` alias:
+the old `.command("ext")` was deleted outright.
 
 ```
 golem pkg                       # list every row: tier, installed?, on?, what breaks without it

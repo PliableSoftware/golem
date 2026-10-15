@@ -20,9 +20,27 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { GolemMcpServerDeps } from "./deps.js";
 import { createGolemMcpServer } from "./server.js";
 
-/** Connect the server to stdio and keep serving until the transport closes. */
-export async function serveStdio(deps: GolemMcpServerDeps): Promise<void> {
+/**
+ * Connect the server to stdio and keep serving until the transport closes.
+ *
+ * `onClose` fires once when the client is gone: the transport closed, or stdin
+ * reached EOF/closed (the SDK's stdio transport does not treat EOF as a close, so
+ * without this a disconnected client leaves the process alive on any pending
+ * background work).
+ */
+export async function serveStdio(deps: GolemMcpServerDeps, onClose?: () => void): Promise<void> {
   const server = createGolemMcpServer(deps);
+  if (onClose !== undefined) {
+    let fired = false;
+    const once = (): void => {
+      if (fired) return;
+      fired = true;
+      onClose();
+    };
+    server.server.onclose = once;
+    process.stdin.once("end", once);
+    process.stdin.once("close", once);
+  }
   await server.connect(new StdioServerTransport());
 }
 

@@ -191,9 +191,20 @@ async function writeServed(
   ctx: ServeContext,
   source: ServeSource,
   age?: string,
+  retain = true,
 ): Promise<void> {
   let served: string;
-  if (content.length > MAX_SERVED_CHARS) {
+  if (content.length > MAX_SERVED_CHARS && !retain) {
+    // DUST2.13: the response said not to store this page (no-store / private /
+    // no-cache / Set-Cookie / credentialed URL), so NOTHING is written to disk —
+    // not the web cache, the KB, nor a CCR copy. The model gets the head only,
+    // and is told why there is no `expand` handle.
+    served =
+      `${content.slice(0, MAX_SERVED_CHARS)}\n\n[Golem: page truncated for inline display ` +
+      `(${content.length} chars total). The full text is not retained: the response was ` +
+      "marked uncacheable (no-store / private / no-cache / Set-Cookie / credentials), so there " +
+      "is no `expand` handle. Fetch the URL again if more is needed.]";
+  } else if (content.length > MAX_SERVED_CHARS) {
     const truncated = content.slice(0, MAX_SERVED_CHARS);
     // Stash the full page as a CCR ref so the whole thing is retrievable in one
     // `expand` call — not a vague "go search the KB" hint. Falls back to that
@@ -295,14 +306,20 @@ export async function serveFetched(
   url: string,
   content: string,
   ctx: ServeContext,
+  /** False for an uncacheable response: nothing may be persisted, CCR included. */
+  retain = true,
 ): Promise<void> {
   await writeServed(
     io,
     projectDir,
     url,
     content,
-    "Golem fetched this page directly and served its raw content (skipping WebFetch's summarizer, so the text is prompt-independent and now cached).",
+    retain
+      ? "Golem fetched this page directly and served its raw content (skipping WebFetch's summarizer, so the text is prompt-independent and now cached)."
+      : "Golem fetched this page directly and served its raw content (skipping WebFetch's summarizer). The response was marked uncacheable, so it was not stored.",
     ctx,
     "miss",
+    undefined,
+    retain,
   );
 }

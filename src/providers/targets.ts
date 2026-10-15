@@ -5,11 +5,11 @@
  * that a local model is an ordinary target whose provider is `ollama` — "optional
  * local coder" stops being a special case.
  *
- * The registry deliberately splits two concerns that `proxy.accounts` fused:
+ * The registry deliberately splits two concerns that `proxy.gateways` fused:
  *
  * | registry | answers | secrets? |
  * |---|---|---|
- * | `proxy.accounts` | *whose credential* — id → provider + OS-keychain reference | reference only |
+ * | `proxy.gateways` | *whose credential* — id → provider + OS-keychain reference | reference only |
  * | `proxy.targets`  | *which endpoint + model* — id → provider, base_url, model, `account` ref, `trust` | **none** |
  *
  * Several targets may reference one account (one OpenRouter key backing five
@@ -19,10 +19,9 @@
  * deliberately no `key`/`api_key` field here; adding one would reintroduce
  * plaintext-secrets-as-settings, which ADR-0003 invariant 1 forbids outright.
  *
- * **This module is inert in R9.1.** Nothing routes on it yet: the proxy still
- * serves one upstream (R9.2 consumes the registry, R9.3 gives `coder` a target).
- * It is configuration and reporting only, which is what makes it safe to land
- * alone.
+ * **The registry has routed since R9.2** (the proxy consumes it) and R9.3 gave
+ * `coder` a target. This module itself stays configuration and reporting only:
+ * the routing lives in the proxy.
  *
  * Fail-closed, in the same spirit as `resolveActiveUpstream`: an unknown id
  * resolves to *nothing*, never to a different target. A routing layer that
@@ -105,8 +104,6 @@ export interface ResolvedTarget {
   readonly provider: UpstreamProvider;
   readonly baseUrl: string;
   readonly model: string | undefined;
-  /** Optional context size in tokens (e.g., 262144). */
-  readonly contextSize?: number;
   readonly authScheme: UpstreamAuthScheme;
   readonly trust: TargetTrust;
   /**
@@ -185,20 +182,6 @@ function lookupGateway(
   id: string,
 ): GatewayEntry | undefined {
   return gateways?.find((g) => g.id === id);
-}
-
-/**
- * Find targets by model name across all gateways. Case-insensitive substring
- * match (e.g. `"qwen3"` matches `"qwen/qwen3.7-flash"` and
- * `"qwen/qwen3-14b"`). Returns all matching targets, or empty array.
- */
-export function resolveModel(
-  settings: TargetRegistrySettings,
-  name: string,
-): readonly ResolvedTarget[] {
-  const targets = listTargets(settings);
-  const lower = name.toLowerCase();
-  return targets.filter((t) => t.model?.toLowerCase().includes(lower) === true);
 }
 
 /**
@@ -298,11 +281,12 @@ export function listTargets(settings: TargetRegistrySettings): readonly Resolved
  * key and the rename is handled in exactly one place.
  *
  * R9.23: `model` may reference a gateway id (e.g. `"openrouter"`) rather
- * than a full compound target id (e.g. `"openrouter:qwen/qwen3-14b"`). It may
- * also be a bare model name (e.g. `"qwen3"`) which is resolved via
- * {@link resolveModel}. When the selector does not match any target id directly,
- * it is resolved to the first target derived from that gateway. This preserves
- * backward compatibility for settings files that name a gateway.
+ * than a full compound target id (e.g. `"openrouter:qwen/qwen3-14b"`). When the
+ * selector does not match any target id directly, it is resolved to the first
+ * target derived from that gateway. A bare model name is NOT resolved here: a
+ * value that matches neither a target id nor a gateway id is returned unchanged
+ * and fails closed at {@link resolveTarget}. This preserves backward
+ * compatibility for settings files that name a gateway.
  */
 export function resolveDefaultTargetId(settings: TargetRegistrySettings): string {
   const raw = settings.model ?? defaultTargetId(settings.upstream_provider);

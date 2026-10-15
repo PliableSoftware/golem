@@ -1,0 +1,49 @@
+---
+task: DUST2.12
+title: Plan-task tooling: never drop an unparseable doc silently, `golem task resume` for plan tasks, worktree capture
+state: done
+owner: agent
+size: M
+discipline: code
+design: wiki Plan Tasks; spec Decisions 38, 55; SUMMARY.md Gaps 1.7/r025 (P), r027 (P), r029 (N); hygiene :760-762
+gate: `golem task list`/`index` report every doc they cannot parse (path + reason) instead of skipping it; `golem task resume <plan-id>` works for plan-scope tasks; a parked task records its git worktree; tests for each. golem verify green by exit code.
+depends_on: []
+touches: [src/tasks, src/cli/commands, tests]
+created: 2026-10-08
+updated: 2026-10-15T06:12:36.693Z
+---
+
+## What this is
+
+Roadmap gap. `PlanTaskStore.list()` skips docs it cannot parse, which hid four task docs
+(including open bug R8.29) from ROADMAP (DUST1.7 row 25). Resume and worktree capture are
+partial/not started (rows 27, 29).
+
+## The work
+
+1. r025: surface parse failures (warning in `list`, non-zero or loud in `index --write`).
+2. r027: plan-scope resume semantics — define what "resume" means for a committed doc.
+3. r029: capture `git worktree` path/branch on park; show it on resume.
+
+## Out of scope
+
+- H2 `blocked` state vs metadata (open, USER). Fixing the four XS docs (DUST2.9).
+
+## Implementation notes (2026-10-09)
+
+Decisions taken on the safe reading; revisit any of them freely.
+
+- **Exit codes.** `index` (all modes) exits 1 when any doc is unparseable, but still writes
+  the readable index plus a visible "Unparseable" section in ROADMAP. `list` exits 0 (a read
+  view) and prints the block; `--json` keeps its bare array and warns on stderr.
+- **Plan resume = fresh session from the brief**, never `--continue`. It does not write the
+  committed doc (no `running`/attempts), refuses `owner: user`, refuses `--spawn` when
+  blocked or waiting on an unfinished dependency. `blocked` stays metadata.
+- **Worktree capture** applies to local tasks (`task add`, snooze park note), not plan docs.
+  Schema gained optional `branch`. `resume --spawn` launches with `cwd` = the recorded
+  worktree when it still exists.
+- Not done: capturing the worktree in other park paths (none found besides these two).
+
+## Outcome
+
+shipped in #302

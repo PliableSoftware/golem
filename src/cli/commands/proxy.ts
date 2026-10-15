@@ -3,7 +3,8 @@
  *
  * R9.23: the daemon is always running once `golem init` finishes. `golem on`
  * and `golem off` set the master switch — no restart, no wire changes, no dead
- * sockets. `golem proxy` shows status; all other proxy subcommands are removed.
+ * sockets. `golem proxy` shows status; `golem proxy start|stop|restart|wire|unwire` manage the
+ * daemon and its Claude Code wiring.
  *
  * R11.3: WHAT the switch does lives in `pipeline-switch.ts`, because it is no
  * longer one admin POST — it persists `proxy.bypass_all` and then applies the
@@ -16,7 +17,7 @@ import {
   reapOrphanedHeadroomWorkers,
   stopAllHeadroomWorkers,
 } from "../../compression/headroom-adapter.js";
-import { findProjectDir, loadConfig, migrateOnVersionChange } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig, migrateOnVersionChange } from "../../config/index.js";
 import { VERSION } from "../../index.js";
 import {
   createProbeRunner,
@@ -27,11 +28,11 @@ import {
 } from "../../inference/index.js";
 import type { InferenceService } from "../../interfaces/inference.js";
 import { initPlugins } from "../../plugins/index.js";
-import { loadConfigWithTeamLayer } from "../../portal/team-layer.js";
 import { resolveUpstreamDisplay } from "../../providers/index.js";
 import { ensureLoopbackCert } from "../../proxy/loopback-cert.js";
 import { startLoopbackServe } from "../../proxy/loopback-serve.js";
 import { proxyLog } from "../../shared/proxy-log.js";
+import { flushBounded } from "../../shared/selection-log.js";
 import { loadModelCatalog, modelAcceptsImages, openTelemetryStore } from "../../telemetry/index.js";
 import { planQueryEmbedder, resolvePersistedEmbedder } from "../auto-index.js";
 import { ollamaHasModel } from "../build-knowledge.js";
@@ -73,7 +74,7 @@ async function resolvePort(
   dir: string,
   portOpt?: string,
 ): Promise<{ port: number; upstream: string; compression: string }> {
-  const { settings } = await loadConfig({ projectDir: dir });
+  const { settings } = await loadEffectiveConfig({ projectDir: dir });
   const port = portOpt === undefined ? settings.proxy.port : Number(portOpt);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new InitError(`invalid port "${portOpt}"`);
@@ -116,10 +117,28 @@ export async function restartProxyDetached(
 }
 
 /**
- * The SessionStart hook's auto-recovery: read the URL from the project's `.claude`
- * settings (either file — local shadows committed).
- * If it points at Golem's port and nothing is listening, restart the daemon.
- * Also defined here so `golem on` can share the same recovery path.
+ * The pipeline line of `golem proxy status` for a normal (non-shim) daemon.
+ * `proxy.bypass_all` runs a normal daemon with the pipeline disabled, so the
+ * process looks identical to a healthy one; the setting is the only evidence,
+ * and redaction is off with it (ADR-0004), so say so loudly (DUST3.4 S12).
+ */
+export function renderPipelineLine(bypassAll: boolean): string {
+  if (bypassAll) {
+    return (
+      "  ⚠ proxy.bypass_all is ON: the pipeline is OFF and REDACTION IS OFF — requests are forwarded raw,\n" +
+      "    secrets and PII reach the upstream unredacted (a daemon started before the setting changed\n" +
+      "    keeps redacting until `golem proxy restart`). `golem on` turns it back on.\n"
+    );
+  }
+  // R9.23: pipeline state is an in-process toggle, not a separate binary.
+  return "  Pipeline is active. Run `golem off` to disable (pass-through); `golem on` to re-enable.\n";
+}
+
+/**
+ * Start the daemon if nothing is listening on `port` (shared by `golem on` and
+ * `golem off`). The SessionStart hook does NOT call this: `hook session-start` in
+ * `prompt-guidance.ts` carries its own recovery, which also honours the recorded
+ * desired state (`bypass` / `stopped`).
  */
 export async function ensureProxyRunning(
   dir: string,
@@ -184,15 +203,16 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
   // `team-layer-fetch`: the proxy runs under its project's TEAM policy, not just
   // its local files. Cache-only (no socket, no keychain) and unable to fail, so
   // this cannot stop the proxy starting — Decision 64(f) — and an unlinked
-  // project resolves byte-identically to a plain `loadConfig`. The team notice
+  // project resolves byte-identically to a plain `loadEffectiveConfig`. The team notice
   // is logged with the warnings because a proxy silently running WITHOUT the
   // team policy someone believes is in force is the hazard the whole design is
   // built around; the REFUSED lines for any denied key arrive in `warnings`.
-  const { settings, warnings, team } = await loadConfigWithTeamLayer({ projectDir: dir });
+  const { settings, warnings, team } = await loadEffectiveConfig({ projectDir: dir });
   for (const warning of warnings) {
     proxyLog(warning);
   }
-  if (team.notice !== undefined) {
+  // A notice for a team that is NOT applied is already in `warnings`.
+  if (team.teamLayer !== undefined && team.notice !== undefined) {
     proxyLog(`golem team: ${team.notice}`);
   }
   const { port } = await resolvePort(dir, portOpt);
@@ -211,7 +231,7 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
   // (`startDetached` sets the marker alongside the credentials). The injection
   // below is `??=`, so a second resolution's results were discarded anyway — it
   // was pure duplicated cost, and at the measured 6668ms it was most of an ~18s
-  // restart. A hand-run `golem proxy run` has no marker and resolves normally.
+  // restart. A hand-run `golem proxy start` has no marker and resolves normally.
   if (process.env[CREDENTIALS_INJECTED_ENV] === undefined) {
     for (const [name, secret] of Object.entries(await credentialEnvForProxy(dir))) {
       process.env[name] ??= secret;
@@ -305,17 +325,22 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
     projectDir: dir,
     golemVersion: VERSION,
   });
-  const { proxy, semantic, upstream } = buildProxyFromSettings(dir, settings, telemetry, {
-    visionOf,
-    ...(plugins.plugins.length > 0 ? { plugins } : {}),
-    // R11.1: the daemon loaded its settings from disk, so re-reading the dials on
-    // a live request is the same question asked again — and it is what makes
-    // `golem compression 2` take effect without a restart.
-    reloadDials: true,
-    ...(shim ? { shim: true } : {}),
-    ...(localAnswerInference !== undefined ? { inference: localAnswerInference } : {}),
-    ...(suppressLocalAnswer ? { suppressLocalAnswer: true } : {}),
-  });
+  const { proxy, semantic, upstream, flushSelectionLog } = buildProxyFromSettings(
+    dir,
+    settings,
+    telemetry,
+    {
+      visionOf,
+      ...(plugins.plugins.length > 0 ? { plugins } : {}),
+      // R11.1: the daemon loaded its settings from disk, so re-reading the dials on
+      // a live request is the same question asked again — and it is what makes
+      // `golem compression 2` take effect without a restart.
+      reloadDials: true,
+      ...(shim ? { shim: true } : {}),
+      ...(localAnswerInference !== undefined ? { inference: localAnswerInference } : {}),
+      ...(suppressLocalAnswer ? { suppressLocalAnswer: true } : {}),
+    },
+  );
   if (semantic !== undefined) {
     proxyLog("Headroom semantic sidecar enabled (compression.level ≥2, opt-in, fail-open)");
   }
@@ -396,6 +421,8 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
     personaWatcher.close();
     void Promise.allSettled([
       proxy.close(),
+      // DUST2.17: queued selection lines must not die with the process; bounded.
+      flushBounded(flushSelectionLog, 500),
       telemetry.close(),
       removeProxyPid(dir),
       ...(loopback === null ? [] : [loopback.close()]),
@@ -407,8 +434,9 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
 
 export default function register(program: Command): void {
   // `golem on` / `golem off` — the master switch. R11.3: both PERSIST
-  // `proxy.bypass_all` and then apply it live, so the state survives a restart
-  // and every status surface can see it (see pipeline-switch.ts).
+  // `proxy.bypass_all`, so the state survives a restart and every status surface
+  // can see it; a running proxy takes it on `golem proxy restart` (DUSTSEC.2
+  // removed the live admin endpoint — see pipeline-switch.ts).
   program
     .command("on")
     .description("Enable the proxy pipeline (redaction, compression, brevity) — persists")
@@ -463,6 +491,8 @@ export default function register(program: Command): void {
           process.stdout.write(
             `${JSON.stringify({
               ...st,
+              bypass_all: (await loadEffectiveConfig({ projectDir: opts.dir })).settings.proxy
+                .bypass_all,
               upstream,
               wiring: wiring.owner,
               wiring_base_url: wiring.baseUrl,
@@ -492,10 +522,8 @@ export default function register(program: Command): void {
         process.stdout.write(
           `golem proxy: running (pid ${st.pid ?? "?"}) on port ${st.port ?? port} -> ${upstream}\n`,
         );
-        // R9.23: pipeline state is an in-process toggle, not a separate binary.
-        process.stdout.write(
-          "  Pipeline is active. Run `golem off` to disable (pass-through); `golem on` to re-enable.\n",
-        );
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
+        process.stdout.write(renderPipelineLine(settings.proxy.bypass_all));
         const gap = wiringGap(wiring, ourBaseUrl);
         if (gap !== null) {
           process.stdout.write(

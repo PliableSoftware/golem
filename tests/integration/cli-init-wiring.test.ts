@@ -120,7 +120,8 @@ describe("golem init", () => {
     });
     // defaultMode = "default" so project allow-rules (Bash(golem:*), mcp__golem)
     // are authoritative instead of "auto" mode's separate background check.
-    expect(cs.defaultMode).toBe("default");
+    expect((cs.permissions as Record<string, unknown>).defaultMode).toBe("default");
+    expect(cs.defaultMode).toBeUndefined();
     // fallbackModel = ["sonnet"]: a cheap first-line mitigation so a contributor
     // without access to a persona subagent's pinned model (e.g. claude-opus-5)
     // doesn't fail outright dispatching it — see GOLEM_FALLBACK_MODEL. An ARRAY,
@@ -138,9 +139,8 @@ describe("golem init", () => {
     expect(cmds("SessionStart")).toContain("golem hook session-start");
     // PreToolUse: snooze document-and-hold nudge + autonomy gate (snooze P2b).
     expect(cmds("PreToolUse")).toContain("golem hook pre-tool-use");
-    // PermissionRequest: the gate's second, earlier half — R12.12. Wired by the
-    // same init step as its PreToolUse sibling, so a project can never end up
-    // with the `ask` and not the `deny`.
+    // PermissionRequest: inert since DUSTSEC.10 (no decision), still wired by the
+    // same init step as its PreToolUse sibling so existing installs resolve it.
     expect(cmds("PermissionRequest")).toContain("golem hook permission-request");
   });
 
@@ -159,19 +159,26 @@ describe("golem init", () => {
     await mkdir(path.join(projectDir, ".claude"), { recursive: true });
     await writeFile(
       path.join(projectDir, ".claude", "settings.json"),
-      JSON.stringify({ defaultMode: "acceptEdits" }),
+      JSON.stringify({ permissions: { defaultMode: "acceptEdits" } }),
       "utf8",
     );
 
     await golemInit({ projectDir, probe: okProbe });
-    expect((await readJson(CLAUDE_COMMITTED)).defaultMode).toBe("acceptEdits");
+    expect(
+      ((await readJson(CLAUDE_COMMITTED)).permissions as Record<string, unknown>).defaultMode,
+    ).toBe("acceptEdits");
     // …and not SHADOWED either: writing our mode into the local file, which
     // outranks the committed one, would end the user's choice without touching a
     // byte of the file that states it.
-    expect((await readJson(CLAUDE_TARGET)).defaultMode).toBeUndefined();
+    expect(
+      ((await readJson(CLAUDE_TARGET)).permissions as Record<string, unknown> | undefined)
+        ?.defaultMode,
+    ).toBeUndefined();
 
     await golemUninit({ projectDir, probe: okProbe });
-    expect((await readJson(CLAUDE_COMMITTED)).defaultMode).toBe("acceptEdits");
+    expect(
+      ((await readJson(CLAUDE_COMMITTED)).permissions as Record<string, unknown>).defaultMode,
+    ).toBe("acceptEdits");
   });
 
   it("never clobbers a NODE_EXTRA_CA_CERTS that someone else owns (§121-C)", async () => {
@@ -349,7 +356,7 @@ describe("golem init", () => {
     const perms = settings.permissions as { allow?: string[]; ask?: string[] };
     // All Golem tools auto-approved via the anchored wildcard rule. wiki_upsert is
     // NOT held on `ask` (USER decision 2026-07-30): Decision 44 un-gated wiki
-    // authoring because git makes every write reviewable, and an `ask` rule prompts
+    // authoring because wiki writes are reviewable once committed, and an `ask` rule prompts
     // even when an `allow` rule also matches (deny → ask → allow precedence), so
     // leaving one here would have silently kept the gate.
     expect(perms.allow).toContain("mcp__golem__*");
@@ -415,7 +422,7 @@ describe("golem init", () => {
     );
     expect((local.permissions as { allow?: string[] }).allow).toContain("mcp__golem__*");
     expect(local.statusLine).toBeDefined();
-    expect(local.defaultMode).toBe("default");
+    expect((local.permissions as { defaultMode?: string }).defaultMode).toBe("default");
     expect(local.fallbackModel).toEqual(["sonnet"]);
     expect(Object.keys(local.hooks as Record<string, unknown>)).toContain("PostToolUse");
 

@@ -1,5 +1,6 @@
 /**
- * golem session — session tree view (R8.S3), plus `forget` over the R13.2
+ * golem session — session tree view (R8.S3), the `host` / `pending` / `drop`
+ * device-message commands, plus `forget` over the R13.2
  * local conversation store (redacted transcripts, ADR-0007 §6). The two
  * stores are separate (hashes-only tree vs. redacted-content store) — see
  * `src/session/session-tree.ts` and `src/session/conversation-store.ts`'s
@@ -71,8 +72,8 @@ export default function register(program: Command): void {
       try {
         // Same commander `--dir` quirk documented on `forget` below.
         const dir = command.parent?.opts<{ dir: string }>().dir ?? opts.dir;
-        const { loadConfig } = await import("../../config/index.js");
-        const { settings } = await loadConfig({ projectDir: dir });
+        const { loadEffectiveConfig } = await import("../../config/index.js");
+        const { settings } = await loadEffectiveConfig({ projectDir: dir });
         const queue = new FileJoinQueue({ projectDir: dir });
         const [messages, conversations] = await Promise.all([
           queue.list(),

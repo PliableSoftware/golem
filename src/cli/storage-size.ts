@@ -11,6 +11,7 @@
 import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
+import { resolveWorktreeRoot } from "../shared/git-worktree.js";
 
 /** The four gitignored zone-1 stores under `<project>/.golem/`. */
 export interface GolemStorageSizes {
@@ -53,8 +54,12 @@ export async function dirSizeBytes(dir: string): Promise<number> {
 /** Sizes of the four `.golem/` stores, measured in parallel. Never throws. */
 export async function golemStorageSizes(projectDir: string): Promise<GolemStorageSizes> {
   const base = path.join(projectDir, ".golem");
+  // The CCR store lives under the MAIN checkout's `.golem/ccr` even when run
+  // from a linked worktree (NativeLosslessCompression.forProjectDir); size the
+  // directory it actually writes to.
+  const ccrDir = path.join(resolveWorktreeRoot(projectDir), ".golem", "ccr");
   const [ccr, knowledge, telemetry, webcache] = await Promise.all([
-    dirSizeBytes(path.join(base, "ccr")),
+    dirSizeBytes(ccrDir),
     dirSizeBytes(path.join(base, "knowledge")),
     dirSizeBytes(path.join(base, "telemetry")),
     dirSizeBytes(path.join(base, "webcache")),

@@ -54,6 +54,8 @@ function known(v: boolean | null, yes: string, no: string, unknown = "unknown"):
 
 export interface WatchRenderOptions {
   readonly color?: boolean;
+  /** Redraw cadence shown in the footer; defaults to {@link WATCH_REFRESH_MS}. */
+  readonly refreshMs?: number;
 }
 
 /**
@@ -76,8 +78,10 @@ export function renderWatchFrame(
   const s = report.savings;
 
   // Header.
-  const proxyOn = report.proxy.running !== false;
-  L.push(`${proxyOn ? green("⬢") : dim("⬡")} ${bold("Golem watch")}   ${dim(report.project_dir)}`);
+  // Unknown liveness gets its own glyph: a null state must not read as running.
+  const glyph =
+    report.proxy.running === null ? yellow("◌") : report.proxy.running ? green("⬢") : dim("⬡");
+  L.push(`${glyph} ${bold("Golem watch")}   ${dim(report.project_dir)}`);
   L.push(dim("─".repeat(52)));
 
   // Liveness row.
@@ -89,8 +93,11 @@ export function renderWatchFrame(
         : red("proxy OFF");
   L.push(`${proxyText}  ${cyan(`→${report.proxy.upstream}`)}`);
   L.push(
-    `compression ${cyan(`${report.compression.level} ${report.compression.name}`)}   ` +
-      `local model ${known(report.local_model.reachable, green("reachable"), dim("down"))}`,
+    `compression ${cyan(
+      report.compression.level === report.compression.name
+        ? report.compression.level
+        : `${report.compression.level} ${report.compression.name}`,
+    )}   ` + `local model ${known(report.local_model.reachable, green("reachable"), dim("down"))}`,
   );
 
   // Autonomy level (R5.4) — warn when Golem is auto-approving.
@@ -112,11 +119,11 @@ export function renderWatchFrame(
   if (s.tokens_before > 0 && s.tokens_after <= s.tokens_before) {
     const pct = Math.round(((s.tokens_before - s.tokens_after) / s.tokens_before) * 100);
     L.push(
-      `  ${green(`saved ${pct}%`)}  ${s.tokens_before} → ${s.tokens_after}  ` +
-        dim(`(${s.requests} request(s))`),
+      `  ${green(`est. saved ${pct}%`)}  ${s.tokens_before} → ${s.tokens_after}  ` +
+        dim(`(${s.requests} rewritten request(s); token counts are estimates)`),
     );
   } else {
-    L.push(dim("  no savings recorded yet"));
+    L.push(dim("  no net savings recorded yet"));
   }
   L.push(`  CCR refs: ${s.ccr_refs_stored} stored / ${s.ccr_refs_retrieved} retrieved`);
 
@@ -156,7 +163,7 @@ export function renderWatchFrame(
   L.push("");
   L.push(
     dim(
-      `updated ${report.generated_at} · refreshes every ${WATCH_REFRESH_MS / 1000}s · Ctrl+C to exit`,
+      `updated ${report.generated_at} · refreshes every ${(opts.refreshMs ?? WATCH_REFRESH_MS) / 1000}s · Ctrl+C to exit`,
     ),
   );
 
@@ -182,14 +189,16 @@ export async function runWatch(options: RunWatchOptions): Promise<void> {
   const out = options.out ?? process.stdout;
   const refreshMs = options.refreshMs ?? WATCH_REFRESH_MS;
   const collect = options.collect ?? collectSessionStateReport;
-  const color = options.color ?? (process.stdout.isTTY === true && !process.env.NO_COLOR);
+  // Colour only on a TTY with NO_COLOR unset, judged on the stream we draw to.
+  const color =
+    options.color ?? ((out as { isTTY?: boolean }).isTTY === true && !process.env.NO_COLOR);
 
   out.write(ALT_SCREEN_ON + HIDE_CURSOR);
   let stopped = false;
   let timer: NodeJS.Timeout | undefined;
 
   const restore = (): void => {
-    if (timer !== undefined) clearInterval(timer);
+    if (timer !== undefined) clearTimeout(timer);
     out.write(SHOW_CURSOR + ALT_SCREEN_OFF);
   };
 
@@ -197,7 +206,7 @@ export async function runWatch(options: RunWatchOptions): Promise<void> {
     if (stopped) return;
     try {
       const report = await collect(options.dir);
-      out.write(renderWatchFrame(report, { color }));
+      out.write(renderWatchFrame(report, { color, refreshMs }));
     } catch (err) {
       // A single failed poll must not kill the loop; show it and keep going.
       out.write(
@@ -218,6 +227,14 @@ export async function runWatch(options: RunWatchOptions): Promise<void> {
     };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
-    timer = setInterval(() => void draw(), refreshMs);
+    // Chained, not setInterval: the next poll is scheduled only after the
+    // previous frame is written, so a slow collector cannot overlap frames.
+    const schedule = (): void => {
+      if (stopped) return;
+      timer = setTimeout(() => {
+        void draw().finally(schedule);
+      }, refreshMs);
+    };
+    schedule();
   });
 }

@@ -242,3 +242,53 @@ Related: [[ADR-0002 — Cruise-control autonomy modes & approval gates]] (the
 fail-closed / audit-log / no-tool-surface precedent this inherits), R6.1 case (a)
 auth-mapping (the single-credential path this generalizes),
 `docs/plan/proposals/r6-multi-provider-remote-memos.md` (the R6.2 memo).
+
+## Amendment — invariants 1 and 4, and the account selector (2026-10-08, DUST2.3)
+
+**Amended 2026-10-08 (DUST2.3; DECISIONS.md R10; SUMMARY rows 1.2/r020, 1.2/r021,
+1.2/r034).** The text above is unchanged and is history. Three statements in it
+no longer match shipped code.
+
+**Invariant 4 is narrowed (USER decision R10).** "No tool can read/write
+credentials … no MCP surface … selects an account" is replaced by:
+
+> **Keys never enter model context or tool output.** No tool result, prompt,
+> log line or MCP response carries a credential value.
+
+What is no longer true, and is not claimed:
+
+- The MCP server process reads the credential store. `golem mcp serve` resolves
+  stored keys through `credentialEnvForProxy` (`src/cli/commands/mcp-serve.ts:41,53-78`)
+  so `coder`'s remote dispatch is authenticated, and imports
+  `src/credentials/backends.js` directly (`:8`). The secrets land in a closure,
+  never in `process.env`, so nothing the server spawns inherits them.
+- `src/credentials/` is not CLI-only. Besides the CLI it is imported by
+  `src/buzz/`, `src/portal/` and `src/cli/` modules (`src/buzz/identity.ts`,
+  `src/portal/tokens.ts`, `src/cli/targets.ts`, among others). The comment at
+  `src/credentials/index.ts:12-13` repeats the stale invariant and is a
+  code-comment fix, not an ADR one.
+- The model can choose a target, and with it a gateway credential, through
+  `coder`'s `target` argument (`src/mcp/coder-tools.ts:134-156`). **This stays**
+  (Decisions 27 and 35; R9.3), bounded to targets the config declares and by
+  `agent_selectable` (`src/providers/targets.ts:70-92`). The selection never
+  reveals the key.
+
+**Invariant 1 has a hole for Gemini.** "No credential value on … any
+redaction-eligible surface" is violated in memory by the Gemini adapter: its
+auth is a `?key=` query parameter, so the secret is part of
+`translateUpstream.path`, which is carried on the `ProxyRoute`
+(`src/cli/route-resolver.ts:108-125`; `src/providers/gemini-translate.ts:190-195`).
+The comment at `route-resolver.ts:23-25` ("no key is ever placed on a
+`ProxyRoute`") is false for Gemini. UNVERIFIED here: that no log line prints it.
+The DUST1.2 audit found none (`src/proxy/server.ts` only uses the path as the
+request path) and this amendment did not re-trace every log site. Invariant 1 as
+written is not met for that provider; no code change is made by this amendment.
+
+**The account selector is `inference.model`, and the commands are `gateway`.**
+The `account` to `gateway` rename (R9.23) never reached this ADR. The CLI is
+`golem gateway …` (`src/cli/commands/gateway.ts:35`) and takes `--models`
+(`:145`). Switching writes the non-secret selector `inference.model` at local
+scope (`src/cli/gateways.ts:143`), which accepts a gateway id, a target id or the
+default id, not only an account. Read "account" above as "gateway" and "account
+use" as "gateway use". The selector is still non-secret, so the intent of Scope
+IN stands.

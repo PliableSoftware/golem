@@ -94,7 +94,7 @@ export interface LspBridgeOptions {
   /**
    * Seam for tests and for an explicitly-pathed server: resolve a command name
    * to an absolute path, or `null` when it is not installed. Defaults to the
-   * spawn-free `PATH`/`PATHEXT` walk the rest of `src/ext/` uses.
+   * spawn-free `PATH`/`PATHEXT` walk the rest of `src/pkg/` uses.
    */
   readonly resolveCommand?: (command: string) => string | null;
 }

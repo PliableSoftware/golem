@@ -2,15 +2,18 @@
  * WS-E E2 — `golem init` / `golem uninit` engine.
  *
  * Wires an existing Claude Code project to Golem, idempotently:
- *   1. `.claude/settings.json`  — Claude Code → local proxy + ENABLE_TOOL_SEARCH.
+ *   1. `.claude/settings.local.json` by default (`claude.settings_scope`; `project`
+ *      selects `.claude/settings.json`) — Claude Code → local proxy +
+ *      ENABLE_TOOL_SEARCH.
  *      Direct Anthropic uses `ANTHROPIC_BASE_URL`; `foundry` uses the Foundry env
  *      (`CLAUDE_CODE_USE_FOUNDRY` + `ANTHROPIC_FOUNDRY_BASE_URL=<proxy>/anthropic`).
  *   1b. `.golem/settings.local.json` — proxy `upstream_base_url` when fronting a
  *      Foundry/generic gateway (Decision 22).
  *   2. `.mcp.json`              — stdio registration of `golem mcp serve` (§9).
- *   3. `.claude/skills/golem/<cmd>/SKILL.md` — namespaced `/golem/*` skills (§11).
- *   4. `.golem/settings.json`   — created with defaults when absent.
- *   5. PostToolUse CCR hook + Golem guidance (in the committed CLAUDE.md);
+ *   3. `.claude/skills/golem-<cmd>/SKILL.md` — flat `/golem-<cmd>` skills (§11).
+ *   4. `.golem/settings.json`   — created as an empty `{}` marker when absent.
+ *   5. PostToolUse CCR hook + Golem guidance (rule files under `.claude/rules/`;
+ *      CLAUDE.md is left untouched);
  *      status line + blocked-state hooks; WebFetch KB-cache hooks;
  *      `.gitignore`'s deny-by-default `.golem/` block (init-hooks.ts) —
  *      everything under `.golem/` is machine-local except settings.json and
@@ -32,12 +35,13 @@
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { loadConfig, removeVersionStamp, writeSetting } from "../config/index.js";
+import { loadEffectiveConfig, removeVersionStamp, writeSetting } from "../config/index.js";
 import { defaultUserDir } from "../config/paths.js";
 import { createCredentialStore } from "../credentials/index.js";
 import type { CompressionLevel } from "../interfaces/index.js";
 import {
   createPortalClient,
+  describeTeamOutcome,
   discoverAuthorizationServer,
   type PortalSettings,
   portalTokenPresent,
@@ -66,7 +70,7 @@ import {
   removeSkills,
   skillDirName,
 } from "./init-skills.js";
-import { teamInitStep } from "./init-team.js";
+import { type TeamInitSyncResult, teamInitStep } from "./init-team.js";
 import {
   ensureVscodeWatcherExclude,
   installVscodeExtension,
@@ -166,6 +170,11 @@ export interface InitOptions {
    * (red) tool calls — the behaviour R9.7 shipped — instead of green.
    */
   readonly noLoopbackCert?: boolean;
+  /**
+   * Skills to re-create even though the project deleted them (`"all"` or command
+   * names). Without this a deleted skill stays deleted.
+   */
+  readonly restoreSkills?: readonly string[];
   /**
    * Which `.claude` settings file to write: `local`
    * (`.claude/settings.local.json`, gitignored) or `project`
@@ -267,7 +276,7 @@ export interface InitStatus {
   readonly claudeSettingsWired: boolean;
   /** `.mcp.json` registers the golem MCP server with init's stdio entry. */
   readonly mcpRegistered: boolean;
-  /** Every P0 skill file exists under `.claude/skills/golem/`. */
+  /** Every P0 skill file exists under `.claude/skills/golem-<cmd>/`. */
   readonly skillsInstalled: boolean;
   /** `<project>/.golem/settings.json` exists (created by init when absent). */
   readonly golemSettingsPresent: boolean;
@@ -416,7 +425,7 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
   }
 
   // 3. Skills: .claude/skills/golem-<cmd>/SKILL.md -> /golem-<cmd>.
-  actions.push(...(await installSkills(projectDir, dryRun)));
+  actions.push(...(await installSkills(projectDir, dryRun, options.restoreSkills ?? [])));
   // 3a. Retire the pre-2026-09-04 nested `.claude/skills/golem/<cmd>/` layout.
   // Those files were never DISCOVERABLE — Claude Code reads one level, so
   // `golem/` was checked for a SKILL.md that was not there and the namespace was
@@ -428,14 +437,14 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
   // (`/golem-slider` outlived R11.1 by a release). Provenance-guarded: an
   // edited skill is reported, never deleted.
   actions.push(...(await pruneRetiredSkills(projectDir, dryRun)));
-  // 3c. R13.12 — the `golem-coder` subagent, when `inference.default_coder` names
-  // a MODEL rather than a registry target. This is the whole delivery mechanism
+  // 3c. R13.12 — the `golem-coder` subagent, when `inference.personas.<id>.model`
+  // names a MODEL rather than a registry target. This is the whole delivery mechanism
   // for a harness-run coder: an MCP server cannot invoke its client's tools, so
   // Golem cannot spawn a subagent — what it can do is write the definition so the
   // delegation is native.
   //
-  // Also REMOVES a stale definition when `default_coder` changes to a target or
-  // is unset. An install-only step would leave a file naming a model the config
+  // Also REMOVES a stale definition when `inference.personas.<id>.model` changes to a target
+  // or is unset. An install-only step would leave a file naming a model the config
   // no longer selects, and nothing about that file would say so.
   //
   // `syncPersonaArtifacts` (persona-sync.ts) is the same resolution+write this
@@ -523,7 +532,7 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
   // which is Decision 64's invariant. That is why the probe is injected: the
   // default is only constructed as an arrow function, so an unlinked project
   // never even builds a credential store.
-  const { settings: effective } = await loadConfig({ projectDir });
+  const { settings: effective } = await loadEffectiveConfig({ projectDir });
   const team = await teamInitStep({
     dryRun,
     team: effective.team,
@@ -548,15 +557,15 @@ export async function golemInit(options: InitOptions): Promise<InitReport> {
  * unlinked path. It is only ever reached for a linked project with a token
  * present.
  *
- * The returned lines are what LANDED. Everything else — offline, lapsed, not a
- * member — is reported by `teamInitStep` from the disposition, and none of it
- * fails the init: `syncTeamLayer` does not throw, and Decision 64(f) puts that
+ * Returns the sync's disposition and notice along with what LANDED, so
+ * `teamInitStep` can say offline, lapsed, not a member or a stale cache in the
+ * sync's own words instead of "up to date". None of it fails the init: `syncTeamLayer` does not throw, and Decision 64(f) puts that
  * above every other consideration on this path.
  */
 async function syncTeamLayerForInit(
   binding: TeamBinding,
   portal: PortalSettings,
-): Promise<readonly string[]> {
+): Promise<TeamInitSyncResult> {
   const config = resolvePortalConfig(portal);
   const tokens = portalTokenStore(createCredentialStore());
   const client = createPortalClient({
@@ -571,7 +580,12 @@ async function syncTeamLayerForInit(
     client,
     report: true,
   });
-  return result.applied;
+  return {
+    disposition: result.disposition,
+    applied: result.applied,
+    fromCache: result.fromCache,
+    notice: result.notice ?? describeTeamOutcome(result.disposition, { orgId: binding.orgId }),
+  };
 }
 
 export interface UninitOptions {

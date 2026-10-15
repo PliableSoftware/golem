@@ -54,8 +54,10 @@
  * must not have. Separate file, separate lifetime.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { replaceViaTemp } from "../config/file-io.js";
+import { withFileLock } from "./state-lock.js";
 
 /** One dispatched subagent, and whether its output has been reviewed. */
 export interface DelegationRecord {
@@ -124,9 +126,40 @@ export async function writeDelegationLedger(
 ): Promise<void> {
   const file = delegationLedgerPath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(ledger, null, 2)}\n`);
+}
+
+/**
+ * Load -> `fn` -> save the ledger under the lock every writer shares. `fn` returns
+ * the ledger to save plus a value for the caller, or `null` ledger to write
+ * nothing. Every read-modify-write of `delegations.json` must come through here:
+ * an unlocked writer can erase a delegation recorded in between, and a lost
+ * delegation is a silently skipped review obligation.
+ */
+export async function updateDelegationLedger<T>(
+  projectDir: string,
+  fn: (
+    ledger: DelegationLedger,
+  ) =>
+    | { readonly ledger: DelegationLedger | null; readonly result: T }
+    | Promise<{ readonly ledger: DelegationLedger | null; readonly result: T }>,
+): Promise<T> {
+  return withFileLock(delegationLedgerPath(projectDir), async () => {
+    const { ledger, result } = await fn(await readDelegationLedger(projectDir));
+    if (ledger !== null) await writeDelegationLedger(projectDir, ledger);
+    return result;
+  });
+}
+
+/** Append one delegation under the lock (also fixes the same-seq id collision). */
+export async function recordDelegation(
+  projectDir: string,
+  entry: Omit<DelegationRecord, "id">,
+): Promise<void> {
+  await updateDelegationLedger(projectDir, (ledger) => ({
+    ledger: appendDelegation(ledger, entry),
+    result: undefined,
+  }));
 }
 
 /** A short, collision-resistant-enough id for one delegation. */

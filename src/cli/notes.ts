@@ -10,12 +10,13 @@
  * Capture must be instant and dependency-free (no inference on the capture
  * path) — this module only redacts (pure, sync) and appends. Distillation
  * (T3's engine) is what later shapes captured notes into draft `questions/`
- * or `artifacts/` wiki pages, plan-gated like every other wiki write.
+ * or `artifacts/` wiki pages.
  */
 
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { pipelineRedact, stripKnownSecrets } from "../hooks/redact.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { isRecord } from "../shared/json.js";
 
 export interface NoteEntry {
@@ -53,6 +54,7 @@ export async function appendNote(
   rawText: string,
   nowIso: string,
 ): Promise<NoteEntry> {
+  await ensurePluginRedactionRules(projectDir); // DUSTSEC.8: plugin rules, built-ins first
   const entry: NoteEntry = { ts: nowIso, text: stripKnownSecrets(pipelineRedact(rawText)) };
   const file = notesFilePath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });

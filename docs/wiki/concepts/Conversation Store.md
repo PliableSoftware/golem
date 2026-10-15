@@ -4,7 +4,7 @@ type: concept
 tags: [session, storage, redaction, retention, adr-0007, r13.2]
 sources: [src/session/conversation-store.ts, src/interfaces/conversation-store.ts, src/cli/commands/session.ts, docs/decisions/ADR-0007-remote-conversation-and-hosted-sessions.md, docs/plan/verification-notes.md#143]
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-10-08
 ---
 
 # Conversation Store
@@ -52,7 +52,12 @@ than ADR-0007 made.
 
 ## How long it's kept
 
-Bounded two ways, both configurable, oldest evicted first:
+Bounded two ways, oldest evicted first. The bounds are constructor options of
+`LocalConversationStore` (`maxConversations`, `maxAgeMs`;
+`src/session/conversation-store.ts:105-145`), **not** a config key: every in-tree
+caller uses `forProjectDir(dir)` with no options (e.g.
+`src/session/device-sessions.ts:242`, `:287`, `:320`), so a user cannot change
+them and the defaults below are what runs:
 
 - **Count** — 32 conversations by default.
 - **Age** — 30 days by default.
@@ -100,6 +105,7 @@ turn, read a conversation, list conversations, forget one — a frozen contract
 the session host (R13.3), the transport (R13.5), and continue/start flows
 (R13.8).
 
-See [[Architecture]] for where this sits in the whole request path, and
+See [[Architecture]] for where this sits in the whole request path,
 [[Redaction Stage]] for the redaction floor every storage path in Golem
-shares.
+shares, and [[Device Conversations]] (R13.8) for the two consumers that
+motivated it — start/resume and paged scrollback.

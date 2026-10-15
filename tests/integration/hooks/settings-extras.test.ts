@@ -306,12 +306,45 @@ describe("removeStatusLine", () => {
 });
 
 describe("writeDefaultMode", () => {
-  it("creates settings.json with defaultMode = default in a fresh project", async () => {
+  it("creates settings.json with permissions.defaultMode = default in a fresh project", async () => {
     const action = await writeDefaultMode({ projectDir });
     expect(action.kind).toBe("create");
 
     const settings = (await readSettings()) as Any;
-    expect(settings.defaultMode).toBe(GOLEM_DEFAULT_MODE);
+    // Claude Code only reads the mode under `permissions`; a root key is ignored.
+    expect(settings.permissions.defaultMode).toBe(GOLEM_DEFAULT_MODE);
+    expect(settings.defaultMode).toBeUndefined();
+  });
+
+  it("keeps existing permissions entries when adding the mode", async () => {
+    await writeSettings({ permissions: { allow: ["mcp__golem__*"] } });
+    await writeDefaultMode({ projectDir });
+    const settings = (await readSettings()) as Any;
+    expect(settings.permissions).toStrictEqual({
+      allow: ["mcp__golem__*"],
+      defaultMode: GOLEM_DEFAULT_MODE,
+    });
+  });
+
+  it("moves a legacy root-level Golem defaultMode under permissions", async () => {
+    await writeSettings({ defaultMode: GOLEM_DEFAULT_MODE });
+    const action = await writeDefaultMode({ projectDir });
+    expect(action.kind).toBe("modify");
+    const settings = (await readSettings()) as Any;
+    expect(settings.defaultMode).toBeUndefined();
+    expect(settings.permissions.defaultMode).toBe(GOLEM_DEFAULT_MODE);
+  });
+
+  it("drops a legacy root-level Golem defaultMode without overriding the user's nested mode", async () => {
+    await writeSettings({
+      defaultMode: GOLEM_DEFAULT_MODE,
+      permissions: { defaultMode: "bypassPermissions" },
+    });
+    const action = await writeDefaultMode({ projectDir });
+    expect(action.detail).toBe('defaultMode set to "bypassPermissions"; left as is');
+    const settings = (await readSettings()) as Any;
+    expect(settings.defaultMode).toBeUndefined();
+    expect(settings.permissions.defaultMode).toBe("bypassPermissions");
   });
 
   it("is idempotent: second write is a skip", async () => {
@@ -321,14 +354,25 @@ describe("writeDefaultMode", () => {
   });
 
   it("refuses to clobber a defaultMode the user already set", async () => {
-    await writeSettings({ defaultMode: "acceptEdits" });
+    await writeSettings({ permissions: { defaultMode: "acceptEdits" } });
 
     const action = await writeDefaultMode({ projectDir });
     expect(action.kind).toBe("skip");
     expect(action.detail).toBe('defaultMode set to "acceptEdits"; left as is');
 
     const settings = (await readSettings()) as Any;
+    expect(settings.permissions.defaultMode).toBe("acceptEdits");
+  });
+
+  it("treats a foreign root-level defaultMode as the user's choice too", async () => {
+    await writeSettings({ defaultMode: "acceptEdits" });
+
+    const action = await writeDefaultMode({ projectDir });
+    expect(action.kind).toBe("skip");
+
+    const settings = (await readSettings()) as Any;
     expect(settings.defaultMode).toBe("acceptEdits");
+    expect(settings.permissions).toBeUndefined();
   });
 
   it("does not write in dry-run mode but still reports the action", async () => {
@@ -345,16 +389,26 @@ describe("removeDefaultMode", () => {
     expect(action.kind).toBe("modify");
     const settings = (await readSettings()) as Any;
     expect(settings.defaultMode).toBeUndefined();
+    expect(settings.permissions).toBeUndefined();
+  });
+
+  it("removes a legacy root-level Golem defaultMode, keeping other permissions", async () => {
+    await writeSettings({ defaultMode: GOLEM_DEFAULT_MODE, permissions: { allow: ["x"] } });
+    const action = await removeDefaultMode({ projectDir });
+    expect(action.kind).toBe("modify");
+    const settings = (await readSettings()) as Any;
+    expect(settings.defaultMode).toBeUndefined();
+    expect(settings.permissions).toStrictEqual({ allow: ["x"] });
   });
 
   it("is a skip when a foreign defaultMode is set, and leaves it untouched", async () => {
-    await writeSettings({ defaultMode: "acceptEdits" });
+    await writeSettings({ permissions: { defaultMode: "acceptEdits" } });
 
     const action = await removeDefaultMode({ projectDir });
     expect(action.kind).toBe("skip");
 
     const settings = (await readSettings()) as Any;
-    expect(settings.defaultMode).toBe("acceptEdits");
+    expect(settings.permissions.defaultMode).toBe("acceptEdits");
   });
 
   it("is a skip when settings.json doesn't exist", async () => {

@@ -267,6 +267,24 @@ export const SETTING_META = {
     advanced: true,
     restart: "mcp",
   },
+  "inference.team_prompt": {
+    label: "Team prompt",
+    summary: "Plain-text team guidance fenced onto the coder dispatch system prompt only",
+    detail:
+      "DUST2.22. The one prompt-shaped key a team may set. Appended AFTER the coder framing, " +
+      "fenced between BEGIN and END TEAM NOTE markers as advisory text that cannot change tools, " +
+      "permissions or redaction. Delivered to the `coder` dispatch only: never to generated " +
+      "agent bodies or ACP turns, which run with your own authority. At most 2000 characters " +
+      "(code points) of visible text: no control, invisible, bidi or variation characters, no " +
+      "fence markers (in any spelling or lookalike), no line starting with # or < or a role " +
+      "header, no code fences or tags, no URL, network path or IP address; a team value that breaks that is refused, not truncated. " +
+      "Your project or local value, or a user value marked important (user!), replaces the " +
+      "team's (a plain user value does not: user ranks below team); set it to an empty string " +
+      "there to turn the team prompt off. A team cannot enforce it. An empty " +
+      "GOLEM_INFERENCE_TEAM_PROMPT is treated as unset.",
+    advanced: true,
+    restart: "mcp",
+  },
   "proxy.request_timeout_ms": {
     label: "Request timeout",
     summary: "End-to-end request budget in ms (generous: long SSE streams)",
@@ -276,6 +294,17 @@ export const SETTING_META = {
   "proxy.connect_timeout_ms": {
     label: "Connect timeout",
     summary: "Upstream TCP/TLS connect budget in ms",
+    advanced: true,
+    restart: "proxy",
+  },
+  "proxy.max_request_body_bytes": {
+    label: "Max request body",
+    summary:
+      "Largest request body accepted, in bytes (default 32 MiB, max 256 MiB); larger gets a 413",
+    detail:
+      "Applies to the body on the wire and after decompression. A request over the limit is " +
+      "refused with 413 and nothing is forwarded; it bounds how long redaction can hold the " +
+      "proxy's event loop. There is no unlimited value: the ceiling is 256 MiB.",
     advanced: true,
     restart: "proxy",
   },
@@ -306,12 +335,13 @@ export const SETTING_META = {
     advanced: true,
   },
   "inference.worker_targets": {
-    label: "Worker targets (DEPRECATED)",
-    summary: "DEPRECATED - use inference.personas[worker].model instead. Kept for migration",
+    label: "Worker targets",
+    summary: "Worker name -> target id; the explicit route, wins over personas[worker].model",
     detail:
-      "R14.3: worker lane now reads personas[worker].model directly. Each worker_targets entry " +
-      "becomes a persona with the same model/target id. This key is ignored when personas has " +
-      "the same worker. Migration warning shown on load.",
+      "Live setting. Routing precedence for a worker: an explicit target on the call, then " +
+      "worker_targets[worker], then inference.personas[worker].model, then inference.model, " +
+      "then the harness's own upstream. When worker_targets and a persona model name different " +
+      "destinations, worker_targets wins; unset it to use the persona's model.",
     kind: "opaque",
     advanced: true,
     restart: "mcp",
@@ -411,8 +441,8 @@ export const SETTING_META = {
     restart: "mcp",
   },
   "knowledge.vector_db_url": {
-    label: "External vector DB",
-    summary: "Qdrant server URL; the embedded store is used when unset",
+    label: "External vector DB (deprecated)",
+    summary: "No effect: the embedded store is always used. Remove this key",
     advanced: true,
     restart: "mcp",
   },
@@ -580,6 +610,13 @@ export const SETTING_META = {
     label: "Device certificate lifetime (days)",
     summary: "How long an issued device credential stays valid",
     detail: "An unrevoked lost device still stops working when its certificate expires.",
+    advanced: true,
+  },
+  "security.origination_roots": {
+    label: "Project roots a device may start a session in",
+    summary: "Gate-map item 2 - empty means all known roots",
+    detail:
+      "Empty (the default) means a paired device may originate a new hosted conversation in any project root Golem knows. A non-empty list is an allowlist of absolute paths, checked after the requested root is resolved - a symlink or a worktree cannot widen it. A request for a root outside the list is refused, naming the root.",
     advanced: true,
   },
   "telemetry.dashboard_port": {

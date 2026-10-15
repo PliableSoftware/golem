@@ -138,3 +138,7 @@ unpublish or block a release.
 ## Outcome
 
 shipped — v0.53.0 webhook accepted on attempt 1, {"version":"0.53.0","stored":true,"replaced":false}, published schema hash matches the payload
+
+## Dust 2026-10-08 note
+
+Dust 2026-10-08: gate no longer met because the webhook is paused (`PORTAL_WEBHOOK_URL` cleared in `d315b23`) and the v0.54.3 notify step failed. Not reopened. (source: DUST1.11 audit, `docs/plan/audit/dust-1/DUST1.11.md` Plan hygiene; not re-verified live)

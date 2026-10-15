@@ -21,7 +21,7 @@
  * what happened when nothing else was. The chain is now, in order:
  *
  * 1. an explicit `targetId` on the call,
- * 2. `inference.worker_targets[worker]`,
+ * 2. `inference.worker_targets[worker]`, else `inference.personas[worker].model`,
  * 3. `inference.model`,
  * 4. the harness's own default upstream (the synthetic target over
  *    `proxy.upstream_*`), which always exists.
@@ -109,7 +109,7 @@ import {
   TargetDispatchError,
 } from "../proxy/rate-limit-retry.js";
 import type { PersonaConfig } from "./personas.js";
-import { workerTargetFromPersona } from "./personas.js";
+import { assertWorkerDispatchable, PersonaNotDispatchableError } from "./personas.js";
 import { workerTarget } from "./workers.js";
 
 /** Hosts for which `trust: "local"` is believable — context never leaves the machine. */
@@ -212,7 +212,10 @@ export interface DispatchRequest {
 export type DispatchRoute =
   /** An explicit `targetId` on the call. */
   | "explicit"
-  /** This worker's `inference.worker_targets` entry (DEPRECATED). */
+  /**
+   * This worker's target from {@link workerTarget}: its `inference.worker_targets`
+   * entry (a persona-sourced value is labelled {@link DispatchRoute} `persona_worker`).
+   */
   | "worker"
   /** `inference.personas[worker].model` resolved as a target. */
   | "persona_worker"
@@ -717,23 +720,31 @@ export function selectTarget(
   options: Pick<TargetDispatcherOptions, "settings" | "workerTargets" | "personas">,
   request: Pick<DispatchRequest, "targetId" | "worker">,
 ): { readonly id: string; readonly route: DispatchRoute } {
+  // owner: user binds the worker lane (DUSTSEC.11): refuse before ANY worker route,
+  // including worker_targets and an explicit target, and never fall through to the
+  // default target. An explicit target only picks WHERE the worker runs, not whether
+  // a human-owned role may be dispatched.
+  if (request.worker !== undefined) {
+    try {
+      assertWorkerDispatchable(options.personas ?? {}, request.worker);
+    } catch (err) {
+      if (err instanceof PersonaNotDispatchableError) throw new TargetDispatchError(err.message);
+      throw err;
+    }
+  }
   if (request.targetId !== undefined && request.targetId !== "") {
     return { id: request.targetId, route: "explicit" };
   }
-  // First check deprecated worker_targets, then personas[worker].model
-  const fromWorkerRaw =
-    request.worker !== undefined
-      ? workerTarget(options.workerTargets, request.worker, options.personas)
-      : undefined;
-  const fromWorker = fromWorkerRaw === "" ? undefined : fromWorkerRaw;
-  if (fromWorker !== undefined) return { id: fromWorker, route: "worker" };
-
-  const fromPersonaWorkerRaw =
-    request.worker !== undefined
-      ? workerTargetFromPersona(options.personas ?? {}, request.worker)
-      : undefined;
-  const fromPersonaWorker = fromPersonaWorkerRaw === "" ? undefined : fromPersonaWorkerRaw;
-  if (fromPersonaWorker !== undefined) return { id: fromPersonaWorker, route: "persona_worker" };
+  // worker_targets first (live, highest after explicit), then personas[worker].model.
+  // They are read separately so the route label says which one answered.
+  if (request.worker !== undefined) {
+    const fromMap = options.workerTargets?.[request.worker];
+    if (fromMap !== undefined && fromMap !== "") return { id: fromMap, route: "worker" };
+    const fromPersona = workerTarget(undefined, request.worker, options.personas);
+    if (fromPersona !== undefined && fromPersona !== "") {
+      return { id: fromPersona, route: "persona_worker" };
+    }
+  }
 
   const configured = options.settings.model;
   return {

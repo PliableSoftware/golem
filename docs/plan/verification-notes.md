@@ -348,9 +348,8 @@ to `{ ok:false }` on ENOENT/non-zero/timeout — `detectCapability` therefore
   bge-m3 / nomic-embed-text at Q4-class quant, as a plain data table in
   `catalog.ts` — re-verify current-best models at build time.
 - **Fallback ladder (D3):** tier model → step down one tier on
-  `ModelNotAvailableError` → `HaikuFallbackRequired` (if opted in; the service
-  does NOT make the cloud call, it signals the credentialed caller) → else
-  `CapabilityUnavailableError`. A reachable-but-broken endpoint
+  `ModelNotAvailableError` → else `CapabilityUnavailableError`. (A
+  `HaikuFallbackRequired` opt-in existed here until 2026-10-09; it had no caller and was removed.) A reachable-but-broken endpoint
   (`InferenceEndpointError`) stops the local ladder rather than hammering it.
 
 ## 23. Redaction breaks agent observability when the dev session is routed through Golem (2026-07-04, product finding)
@@ -10935,3 +10934,270 @@ inventing a second one — see [[Spawn Headroom Gate]].
 - Everything that needs a live relay, unchanged from §19/§20.
 - **The permission posture in §5 is a user decision, not a research gap.** No
   further reading resolves it.
+
+## 2026-10-08 — DUSTSEC.10: no "relay channel connected" signal at the PermissionRequest hook
+
+Task DUSTSEC.10 step 1 (R8, USER decision: the R12.12 deny applies only when a relay channel is
+connected). **Finding: no reliable signal exists. The task stops here; the deny is unchanged.**
+Evidence is the repo plus the dated notes above (the live hooks/channels pages were NOT re-fetched
+in this pass — re-check them before overturning this):
+
+1. **Hook payload.** The subset `src/hooks/permission-request.ts` reads (`cwd`, `tool_name`,
+   `tool_input`; `permission_suggestions` deliberately ignored) and the documented
+   `PermissionRequest` input recorded in §141 carry no channel/relay field. **[DOCUMENTED, per
+   earlier notes]**
+2. **Env var.** `grep -rn "claude/channel\|CLAUDE_CODE_.*CHANNEL\|--channels" src` finds nothing.
+   Channels are enabled by launch flag only (`--channels` /
+   `--dangerously-load-development-channels`, see "Preview constraints"), and no env var set by
+   Claude Code for it is documented. **[NOT FOUND]**
+3. **Golem-owned marker.** Golem ships no channel server, so there is nothing of its own to write a
+   connected/cleared marker on connect/disconnect. The channel is a third-party MCP server; Golem
+   cannot observe its connection state. **[NOT FOUND]**
+4. **Indirect inference rejected.** `.mcp.json` presence does not imply the session loaded the
+   channel (flag required), and Claude Code gives no delivery/connection acknowledgement
+   (channels reference, "no delivery acknowledgement"). The brief forbids inventing a heuristic.
+
+**R12.13 remains unconfirmed** (owner: user, needs a live interactive session): nobody has observed
+whether the PermissionRequest deny pre-empts the relay. "R12.13's blocker is resolved" in SUMMARY
+means only the R12.12-shipped half.
+
+**Open for the user:** accept the deny-for-everyone behaviour as-is (amend ADR-0002 via DUST2.3),
+or build a Golem-owned channel/pairing server that writes a connected marker (cleared on
+disconnect/crash) so the signal exists.
+
+## 2026-10-08 — DUSTSEC.20: Anthropic API object id formats, and what the entropy sweep did to them
+
+**Reproduced** (200 ids per family, built at runtime, `redactRequestBody({ id })` on `development`):
+`srvtoolu_` + 24 base62 (33 chars) replaced 200/200; `msgbatch_` + 24 replaced 199/200;
+`container_` + 24 (34 chars) 200/200; `container_` + 22 (32 chars) 200/200. Only the generic
+long-token rule fires; no provider rule matches these shapes.
+
+**Official format evidence** (fetched 2026-10-08 from docs.anthropic.com: `/en/api/messages-batches`,
+`/en/api/creating-message-batches`, `/en/docs/build-with-claude/batch-processing`,
+`/en/docs/agents-and-tools/tool-use/web-search-tool`, `.../code-execution-tool`,
+`/en/docs/agents-and-tools/tool-use/programmatic-tool-calling`, `/en/api/messages`):
+- `srvtoolu_`: every example id in the docs is `srvtoolu_` + 24 base62 characters (33 total).
+- `msgbatch_`: every example id is `msgbatch_` + 24 base62 characters (33 total).
+- `container_`: **no id example and no stated format appears on any fetched page** (only the
+  parameter names `container_upload` etc.). The 34-character figure in the task doc could not be
+  confirmed from an official source.
+- The docs show EXAMPLES, not a stated pattern or length guarantee. The exemption therefore
+  follows the documented examples and nothing wider.
+
+**Decision.** Exempt only the whole token `^(srvtoolu|msgbatch)_01[A-Za-z0-9]{22}$` in the entropy
+sweep (`isApiObjectId`, `src/pipeline/redaction-rules.ts`). `container_` is NOT exempt: open until
+an official source gives its format. Re-check the docs before adding it, and before widening the
+length if the API changes id sizes.
+
+**Follow-up after independent review (same day).** All 8 documented example ids (2 `msgbatch_`,
+6 `srvtoolu_`, same pages as above) begin `01` after the prefix, and all 8 match the tightened
+regex above; the exemption now requires that lead (same total length, 33). A value in the id shape
+WITHOUT `01` is redacted.
+- **Residual, shrunk but present:** a value in the exact id shape with the `01` lead is exempt even
+  after `Bearer ` or in a credential header such as `x-api-key`; no built-in rule matches those
+  values, so the sweep was their only protection. Pinned by tests as a known residual, not a feature.
+- **Scope:** the sweep is shared, so the exemption also applies to `redactStandaloneText` (tool
+  output) and `redactReversibleText` (storage). Harmless: an id-shaped token is passed through
+  unchanged there too.
+- An id embedded in a longer run (URL path, `key=` query value) is still rewritten; `.`, `:`,
+  whitespace and newline are delimiters, so the id survives beside a separately redacted secret.
+
+## 2026-10-08 — Windows lock and rename contention (EPERM/EACCES/EBUSY, not EEXIST)
+
+**Source:** CI, windows-latest / node 24: `file-driver-integrity` "survives many interleaved
+concurrent writers" failed `EPERM ... open '...\chunks.lock'` (errno -4048); earlier
+`device-sessions` failed `EPERM ... rename '...hosted-sessions.json.<id>.tmp'`. **[OBSERVED IN CI,
+not reproduced locally — Linux cannot raise these codes for these calls]**
+
+**Rule applied** (`src/shared/win-fs-retry.ts`):
+- Lock acquisition (`acquireLock` in `file-driver.ts`, `acquire` in `hooks/state-lock.ts`):
+  contention is EEXIST everywhere; on win32 also EPERM, EACCES, EBUSY. Retried until the existing
+  deadline; the timeout behaviour is unchanged (driver throws, hook lock runs unlocked with a
+  stderr note). On non-win32 EPERM/EACCES stay fatal.
+- Temp-then-rename writes: on win32, `rename` retries EPERM/EBUSY/EACCES, 10 tries 50 ms apart
+  (~450 ms), then rethrows; the temp file is removed on final failure.
+- Lock ownership token and stale-break (rename aside, re-check token) are untouched.
+
+**Scope:** the shared helper `replaceViaTemp`/`writeAtomic` (`config/file-io.ts`, used by
+`host-registry.ts` for `hosted-sessions.json`), `file-driver.ts` flush, and `join-queue.ts` enqueue
+use it. About 17 other modules hand-roll `${file}.${pid}.tmp` + `rename` (spawn-gate,
+delegation-ledger, session-state, snooze-nudge, conversation-store, tasks/store, ...) and still
+have the bare rename; migrate them to `renameWithRetry` as a follow-up.
+
+**Not simulable here:** the real Windows error codes. Tests inject `platform` and the failing
+create/rename; only windows-latest CI confirms the real fix.
+
+**2026-10-09 follow-up (windows-handrolled-rename-sweep):** `replaceViaTemp` gained an optional
+`mode` (backwards compatible; the temp name is now random, not pid-suffixed, and the temp is removed on
+failure). Converted to it, 21 modules: hooks (`spawn-gate`, `delegation-ledger`, `snooze-nudge`,
+`session-state`, `coder-first-nudge`), proxy (`served-model`, `limit-prediction`, `context-ledger`,
+`loopback-serve`, `loopback-reach`), session (`conversation-store` with mode 0o600, `session-tree`,
+`live-conversations`), tasks (`store`, `plan-task`), `autonomy/policy`, cli (`json-file`,
+`local-model`), `update/index`, telemetry (`model-catalog`, `jsonl-store` rollup). `local-blob-store`
+`put` now uses `renameWithRetry` for its first rename (binary payload; its exists-already and
+delete-then-rename fallback is unchanged). Judged NOT to need it: `state-lock` and `file-driver`
+stale-lock breaks (lock semantics, already contention-aware, out of scope) and the `jsonl-store`
+telemetry rotation (a deliberate move of the live log; best-effort, retried on the next record).
+Tests: `tests/unit/win-rename-*.test.ts`, via `tests/helpers/flaky-rename.ts`.
+
+## 2026-10-09 — Request body handling before redaction (DUSTSEC.21)
+
+**Source:** Node 22 `zlib` docs (`maxOutputLength` on the sync decompressors raises
+`ERR_BUFFER_TOO_LARGE`), RFC 9110 §8.4 (`content-encoding` lists codings in the order applied),
+RFC 8259 §8.1 (JSON is UTF-8; a BOM is not part of the text). **[VERIFIED BY TEST]**, not against
+the live Anthropic API: whether the upstream accepts a gzip request body is unknown, which is why
+decoded bodies are forwarded identity-encoded (always accepted) instead of re-encoded.
+
+- Decode gzip/x-gzip/deflate/br (stacked codings undone in reverse), forward identity with
+  `content-encoding` removed; `content-length` is recomputed by the proxy. zstd and others: 415.
+- Undecodable body: 400. Over `proxy.max_request_body_bytes` (default 32 MiB, schema ceiling 256 MiB) on the wire or after
+  decompression: 413. Nothing is forwarded in any of these cases.
+- Walk cost measured 2026-10-09 (Linux, node 22): a 3.9 MB Messages body with 35,000 secrets
+  walked in 803 ms; 5 MB of plain text through the text redactor in 109 ms. Linear, as DUSTSEC.21
+  predicted, 49 MiB of JSON with 425k secrets took 4.7 s (review), so the 32 MiB default bounds one request at a few seconds; the walk stays synchronous and the cap bounds the stall, it does not remove it. Total in-flight buffered bytes are capped (503 + Retry-After).
+- JSON is parsed under any content label first; NUL-bearing UTF-16/32 without a BOM is refused.
+- NOT redacted by design: non-JSON opaque bodies (multipart, octet-stream, image/audio/video, PDF, archives,
+  unlabelled bodies containing NUL bytes), including the text fields inside a multipart upload.
+- Second review (2026-10-09): NUL bytes no longer make a text body opaque (opaque = known-binary
+  label, or magic signature under a text/no label, and not JSON); UTF-16/32 is refused by whole-body
+  window scan plus a UTF-16 decode check; duplicate JSON keys are detected by a byte scanner and
+  their raw text redacted; BOM stripped only for parsing; the in-flight reservation is released when
+  upstream headers arrive (no replay after the retry loop); size limit and cap also apply under
+  `proxy.bypass_all` (memory guard only, nothing decoded or redacted).
+- Third review (2026-10-09): duplicate JSON keys are refused (400) instead of text-redacted, because
+  the raw text holds the secret JSON-escaped. The wide-text check covers UTF-32 at four alignments
+  and does not depend on NUL density (measured +2.5 s on a 32 MiB NUL-bearing text body). A magic
+  signature makes a body opaque only if it also looks binary (printable GIF8/ID3/BZh/%PDF/RIFF/OggS/
+  Rar!/ftyp text is redacted). The 32 MiB default bounds admission, not stall time: the synchronous
+  JSON walk runs about 0.7 s per MiB on many-small-strings bodies, so a pathological 32 MiB body can
+  stall the event loop for tens of seconds (follow-up: async or worker-thread walk). The in-flight cap
+  bounds admission, not memory (streaming buffers stay resident after headers).
+
+## DUSTSEC.22 - named-prefix secrets inside unbroken runs over 128 characters (2026-10-09)
+
+**Finding (reproduced):** a documented-shape API id (33 chars) followed with no separator by a
+named-prefix key (105 chars) is one 138-char run. The entropy sweep only matches runs of 32 to 128
+chars, and the named rule's leading `\b` fails after a word character, so the key reached the
+upstream whole. A plain random 200-char run also passes through.
+
+**Legitimate long runs (must not be rewritten):** base64 image/document `data` (tens of KB to MB),
+thinking `signature` (std base64, hundreds of chars to several KB), long hex digests, long
+base64url blobs, uppercase hex dumps and base32 data. The `tests/helpers/recorded-conversations.ts`
+fixtures hold only tiny ones, so the measurement is by shape; the level<=1 recorded-shape suite is
+untouched and passes.
+
+**Decision:** scan INSIDE over-length runs for the named rules' prefix shapes and redact only the
+matched span, never the whole run. Pieces left by a cut get their edges re-checked, and
+`redactText` re-runs the stage while the in-run scan finds something (bound 16, fail closed: reaching it throws), so a second pass
+is a no-op. Design and residuals in `docs/plan/tasks/DUSTSEC.22.md`.
+
+**Correction (review BLOCK, same day).** The first cut scanned the AWS family (`AKIA`, `ASIA`,
+`ABIA`, `ACCA`, `A3T?` + 16 of `[A-Z0-9]`) anywhere in a run and claimed a chance rate below 1e-10.
+Wrong: `ACCA` is valid uppercase hex and `A3T` valid base32, so the rate in uppercase hex is
+16^-4 = 1.5e-5 per position (the tail `[A-Z0-9]{16}` is always satisfied), about 3e-11 in uniform
+base64 (5 prefixes x 64^-4 x (36/64)^16). Measured on the first cut, 5000 random blobs each:
+uppercase hex 256 chars 13 changed (0.26%), uppercase hex 4096 329 (6.6%), uppercase base32 512
+84 (1.7%). Chance-rate derivations now in the code comment, recomputed per prefix:
+
+- `sk-ant-` (7 fixed chars, needs `-`): about 2e-13 per position in base64url, impossible in hex,
+  base32 and standard base64.
+- `github_pat_` (11), `sk_live_` (8), `AccountKey=` (11): below 1e-14.
+- `nsec1` + 58 bech32: `1` is outside hex/base32, and a 58-char bech32 tail is about 1e-18 in base64.
+- Short prefixes that DO chance-match (`ghp_` 3e-7, `xox*-`, `AIza` 6e-8, `sk-` 4e-6, AWS 1.5e-5 in
+  hex) are edge-only: run start, or run end within a 300-char window.
+
+**Fix:** AWS family is edge-only, and is skipped when the whole run is uppercase `[A-Z0-9=]` (hex
+or base32 data, where an edge match is chance). `ghp_` edge shape is the exact 36 chars (was
+36-255; a 300-char base64url run matched 1 in 200000, now 0). `sk-` edge is only the documented
+openai shapes (`sk-proj-`/`sk-svcacct-`/`sk-admin-` + 32-256, or `sk-` + 48 alphanumerics); the
+generic `sk-` + 32-256 matched 4 of 5000 base64url blobs of 4096 chars.
+
+**Measured after the fix** (`findEmbeddedSecrets`, 5000 random blobs per row, no hits in any row,
+0 of every prefix): uppercase hex 256 (1.3 MB), uppercase hex 4096 (20.5 MB), uppercase base32 512
+(2.6 MB), lowercase hex 256, lowercase hex 4096, lowercase base32 512, standard base64 4096,
+base64url 4096, base62 4096 (each 20.5 MB where 4096). Zero changes on every corpus; standard base64
+had 0 hits in 20.5 MB sampled (the bar is 1e-6 per MB, which a 20 MB sample cannot prove by
+itself; the derived rate is 2 edges x 2e-11 per run, far under it). Residual false-match rate remains for base64url `_`
+shapes (`ghp_` exact: about 1e-7 per edge per run).
+
+**Pre-existing, found on the way (not this change):** the `credit-card` rule rewrites a 13+ digit
+run inside a hex dump when Luhn passes (about 1 in 10 such runs), so a random hex dump of
+4096 chars is often altered by that rule. Test corpora skip `\d{13}` for that
+reason. Also pre-existing: the named rules' `{16,}` / `{32,}` greedy quantifiers throw `RangeError:
+Maximum call stack size exceeded` on a 10 MB unbroken run that starts at a word boundary with a
+named prefix (`sk-ant-` or `sk-` repeated, verified with `redactIdentifierText`, code unchanged by
+this task). The new in-run scan uses a plain loop to find runs and bounded tails, so it does not.
+
+**Performance (probes capped at 30 s, `redactStandaloneText`):** 1 MB / 10 MB: random base64
+45 / 437 ms; `A` x n 30 / 281 ms; `AKIA` repeated 32 / 293 ms; `sk-` x 100 runs of 300 chars
+separated by spaces (with and without a trailing `+`) 14 / 102 ms; a random 10 MB run with a key
+glued on the end 735 ms. The `sk-ant-` repeated and `sk-`+`+` 10 MB runs crash in the pre-existing
+named rules (above), not in this change.
+
+**Residual (deliberate):** an over-length run with NO named prefix is indistinguishable from base64
+data and stays unredacted; closing it needs field-aware redaction (skip `source.data`,
+`signature`). An AWS, `ghp_`, `xox`, `AIza` or `sk-` secret with junk glued on BOTH sides is not at
+an edge and is not found; an AWS key glued to uppercase-only junk is also not found (that is
+indistinguishable from base32 data). A JWT is not covered (its dots end the run).
+
+**Glued-shape matrix (final, second review round).**
+
+| Shape | key at end | key at start | key in middle |
+| --- | --- | --- | --- |
+| sk-ant, github_pat, sk_live, nsec1 | redacted | redacted | redacted |
+| xoxb, sk-proj, sk-svcacct | redacted | redacted | redacted |
+| AKIA, ghp_, gho_, sk- + 48, AIza | redacted | redacted | leaks (edge-only) |
+| sk-None-, sk- + 51 | leaks | redacted | leaks |
+| ya29. | redacted | leaks | redacted |
+
+"End" is 100 junk chars + a documented-shape API id + the key; "start" is the key + id + 100 junk;
+"middle" is 80 junk chars each side. Every run is over 128 chars. Measured on the final code with
+`redactStandaloneText`, secret absent from the output = redacted. The same matrix on
+`origin/development` leaked EVERY cell except: key-at-start for sk-ant, github_pat, nsec1,
+sk-proj, sk-svcacct, sk- + 48, sk-None- and sk- + 51 (a run-start key has a word boundary), and
+ya29. at end and in the middle (its dot ends the run). So this change is a strict improvement:
+no cell is worse, and every glued shape in the first three rows is now closed at the end.
+ya29. at the start leaks on both (not touched: the dot splits the run, and a short-prefix scan
+there would chance-match).
+
+**Residuals (known residual, not a feature), each pinned by a test:** an id plus an `sk-None-` style
+key; an id plus an `sk-` key that is not 48 chars (a 51-char `sk-` key is only caught at the start);
+an id plus a `ghp_` key with junk glued after it; an id, a `ghp_` key and junk in the middle of a
+run; an `AIza` key in the middle of a run; a plain over-length run with no named prefix. Plus a
+small false-positive rate: an uppercase base32 run holding one `-` or one lowercase character
+loses the all-uppercase exemption, so an AWS-shaped edge can fire (measured over 2M random
+512-char runs with one such character mid-run: `-` 6.95e-5 per run, one lowercase 7.55e-5 per run);
+`sk-` + 48 alphanumerics at the edge of random base64url, about 2 x 64^-3 x (62/64)^48 = 1.7e-6 per
+300-char run (derived).
+
+**Fail closed at the pass bound:** `redactText` re-runs the stage while the in-run scan finds
+something. If the bound (16) is reached with the scan still finding something, it throws
+`RedactionBoundExceeded`; the proxy answers a pipeline throw, and a `redactOnly` throw, with a 502
+and forwards nothing. Normal inputs need at most 2 passes (1200 random mixtures run at a bound of 3
+without a throw).
+
+**Pre-existing, found on the way, NOT fixed here:** (1) the named rules throw `RangeError: Maximum
+call stack size exceeded` on 10 MB of repeated `sk-ant-` or `sk-` ending in `+` (greedy `{16,}` /
+`{32,}` over a multi-megabyte run; verified with `redactIdentifierText`, unchanged code; the proxy
+turns it into a 502). (2) the `credit-card` rule rewrites Luhn-valid digit runs of 13 or more
+inside hex dumps.
+
+## 2026-10-09 CI: Node 24 action majors and the ubuntu-latest move
+
+Checked live on 2026-10-09. Every run carried 37 annotations that `actions/checkout@v4` and `actions/setup-node@v4` target Node 20 and are forced onto Node 24, and 23 that `ubuntu-latest` becomes Ubuntu 26.04 beginning 2026-10-19, completing by 2026-11-19 (runner-images issue 14748: "Workflows ... that depend on Ubuntu 24.04-specific software, package versions, system libraries ... may be affected"). The `runs.using` of each action's `action.yml` at each tag: `checkout` v5, v6 and v7 are node24; `setup-node` v5, v6 and v7 are node24; `upload-artifact` is node20 at v5 and node24 from v6; `download-artifact` is node20 at v5 and v6 and node24 from v7; `oven-sh/setup-bun@v2` is already node24. So the smallest majors that run on Node 24 are checkout v5, setup-node v5, upload-artifact v6, download-artifact v7, and those are what the workflows now use. The `ubuntu-26.04` label exists (listed in the runner-images README). Only `CI gate` is a required check (see the comment above `ci-gate` in ci.yml), so renaming jobs by their OS label breaks no branch protection. UNVERIFIED: whether the release workflow's standalone binary build passes on Ubuntu 26.04 (it is pinned to 24.04 until the advisory job has been green).
+
+## 2026-10-09 — DUSTSEC.10 resolved by USER decision: the PermissionRequest deny is removed
+
+Follow-up to the 2026-10-08 entry above (no relay-connected signal). The user chose to restore asking the human rather than keep the unconditional R12.12 deny. `src/hooks/permission-request.ts` now emits no decision for any class at any level, so destructive/outward reach Claude Code's native dialog; `allow` is never emitted. Not verified live: whether a connected permission-relay channel is now notified when that dialog opens (R12.13, `owner: user`, still unconfirmed). Recorded in ADR-0002 (2026-10-09 amendment).
+
+## 2026-10-09 proxy-errors.test.ts timeout (CI run 37909601065, ubuntu / node 22 / shard 10): not reproducible, no in-repo cause found
+
+Task `proxy-errors-test-flake`. The CI failure: 'maps upstream connection refusal to 502' and 'with a silent upstream' both hit the 20000 ms test timeout once; the re-run passed; no other failure of this file in the last 60 runs.
+
+**Code reading.** Neither test can inherit state from another. Every test starts its own `GolemProxy`, and the only request each proxy serves is the one the test sends, so a held request or an unreleased DUSTSEC.21 reservation has nothing to leak into: `releaseHold` runs on the response `close` and on the headers-arrived path in `src/proxy/server.ts`. The in-flight cap is per proxy instance (`#bodyBudget`). The 'silent upstream' proxy is created in `beforeAll` and used by exactly one test.
+
+**Measured, 4-core Linux box, vitest 3.2.6.** CPU burners were `while :; do :; done` shell loops, 4 times oversubscribed (16 on 4 cores), then the file was run alone, 50 times in a row: 50 passed, 0 failed (5m44s). An earlier batch with 12 burners: 20 of 20 passed. The slowest 'silent upstream' test in the 50 runs took 985 ms (the proxy's headers timeout is 150 ms), nowhere near 20 s. Added to the two tests: an assertion that `bodyBytesInFlight` returns to 0 after the 502 and the 504 (guards the DUSTSEC.21 reservation; it passed in the 50 runs too).
+
+**Port reuse.** `closedPort()` binds port 0 and closes it, so the refusal test's target is a released ephemeral port. Measured 20000 consecutive bind/close cycles: the same port came back immediately 5 times (0.025%), 6542 distinct ports. That is only reachable by something else binding in the window; a sibling test file in another worker that grabs that port with a server that accepts and never answers would make the proxy wait (the default headers timeout is far above 20 s) and fit the failure. Not observed, not provable from one CI log, and it does not explain why the next test failed too.
+
+**Conclusion.** No regression found; best explanation is a stalled worker on a loaded CI VM (two consecutive 20 s stalls and two later failures in the file point at the whole worker, not one test). Recorded as environmental. UNVERIFIED: the port-reuse race. If this file fails again, check the CI log for the other files running in that shard and the time between the first and second timeout.

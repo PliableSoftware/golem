@@ -47,6 +47,26 @@ describe("isProseSource", () => {
     expect(isProseSource("docs/plan/ROADMAP.md")).toBe(false);
     expect(isProseSource(undefined)).toBe(false);
   });
+
+  it("excludes docs/marketing/ drafts (unverified promotional prose), keeps wiki eligible", () => {
+    expect(isProseSource("docs/marketing/blog-launch.md")).toBe(false);
+    expect(isProseSource("docs/marketing/nested/post.md")).toBe(false);
+    expect(isProseSource("docs\\marketing\\blog-launch.md")).toBe(false); // windows sep
+    expect(isProseSource("DOCS/Marketing/Post.MD")).toBe(false); // case-insensitive
+    expect(isProseSource("/abs/repo/docs/marketing/post.md")).toBe(false);
+    // Neighbours stay eligible: only the exact directory is excluded.
+    expect(isProseSource("docs/wiki/concepts/Marketing.md")).toBe(true);
+    expect(isProseSource("docs/marketing-notes.md")).toBe(true);
+    expect(isProseSource("docs/wiki/marketing/Plan.md")).toBe(true);
+    expect(isProseSource("docs/plan/ROADMAP.md")).toBe(false);
+  });
+
+  it("declines when the only confident hit is a docs/marketing/ draft", async () => {
+    const svc = new KnowledgeLocalAnswerService(
+      fakeSearch([hit("docs/marketing/blog.md", 0.9, "Golem is the fastest ever.")]),
+    );
+    expect((await svc.tryAnswer({ text: "what is golem", projectId: "p" })).answered).toBe(false);
+  });
 });
 
 describe("KnowledgeLocalAnswerService prose restriction", () => {

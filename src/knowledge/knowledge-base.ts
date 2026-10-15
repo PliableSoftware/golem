@@ -17,7 +17,6 @@ import type { MemorySearchProvider } from "../compression/memory-search.js";
 import {
   type Chunk,
   DEFAULT_SCOPES,
-  type FederatedSearch,
   type Hit,
   type IngestReport,
   type KnowledgeBase,
@@ -28,11 +27,12 @@ import { chunkMarkdown } from "./chunker.js";
 import { isDeletable, type StoredChunk, type VectorDriver } from "./driver.js";
 import { type FileChangeBatch, type FileWatcher, watchPath } from "./file-watcher.js";
 import {
-  chunkFilesRelativeTo,
+  chunkFilesChecked,
   chunkIdFor,
   type PreparedChunk,
   planIngest,
-  toPosix,
+  projectBaseDir,
+  sourcePathFor,
 } from "./ingest.js";
 
 /** Prefix for a memory-scope hit's synthetic chunk id (never stored by the vector driver). */
@@ -85,6 +85,21 @@ export function supportsIncremental(kb: KnowledgeBase): kb is KnowledgeBase & In
     typeof c.reindexFiles === "function" &&
     typeof c.removeSourcePaths === "function"
   );
+}
+
+/**
+ * `reindexFiles` could not read some files. The readable ones HAVE been re-indexed;
+ * the `failed` ones kept their old chunks and must be retried — never recorded as
+ * indexed.
+ */
+export class PartialReindexError extends Error {
+  constructor(
+    readonly failed: readonly string[],
+    readonly chunks: number,
+  ) {
+    super(`${failed.length} file(s) could not be read`);
+    this.name = "PartialReindexError";
+  }
 }
 
 /** Thrown by surfaces not implemented until a later WS-C task. */
@@ -191,14 +206,19 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
       throw new NotImplementedYetError("file watching", "driver");
     }
 
-    const plan = await planIngest(pathArg, { syntaxAwareChunking: this.#syntaxAwareChunking });
+    const absTarget = path.resolve(pathArg);
+    const targetIsFile = (await stat(absTarget)).isFile();
+    const baseDir = projectBaseDir(projectId, absTarget, targetIsFile);
+    const plan = await planIngest(pathArg, {
+      syntaxAwareChunking: this.#syntaxAwareChunking,
+      baseDir,
+    });
     await this.#driver.openCollection(projectId);
     const chunksIndexed = await this.#embedAndStore(projectId, plan.chunks);
 
     let watching = false;
     if (watch === true) {
-      const absRoot = path.resolve(pathArg);
-      const baseDir = (await stat(absRoot)).isFile() ? path.dirname(absRoot) : absRoot;
+      const absRoot = absTarget;
       const watcher = await watchPath(absRoot, (batch) => {
         // Background maintenance: a failed reindex must never crash the host
         // process — the next change event naturally retries.
@@ -235,7 +255,7 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
   ): Promise<void> {
     if (batch.changed.length > 0) await this.reindexFiles(baseDir, projectId, batch.changed);
     if (batch.removed.length > 0) {
-      const sourcePaths = batch.removed.map((abs) => toPosix(path.relative(baseDir, abs)));
+      const sourcePaths = batch.removed.map((abs) => sourcePathFor(baseDir, abs));
       await this.removeSourcePaths(projectId, sourcePaths);
     }
   }
@@ -255,14 +275,23 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
       throw new NotImplementedYetError("incremental re-index", "driver");
     }
     await this.#driver.openCollection(projectId);
-    const chunks = await chunkFilesRelativeTo(absFiles, baseDir, {
+    const { chunks, unreadable } = await chunkFilesChecked(absFiles, baseDir, {
       syntaxAwareChunking: this.#syntaxAwareChunking,
     });
-    // Clear the touched files' old chunks first (content-based ids would
-    // orphan) — one batch call so persisted drivers flush once, not per file.
-    const sourcePaths = new Set(chunks.map((c) => c.sourcePath));
+    // Embed FIRST, swap second: if the embedder is down (or the store lock is lost)
+    // the old chunks are still there, so an edit can never remove a page from search.
+    const stored = await this.#embedChunks(projectId, chunks);
+    // Replace the readable files' old chunks, keyed by the INPUT files, not the new
+    // chunks: a file that now yields none (emptied, or no longer chunkable) must
+    // still lose its old vectors. An UNREADABLE file keeps its old chunks.
+    const bad = new Set(unreadable);
+    const sourcePaths = new Set(
+      absFiles.filter((abs) => !bad.has(abs)).map((abs) => sourcePathFor(baseDir, abs)),
+    );
     await this.#driver.deleteBySourcePaths(projectId, [...sourcePaths]);
-    return this.#embedAndStore(projectId, chunks);
+    if (stored.length > 0) await this.#driver.upsert(projectId, stored);
+    if (unreadable.length > 0) throw new PartialReindexError(unreadable, stored.length);
+    return stored.length;
   }
 
   /** {@link IncrementalIngest.removeSourcePaths} — drop deleted files' chunks. */
@@ -297,6 +326,16 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
 
   /** Embed prepared chunks (batched per kind) and upsert them; returns count stored. */
   async #embedAndStore(projectId: string, prepared: readonly PreparedChunk[]): Promise<number> {
+    const stored = await this.#embedChunks(projectId, prepared);
+    if (stored.length > 0) await this.#driver.upsert(projectId, stored);
+    return stored.length;
+  }
+
+  /** Embed prepared chunks (batched per kind) into storable records; writes nothing. */
+  async #embedChunks(
+    projectId: string,
+    prepared: readonly PreparedChunk[],
+  ): Promise<StoredChunk[]> {
     const embed = this.#embed;
     if (embed === undefined) throw new NotImplementedYetError("ingest (chunk embedding)", "C3");
     const byKind: Record<"text" | "code", PreparedChunk[]> = { text: [], code: [] };
@@ -328,12 +367,6 @@ export class GolemKnowledgeBase implements KnowledgeBase, IncrementalIngest {
         });
       }
     }
-    if (stored.length > 0) await this.#driver.upsert(projectId, stored);
-    return stored.length;
+    return stored;
   }
-}
-
-/** Narrowing helper: expose only the read side (FederatedSearch) when that's all a caller needs. */
-export function asFederatedSearch(kb: KnowledgeBase): FederatedSearch {
-  return kb;
 }

@@ -10,12 +10,29 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { WikiFrontmatter, WikiPage, WikiStore, WikiUpsertInput } from "../interfaces/index.js";
 import { UnknownWikiPageError, WikiWriteConflictError } from "../interfaces/index.js";
-import { extractWikilinks, parseFrontmatter, serializeFrontmatter } from "./frontmatter.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
+import {
+  extractWikilinks,
+  frontmatterBlock,
+  parseFrontmatter,
+  serializeFrontmatter,
+} from "./frontmatter.js";
+import { assertSafeWikiPath, redactWikiText as redact } from "./write-redaction.js";
 
 export interface FileWikiStoreOptions {
   readonly wikiDir: string;
   /** Today's date as YYYY-MM-DD; injected for tests. */
   readonly now?: () => string;
+  /**
+   * Project directory whose plugin redaction rules apply to writes (DUSTSEC.8).
+   * Omit and only the built-in rules run; they always run.
+   */
+  readonly projectDir?: string;
+}
+
+/** `foo` and `foo.md` name the same page; readPage has always appended the suffix. */
+function withMdSuffix(relPath: string): string {
+  return relPath.endsWith(".md") ? relPath : `${relPath}.md`;
 }
 
 function toPosix(p: string): string {
@@ -37,9 +54,11 @@ function union(base: readonly string[], extra: readonly string[]): readonly stri
 export class FileWikiStore implements WikiStore {
   private readonly wikiDir: string;
   private readonly now: () => string;
+  private readonly projectDir: string | undefined;
 
   constructor(options: FileWikiStoreOptions) {
     this.wikiDir = options.wikiDir;
+    this.projectDir = options.projectDir;
     this.now = options.now ?? (() => new Date().toISOString().slice(0, 10));
   }
 
@@ -59,15 +78,22 @@ export class FileWikiStore implements WikiStore {
   }
 
   /** Read + parse one page by its exact wiki-relative path; undefined if absent. */
+  /** Frontmatter blocks as last read, so a rewrite keeps the author's quoting and key order. */
+  private readonly blocks = new Map<string, string>();
+
   private async readAt(relPath: string): Promise<WikiPage | undefined> {
     let raw: string;
     try {
       raw = await readFile(this.absPath(relPath), "utf8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        this.blocks.delete(toPosix(relPath));
+        return undefined;
+      }
       throw err;
     }
     const { frontmatter, body } = parseFrontmatter(raw);
+    this.blocks.set(toPosix(relPath), frontmatterBlock(raw));
     return { relPath: toPosix(relPath), frontmatter, body };
   }
 
@@ -122,7 +148,22 @@ export class FileWikiStore implements WikiStore {
       .map((p) => p.relPath);
   }
 
-  async upsertPage(input: WikiUpsertInput): Promise<WikiPage> {
+  async upsertPage(rawInput: WikiUpsertInput): Promise<WikiPage> {
+    // Redact BEFORE anything is compared or stored: the page lands in a
+    // committed tree, and the result handed back to the caller is this page.
+    if (this.projectDir !== undefined) await ensurePluginRedactionRules(this.projectDir);
+    // A path is a file name in a committed tree: refuse, never rewrite it.
+    assertSafeWikiPath(rawInput.relPath);
+    const input: WikiUpsertInput = {
+      relPath: withMdSuffix(rawInput.relPath),
+      frontmatter: {
+        type: rawInput.frontmatter.type,
+        title: redact(rawInput.frontmatter.title),
+        tags: rawInput.frontmatter.tags.map(redact),
+        sources: rawInput.frontmatter.sources.map(redact),
+      },
+      body: redact(rawInput.body),
+    };
     const existing = await this.readAt(input.relPath);
     const today = this.now();
 
@@ -169,6 +210,10 @@ export class FileWikiStore implements WikiStore {
   private async write(page: WikiPage): Promise<void> {
     const abs = this.absPath(page.relPath);
     await mkdir(path.dirname(abs), { recursive: true });
-    await writeFile(abs, `${serializeFrontmatter(page.frontmatter)}\n\n${page.body}\n`, "utf8");
+    await writeFile(
+      abs,
+      `${serializeFrontmatter(page.frontmatter, this.blocks.get(page.relPath))}\n\n${page.body}\n`,
+      "utf8",
+    );
   }
 }

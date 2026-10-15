@@ -11,14 +11,14 @@ agents died exactly that way, one word after "All green. Committing."
 
 So the decision moves to the one part the parent *does* control:
 
-1. **The spawn is gated on headroom.** Golem refuses a spawn when the session
-   window cannot pay for it — a subagent has historically cost ~15–20% of a
-   window (~171k–186k tokens over 85–94 tool calls). The refusal states what it
-   measured; read the numbers rather than retrying. Do the work inline, or park
-   with `snooze` and spawn after the reset. `snooze.spawn_gate` false (env
-   `GOLEM_SNOOZE_SPAWN_GATE=false`) turns it off; `snooze.spawn_cost_fraction`
-   tunes the estimate. `golem status`'s Limits line says whether spawns are
-   `allowed`, `REFUSED` or `ungated`.
+1. **The spawn gate is OFF by default** (changed 2026-09-25, USER decision).
+   `snooze.spawn_gate` true (env `GOLEM_SNOOZE_SPAWN_GATE=true`) turns it back
+   on: Golem then refuses a spawn when the session window cannot pay for it —
+   a subagent has historically cost ~15–20% of a window (~171k–186k tokens over
+   85–94 tool calls). The refusal states what it measured; read the numbers
+   rather than retrying. `snooze.spawn_cost_fraction` tunes the estimate.
+   `golem status`'s Limits line says whether spawns are `allowed`, `REFUSED` or
+   `ungated`.
 2. **Tell every dispatched agent to commit early.** The survivors survived
    *because* they had already committed. Put it in the prompt: commit working
    increments on your own branch as you go. That is commit early, not merge

@@ -73,7 +73,7 @@ export const MCP_SERVER_KEY = "golem";
  * **`wiki_upsert` is no longer held on `ask` (USER decision 2026-07-30).** It used
  * to be, on the grounds that it writes committed wiki files. That was the pre-
  * Decision-44 posture and it outlived the decision: Decision 44 un-gated wiki
- * authoring precisely because every write lands in git — reviewable and revertible
+ * authoring precisely because wiki writes are reviewable and revertible once committed
  * — so a per-write prompt bought nothing and taught people to click through
  * prompts. Every living surface already says "author wiki pages freely"; this rule
  * was the last place still disagreeing, and a fresh `golem init` now matches. ADRs
@@ -261,7 +261,7 @@ export async function configureClaudeSettings(
 
   // 1c. The target file — pre-approve Golem's own MCP tools so they don't
   // prompt on first use. All of them, wiki_upsert included (Decision 44 / USER
-  // 2026-07-30): wiki writes are un-gated because git makes them reviewable.
+  // 2026-07-30): wiki writes are un-gated because they are reviewable once committed.
   {
     const permissions = objectEntry(settings, "permissions");
     const allow = stringArrayEntry(permissions, "allow");

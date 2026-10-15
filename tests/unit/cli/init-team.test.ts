@@ -234,3 +234,82 @@ describe("403 / 402 during init: the team is named, local config is used, NOTHIN
     }
   });
 });
+
+describe("DUST3.14 D3: init reports the real sync outcome", () => {
+  const entitledFresh = {
+    disposition: { kind: "entitled" },
+    applied: ["security.redact_secrets"],
+    fromCache: false,
+    notice: "Team: settings applied from the portal.",
+  } as const;
+
+  it("does not say 'signed in and up to date' for a 403", async () => {
+    const result = await teamInitStep({
+      dryRun: false,
+      team: linked(),
+      tokenPresent: async () => true,
+      syncTeamLayer: async () => ({
+        disposition: {
+          kind: "not_entitled",
+          code: "not_a_member",
+          status: 403,
+          detail: "this account is not a member of that team (or the team does not exist)",
+        },
+        applied: [],
+        fromCache: false,
+        notice: "Team: NOT being applied (not_a_member).",
+      }),
+    });
+    expect(result.outcome.kind).toBe("degraded");
+    expect(result.notices.join(" ")).not.toMatch(/up to date/);
+    expect(result.notices.join(" ")).toContain("NOT being applied");
+  });
+
+  it("does not say 'up to date' for an api_error", async () => {
+    const result = await teamInitStep({
+      dryRun: false,
+      team: linked(),
+      tokenPresent: async () => true,
+      syncTeamLayer: async () => ({
+        disposition: { kind: "api_error", status: 418, detail: "the portal answered 418" },
+        applied: [],
+        fromCache: false,
+        notice: "Team: this sync did not apply team settings.",
+      }),
+    });
+    expect(result.outcome.kind).toBe("degraded");
+    expect(result.notices.join(" ")).not.toMatch(/up to date/);
+  });
+
+  it("reports a stale cache as cached, not as freshly applied", async () => {
+    const result = await teamInitStep({
+      dryRun: false,
+      team: linked(),
+      tokenPresent: async () => true,
+      syncTeamLayer: async () => ({
+        disposition: { kind: "unreachable", detail: "offline" },
+        applied: ["security.redact_secrets"],
+        fromCache: true,
+        notice:
+          "Team: the portal could not be reached (offline) — using the cached team settings, which are 3 days old.",
+      }),
+    });
+    expect(result.outcome).toEqual({ kind: "degraded", orgId: ORG, usedCache: true });
+    expect(result.notices.join(" ")).toContain("cached");
+    expect(result.notices.join(" ")).not.toMatch(/applied 1 team setting/);
+  });
+
+  it("still reports a fresh entitled sync as applied", async () => {
+    const result = await teamInitStep({
+      dryRun: false,
+      team: linked(),
+      tokenPresent: async () => true,
+      syncTeamLayer: async () => entitledFresh,
+    });
+    expect(result.outcome).toEqual({
+      kind: "applied",
+      orgId: ORG,
+      applied: ["security.redact_secrets"],
+    });
+  });
+});

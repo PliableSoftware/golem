@@ -4,7 +4,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import { readContextLedger } from "../../proxy/index.js";
 import { aggregateCacheStats, renderCacheReport } from "../../telemetry/cache-report.js";
 import {
@@ -144,7 +144,7 @@ export default function register(program: Command): void {
             const ledger = await readContextLedger(opts.dir);
             let window: { catalog: ModelCatalog; warnFraction: number } | undefined;
             try {
-              const { settings } = await loadConfig({ projectDir: opts.dir });
+              const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
               window = {
                 catalog: await loadModelCatalog(opts.dir),
                 warnFraction: settings.models.context_warn_fraction,

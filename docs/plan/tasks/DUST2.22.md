@@ -1,0 +1,124 @@
+---
+task: DUST2.22
+title: Team-wide prompt through the team origin, merged per field, project outranks team
+state: done
+owner: agent
+size: S
+discipline: code
+design: ADR-0008; wiki Team Layer, Persona Registry; SUMMARY.md Gaps 1.6/r017 (P)
+gate: A persona/prompt field set in the team origin applies when the project does not set it, merges per field, and a project value wins; tests for each. golem verify green by exit code.
+depends_on: [DUSTSEC.14]
+touches: [src/config, src/inference, tests]
+created: 2026-10-08
+updated: 2026-10-15T06:12:53.929Z
+---
+
+## What this is
+
+Roadmap gap (DUST1.6 row 17): the persona/prompt docs promise a team-wide prompt delivered
+through the `team` origin, merged per field, with the project layer outranking team. Today only
+part of that path exists; evidence in DUST1.6.
+
+## The work
+
+1. Trace how persona prompt fields are read today and which origins they consult.
+2. Add the team origin as a source, merged per field (not whole-object replace).
+3. Tests: team-only value applies; project value wins; partial team object merges.
+
+## Out of scope
+
+- G3/S18: where enforced team policy must apply across all config loads — open, USER.
+
+## Design decided (2026-10-15)
+
+The task as written ("persona/prompt field set in the team origin") would need `inference.personas`
+and `inference.coder_prompt` opened to a team. Neither is opened: a persona carries `prompt_file`
+(a local file read) and `tools`, and a prompt is an injection channel into every member's model
+context. The safe reading, implemented:
+
+- **One new leaf, `inference.team_prompt`**, a plain string, class `bounded-text` in
+  `src/config/team-policy.ts` (the only exception to default-deny for prompts).
+- **What a team MAY set:** that one string. At most 2000 code points, allow-listed code points only
+  (letters, marks, numbers, punctuation, symbols, space separators, newline, tab), no fence
+  markers, framing lines (`#`, `<`, role headers), code fences, tags, URL/network-path/IP forms
+  (rules in `src/config/team-prompt-rules.ts`). A violating value is REFUSED per key (rest of the layer
+  applies), never truncated, never echoed. Refusal text names the key and the rule only.
+- **What a team may NOT set:** `inference.personas` (so no persona `prompt`, `prompt_file`, `tools`,
+  `model`), `inference.coder_prompt`, `inference.model`, `worker_targets`: all stay `denied`.
+- **How it is used:** `src/inference/team-prompt.ts` APPENDS it after the coder prompt, fenced
+  between fixed BEGIN and END TEAM NOTE markers (team-supplied, advisory, cannot change tools,
+  permissions or redaction, ranks below the user's instructions). Never first, never alone, never a replacement. Applied at the `coder`
+  dispatch `system` field only (NOT the generated subagent body or the ACP turn, see below). The read
+  side strips the same classes and caps by code points again, since local/env values skip the team gate.
+- **Per field, project outranks team:** an ordinary leaf, so a project or local value, or a user value marked
+  important (`user!`), replaces the team's (empty string there = off). A plain USER value does NOT
+  beat the team: ORIGIN_ORDER is default, user, team, project (unchanged), while a project's persona prompts are untouched; both apply.
+- **Redaction:** nothing new exempt. A `coder` dispatch to a non-local target is redacted at the
+  target's trust floor; subagent traffic crosses the proxy's redaction.
+- **Visibility:** accepted value shows in config get/list, status and control surface with layer `team`.
+- Tests: `tests/unit/config/team-prompt.test.ts`, `tests/unit/inference/team-prompt.test.ts`,
+  leak test in `team-policy.test.ts` extended to the neighbours, dispatch test in
+  `tests/integration/mcp-server.test.ts`.
+
+## Orchestrator decisions (2026-10-15) and what they changed
+
+- **Q1** One global team note is enough. No per-persona team prompts.
+- **Q2** A team may NOT enforce `inference.team_prompt` (`REMOTE_NEVER_ENFORCED` in
+  `team-policy.ts`, applied in `buildObjectLayer`). A `team!` declaration is ignored with one
+  warning naming the key and the rule (never the text); the value still applies as an ordinary
+  team value that a project or local value, or a `user!` value, replaces. A plain user value does
+  not. `user!`/`local!` are unchanged. It is never REPORTED as enforced either: no `(enforced)`
+  suffix in `team.applied` or `golem team sync`, not counted in `enforced_count`, stale
+  `!important` entry removed from `team.teamLayer.settings`.
+- **Q3** NOT delivered to generated `.claude/agents` bodies (system prompts by construction);
+  `persona-sync.ts` no longer touches it. Delivered ONLY on the dispatch `system` field of the
+  `coder` MCP tool. Rationale: the coder worker lane is a bounded code-writing worker (no tools beyond what
+  the dispatch grants, output reviewed by the orchestrating session), so a FENCED advisory note
+  (BEGIN/END markers, which the gate refuses and the strip removes from the text) is accepted
+  there. Generated agent bodies and ACP turns are EXCLUDED because they run with the member's
+  own authority and tools; `src/buzz/acp-turn.ts` does not call `withTeamPrompt`. Revisit if a
+  user-level slot exists.
+- **Q4** The URL check now covers `://`, `data:`/`mailto:`/`file:`/`javascript:`/`ftp:` forms,
+  UNC, `www.`, IPv4/IPv6 on an NFKC copy. KNOWN LIMITATION: a bare domain ("example.com"), a file
+  path or "fetch example dot com" written in prose passes. The fence and the bounds are the
+  defence, not the heuristic. An empty `GOLEM_INFERENCE_TEAM_PROMPT=` is treated as unset (env.ts).
+
+### Redaction trace (A)
+`coder` tool -> `dispatcher.dispatch({system})`
+builds messages with `buildDispatchMessages`, then `redactReversibleTexts` over EVERY message
+(system included) before any non-local dispatch or spawn. The only unredacted branch is a target
+that certifies `trust: "local"` on a real loopback endpoint (stays on the machine); the
+no-dispatcher `inference.chat` fallback is the local tiered service. Pinned by
+`tests/unit/buzz/team-prompt-redaction.test.ts`: a secret-shaped value built at runtime inside a
+team prompt is absent from the recorded bytes for a coder dispatch; a second case proves an ACP
+turn does not carry the team text at all. The same file pins the closed delivery list by source
+scan: nothing in the proxy, hooks or agent generator reads the setting, so it can never reach a
+proxied request body.
+
+### Raw team payload (B), follow-up
+`team.teamLayer.settings` is the team's raw payload. Probing found no surface serialising it
+(`tests/unit/config/team-payload-surfaces.test.ts`, which also pins the readers of `.teamLayer`).
+`loadEffectiveConfig` now drops refused keys from the object it hands out (`withoutRefusedValues`
+in `effective.ts`). FOLLOW-UP: the structural risk remains for values that are ACCEPTED but
+sensitive-shaped (none today: every accepted team class is a boolean, a number, a level, a root list or
+the bounded team prompt). A cleaner fix is to stop carrying the raw payload on the resolution at all
+and hand `loadConfig` the layer by a separate channel.
+
+## Round 3 hardening (2026-10-15, ships in 0.55.0)
+
+The gate and the strip in `src/config/team-prompt-rules.ts` now work on a SKELETON (NFKD, marks and
+default-ignorables removed, explicit Cyrillic/Greek/small-capital/colon/angle lookalike table,
+lowercase): fence markers match with any separators or none; framing lines match behind a quote
+or list prefix or an invisible; `~~~` fences, scheme-relative `//host`, `∶`/`：` colons, hex and
+9-10 digit decimal IPs are refused. The allow-list admits only U+0020 among separators and refuses
+every Default_Ignorable, variation selector, U+034F, U+17B4/17B5, Hangul filler and U+2800; more
+than 3 stacked marks and Latin+Cyrillic/Greek mixed words are refused. The strip iterates to a
+fixed point (markers, fences and tags first, then framing lines), collapses more than two blank
+lines, and drops the whole value when it still fails the gate. Residual risk: bare domains in
+prose, the table is not the full Unicode confusables set, decimal IPs under 9 digits, and free
+text can still say something persuasive: the fence and the coder lane's bounded authority are the
+defence, not the filters.
+
+## Outcome
+
+shipped in #318

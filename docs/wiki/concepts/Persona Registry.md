@@ -3,7 +3,7 @@ title: Persona Registry
 type: concept
 tags: [r14, r14-1, inference, configuration, personas, bench, dispatch, agent-definition]
 sources: ["src/config/schema.ts", "src/config/loader.ts", "src/inference/personas.ts", "src/config/migrations.ts", "src/cli/personas.ts", "src/cli/init-hooks.ts", "docs/decisions/ADR-0003-credential-storage-and-account-routing.md"]
-updated: 2026-09-17
+updated: 2026-10-15
 created: 2026-08-30
 ---
 
@@ -72,9 +72,23 @@ A persona has two states:
 **`dispatchable`** folds in the permission axis:
 
 - `dispatchable: true` — staffed AND `owner: "agent"`. This persona may be dispatched by the session.
-- `dispatchable: false` — unstaffed OR `owner: "user"`. A `user`-owned persona is a role only a human fills; nothing may dispatch it.
+- `dispatchable: false` — unstaffed OR `owner: "user"`. A `user`-owned persona is a role only a human fills; nothing may dispatch it (enforced on the worker lane too since DUSTSEC.11 — see below).
 
 This distinction is why `personaModel(personas, id)` returns `undefined` for a persona that is undeclared, unstaffed, **or** `owner: user`. Folding the permission axis in there rather than at each call site is deliberate: six places used to read `inference.default_coder` directly, and six places each remembering to check `owner` separately is five chances to forget.
+
+### `owner: user` binds the worker lane (DUSTSEC.11, USER decision R9)
+
+For a while only the agent lane honoured this. `personaModel` and `resolvePersonaLane`
+(`src/inference/persona-lane.ts:112`) refused `owner: user`, but the worker lane's
+`workerTargetFromPersona` deliberately ignored the permission axis, so a `coder` MCP
+call could dispatch a human-owned role. Now `assertWorkerDispatchable` throws
+`PersonaNotDispatchableError` (`src/inference/personas.ts:183-206`) and both worker
+entry points translate it into a refusal: `selectTarget` runs it **before any worker
+route**, including `worker_targets` and an explicit target
+(`src/inference/target-dispatcher.ts:727-736`), and `resolveCoderRoute` does the
+same for `coder` (`src/inference/coder-route.ts:103-107`). An explicit target only
+chooses *where* a worker runs, never *whether* a human-owned role may run, and the
+refusal never falls back to a default target.
 
 ## Security properties
 
@@ -95,7 +109,7 @@ Staff them by setting `inference.personas.<id>.model` to a model id or target id
 
 Staffing goes **per role**, not per hierarchy: there is no `manager` persona (only the interactive session can spawn a subagent, so a dispatching persona is a fiction).
 
-`inference.personas` keys are user-defined, not an enum — a project may define custom personas beyond the shipped four. This repo's own `.golem/settings.local.json` (personal, gitignored) staffs the shipped personas onto specific models (`claude-opus-5` for `planner` and `reviewer`, `claude-sonnet-5` for `coder`, `claude-haiku-4-5` for `scribe`), exactly like any other project layer overrides a default. `DEFAULT_PERSONA_PROMPTS` carries built-in prompts keyed by persona id for all four, inherited when a persona is staffed without an explicit `prompt` override.
+`inference.personas` keys are user-defined, not an enum — a project may define custom personas beyond the shipped four. This repo's own committed `.golem/settings.json` (tracked by git, not the gitignored `settings.local.json`) staffs the shipped personas onto specific models: `claude-opus-5-5` for `planner` and `reviewer`, `claude-sonnet-5-5` for `coder`, `claude-haiku-4-5` for `scribe`, exactly like any other project layer overrides a default. `DEFAULT_PERSONA_PROMPTS` carries built-in prompts keyed by persona id for all four, inherited when a persona is staffed without an explicit `prompt` override.
 
 Prompts are versioned with the shipped bench: `DEFAULT_PERSONA_PROMPTS` in `src/inference/personas.ts` supplies built-in prompts for each, which can be overridden per layer by `prompt` (inline) or `prompt_file`. Users can eject and edit with `golem personas eject <id>`.
 
@@ -138,11 +152,47 @@ settings.local.json: "inference.default_coder" was retired in R14.1 and no longe
 
 That message names the file, the key, and the exact replacement syntax.
 
-## What is not here yet
+## `inference.worker_targets` is live, and wins over a persona's model
 
-- **Staffing lane** (subagent vs dispatched worker) — R14.2.
-- **Generating agent definitions** (`.claude/agents/golem-<id>.md`) — R14.3.
-- **A task naming a `discipline`** — R14.4. Note it is advisory and free-form: a discipline nobody staffs changes nothing, with no warning, by design.
+`inference.worker_targets` (worker name → target id) is **not** retired (DUSTSEC.13, USER decision G1). It is a schema leaf, loads with no warning, and is never migrated into `personas`. Earlier text that called it retired in R14.3 and raising was wrong; `RETIRED_SETTINGS` holds only `inference.default_coder`.
+
+Destination precedence for a worker, highest first:
+
+1. an explicit target on the call
+2. `inference.worker_targets[worker]`
+3. `inference.personas[worker].model`
+4. `inference.model`
+5. the harness's own upstream
+
+When `worker_targets` and a persona's `model` name different destinations, `worker_targets` wins; the conflict is reported, and unsetting the map entry hands the worker to the persona's model. The map affects the worker lane only; the persona's `model` also serves the harness (agent) lane.
+
+## What was "not here yet", and has shipped
+
+An earlier version of this page listed three items as pending. All three are in the
+code now:
+
+- **Staffing lane** (subagent vs dispatched worker) — `resolvePersonaLane`,
+  `src/inference/persona-lane.ts:89-143`, with `personaLaneConflict` at `:151`.
+- **Generating agent definitions** (`.claude/agents/golem-<id>.md`) —
+  `installPersonaAgents` (`src/cli/init-personas.ts:198`) and
+  `personaAgentDefinition` (`src/cli/agents.ts:70`).
+- **A task naming a `discipline`** — `personasForDiscipline`
+  (`src/inference/personas.ts:155-161`). It stays advisory and free-form: a
+  discipline nobody staffs changes nothing, with no warning, by design.
+
+The ids `R14.2`, `R14.3` and `R14.4` that the old text used for these now name
+**Buzz** work in `docs/plan/tasks/` (see [[Buzz Integration]]); they are not the
+persona lane, agent definitions or discipline matching. Task ids are never reused,
+so read the old labels as historical.
+
+## A team prompt rides along on the worker lane
+
+`inference.team_prompt` (DUST2.22, [[Team Layer]]) is appended, fenced between BEGIN and END
+TEAM NOTE markers as advisory text, to the `coder` dispatch `system` field only: that worker lane
+is bounded (no tools beyond the dispatch's, output reviewed by the orchestrating session). It is
+deliberately NOT written into generated agent bodies or ACP turns, which run with the member's own
+authority and tools. It never replaces a persona's own `prompt`. Personas themselves stay
+unsettable by a team.
 
 ## The sibling rule: prefer the bench over `fork`
 
@@ -152,4 +202,4 @@ See `src/cli/persona-preference-rule.ts` for the generation logic and full ratio
 
 ## Related
 
-[[Configuration Surfaces]] · [[Spawn Headroom Gate]] · [[Team Layer]] · [[Architecture]]
+[[Configuration Surfaces]] · [[Buzz Integration]] · [[Spawn Headroom Gate]] · [[Team Layer]] · [[Architecture]]

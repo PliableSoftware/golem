@@ -5,14 +5,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
-import { findProjectDir, loadConfig } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   markReviewed,
   readDelegationLedger,
   unreviewedDelegations,
   unreviewedRefusal,
+  updateDelegationLedger,
   waiveReview,
-  writeDelegationLedger,
 } from "../../hooks/delegation-ledger.js";
 import {
   createProbeRunner,
@@ -22,12 +22,18 @@ import {
 } from "../../inference/index.js";
 import {
   buildResumeArgv,
+  captureWorktree,
   createTask,
+  describeWorktree,
   escalateTask,
   FileTaskStore,
+  formatResumeCommand,
   isResumable,
   PlanTaskStore,
+  resumeCwd,
   runQueueLocally,
+  TERMINAL_TASK_STATES,
+  worktreeDrift,
 } from "../../tasks/index.js";
 import { InitError } from "../init.js";
 import {
@@ -40,6 +46,8 @@ import {
   findScopedTask,
   findTask,
   listScopedTasks,
+  listScopedTasksWithProblems,
+  renderPlanProblems,
   renderScopedTaskList,
   renderTask,
   spawnResume,
@@ -56,7 +64,7 @@ function _fail(err: unknown): never {
 
 async function _buildInferenceForDir(dir: string) {
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const client = new OllamaClient({
       baseUrl: settings.inference.ollama_base_url,
       requestTimeoutMs: settings.inference.request_timeout_ms,
@@ -111,7 +119,11 @@ export default function register(program: Command): void {
             ...(opts.idemKey !== undefined ? { idempotencyKey: opts.idemKey } : {}),
             ...(opts.notBefore !== undefined ? { notBefore: opts.notBefore } : {}),
           });
-          const stored = await new FileTaskStore(opts.dir).put(task);
+          // Where this was parked (r029); fail-open, absent outside a git checkout.
+          const worktree = await captureWorktree(opts.dir);
+          const stored = await new FileTaskStore(opts.dir).put(
+            worktree !== undefined ? { ...task, worktree } : task,
+          );
           process.stdout.write(
             opts.json ? `${JSON.stringify(stored, null, 2)}\n` : `queued task ${stored.id}\n`,
           );
@@ -135,16 +147,20 @@ export default function register(program: Command): void {
             "--plan and --local are mutually exclusive (omit both for all tasks)",
           );
         const only = opts.plan ? "plan" : opts.local ? "local" : undefined;
-        const entries = await listScopedTasks(opts.dir, only);
-        process.stdout.write(
-          opts.json
-            ? `${JSON.stringify(
-                entries.map((e) => ({ scope: e.scope, ...e.task })),
-                null,
-                2,
-              )}\n`
-            : renderScopedTaskList(entries),
-        );
+        const { entries, problems } = await listScopedTasksWithProblems(opts.dir, only);
+        if (opts.json) {
+          // The JSON shape stays a bare array; the loud part goes to stderr.
+          process.stdout.write(
+            `${JSON.stringify(
+              entries.map((e) => ({ scope: e.scope, ...e.task })),
+              null,
+              2,
+            )}\n`,
+          );
+          process.stderr.write(renderPlanProblems(problems));
+        } else {
+          process.stdout.write(renderScopedTaskList(entries, problems));
+        }
       } catch (err) {
         _fail(err);
       }
@@ -181,17 +197,23 @@ export default function register(program: Command): void {
     .action(
       async (opts: { dir: string; summary: boolean; write?: string | boolean; json: boolean }) => {
         try {
-          const tasks = await new PlanTaskStore(opts.dir).list();
+          const { tasks, problems } = await new PlanTaskStore(opts.dir).listWithProblems();
+          // An unreadable doc is missing from the index: that is a failure, whatever
+          // the output mode, so the exit code says so (the output is still produced).
+          if (problems.length > 0) process.exitCode = 1;
           if (opts.json) {
             const { ready, blocked, done } = groupPlanTasks(tasks);
-            process.stdout.write(`${JSON.stringify({ ready, blocked, done }, null, 2)}\n`);
+            process.stdout.write(
+              `${JSON.stringify({ ready, blocked, done, unparseable: problems }, null, 2)}\n`,
+            );
             return;
           }
           if (opts.summary) {
-            process.stdout.write(renderPlanSummary(tasks));
+            process.stdout.write(renderPlanSummary(tasks, problems));
             return;
           }
-          const rendered = renderPlanIndex(tasks);
+          if (problems.length > 0) process.stderr.write(renderPlanProblems(problems));
+          const rendered = renderPlanIndex(tasks, problems);
           if (opts.write === undefined || opts.write === false) {
             process.stdout.write(`${rendered}\n`);
             return;
@@ -229,26 +251,84 @@ export default function register(program: Command): void {
         opts: { dir: string; spawn: boolean; outputJson: boolean; permissionMode?: string },
       ) => {
         try {
-          const store = new FileTaskStore(opts.dir);
-          const task = findTask(await store.list(), id);
-          if (task === "none") throw new InitError(`no task matching "${id}"`);
-          if (task === "ambiguous") throw new InitError(`"${id}" matches more than one task`);
+          const { entries, problems } = await listScopedTasksWithProblems(opts.dir);
+          const found = findScopedTask(entries, id);
+          if (found === "none") {
+            // A doc that failed to parse must not read as "no such task".
+            const hint = problems.find((p) => p.name.toLowerCase().startsWith(id.toLowerCase()));
+            throw new InitError(
+              hint !== undefined
+                ? `plan task document ${hint.path} is unparseable: ${hint.reason}`
+                : `no task matching "${id}"`,
+            );
+          }
+          if (found === "ambiguous") throw new InitError(`"${id}" matches more than one task`);
+          const { task, scope } = found;
           if (!isResumable(task)) {
             process.stdout.write(`task ${task.id} is not resumable (state is ${task.state})\n`);
             return;
           }
-          const argv = buildResumeArgv(task, {
-            outputJson: opts.outputJson,
-            ...(opts.permissionMode !== undefined ? { permissionMode: opts.permissionMode } : {}),
-          });
+          const isPlan = scope === "plan";
+          if (isPlan && task.plan?.owner === "user") {
+            throw new InitError(
+              `plan task ${task.id} is owner: user (outward-facing or credentialed) — an agent must not run it`,
+            );
+          }
+          const blockedReason = isPlan ? task.plan?.blocked : undefined;
+          const unmetDeps = isPlan
+            ? (task.plan?.dependsOn ?? []).filter((dep) => {
+                const d = entries.find((e) => e.scope === "plan" && e.task.id === dep);
+                return d !== undefined && !TERMINAL_TASK_STATES.has(d.task.state);
+              })
+            : [];
+          if (isPlan && opts.spawn && (blockedReason !== undefined || unmetDeps.length > 0)) {
+            throw new InitError(
+              `plan task ${task.id} is blocked — ${blockedReason ?? `waiting on ${unmetDeps.join(", ")}`}; not spawning`,
+            );
+          }
+          // A plan task is a committed document, not a conversation: start fresh from
+          // its brief rather than `--continue`-ing some unrelated session.
+          const prompt = isPlan
+            ? `Plan task ${task.id}${task.title !== undefined ? ` — ${task.title}` : ""}. Do the work in this brief; stop at its gate.\n\n${task.prompt}`
+            : task.prompt;
+          const argv = buildResumeArgv(
+            { ...task, prompt },
+            {
+              fresh: isPlan,
+              outputJson: opts.outputJson,
+              ...(opts.permissionMode !== undefined ? { permissionMode: opts.permissionMode } : {}),
+            },
+          );
+          if (task.worktree !== undefined) {
+            process.stdout.write(`parked in worktree: ${describeWorktree(task.worktree)}\n`);
+            for (const warning of await worktreeDrift(task.worktree)) {
+              process.stdout.write(`  warning: ${warning}\n`);
+            }
+          }
+          if (blockedReason !== undefined || unmetDeps.length > 0) {
+            process.stdout.write(
+              `  warning: plan task is blocked — ${blockedReason ?? `waiting on ${unmetDeps.join(", ")}`}\n`,
+            );
+          }
           if (!opts.spawn) {
             process.stdout.write(
-              `resume command (pass --spawn to launch it):\n  ${argv.join(" ")}\n`,
+              `resume command (pass --spawn to launch it):\n  ${formatResumeCommand(argv)}\n`,
             );
             return;
           }
-          const result = spawnResume(argv);
-          await store.put({ ...task, state: "running", attempts: task.attempts + 1 });
+          const cwd = resumeCwd(task.worktree);
+          const result = await spawnResume(argv, cwd);
+          // A plan doc is committed and shared: launching must not dirty it with
+          // machine-local `running`/attempt bookkeeping. Only local tasks record it.
+          if (!isPlan) {
+            // A launch that failed is not a running task: leave the state alone so
+            // the record does not claim work that never started.
+            await new FileTaskStore(opts.dir).put(
+              result.spawned
+                ? { ...task, state: "running", attempts: task.attempts + 1 }
+                : { ...task, attempts: task.attempts + 1 },
+            );
+          }
           process.stdout.write(
             result.spawned
               ? `resumed task ${task.id} (pid ${result.pid ?? "?"})\n`
@@ -291,7 +371,9 @@ export default function register(program: Command): void {
 
   taskCmd
     .command("done")
-    .description("Mark a task done")
+    .description(
+      "Mark a task done (refuses while delegated runs are unreviewed — see `golem task review`)",
+    )
     .argument("<id>", "task id or unique prefix")
     .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--note <text>", "short outcome note appended to the task body")
@@ -337,39 +419,52 @@ export default function register(program: Command): void {
     )
     .action(async (id: string | undefined, opts: { dir: string; all: boolean; waive?: string }) => {
       try {
-        const ledger = await readDelegationLedger(opts.dir);
-        const outstanding = unreviewedDelegations(ledger);
-        if (outstanding.length === 0) {
-          process.stdout.write("no delegated runs are awaiting review\n");
-          return;
-        }
-        if (id === undefined && !opts.all && opts.waive === undefined) {
-          throw new InitError(
-            `${outstanding.length} delegated run(s) awaiting review. ` +
-              "Name one by id, or use --all. Ids:\n" +
-              outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
-          );
-        }
-        const nowIso = new Date().toISOString();
-        const result =
-          opts.waive !== undefined
-            ? waiveReview(ledger, nowIso, opts.waive, id)
-            : markReviewed(ledger, nowIso, id);
-        if (result.changed === 0) {
-          // Reporting success for a no-op is the dishonest-signal class this
-          // repo keeps closing.
-          throw new InitError(
-            id === undefined
-              ? "nothing changed — no outstanding delegated runs"
-              : `no outstanding delegated run with id "${id}"`,
-          );
-        }
-        await writeDelegationLedger(opts.dir, result.ledger);
-        process.stdout.write(
-          opts.waive !== undefined
-            ? `waived review for ${result.changed} delegated run(s): ${opts.waive}\n`
-            : `marked ${result.changed} delegated run(s) reviewed\n`,
-        );
+        // Read-modify-write under the same lock `recordDelegation` takes, so a spawn
+        // recorded between our read and write is not erased (which would let
+        // `task done` close past the R14.6 gate).
+        const message = await updateDelegationLedger(opts.dir, (ledger) => {
+          const outstanding = unreviewedDelegations(ledger);
+          if (outstanding.length === 0) {
+            return { ledger: null, result: "no delegated runs are awaiting review\n" };
+          }
+          if (id === undefined && !opts.all && opts.waive === undefined) {
+            throw new InitError(
+              `${outstanding.length} delegated run(s) awaiting review. ` +
+                "Name one by id, or use --all. Ids:\n" +
+                outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
+            );
+          }
+          if (opts.waive !== undefined && id === undefined && !opts.all) {
+            // A waiver is the deliberate escape hatch: it must name its target, never
+            // sweep every outstanding run by omission.
+            throw new InitError(
+              `--waive needs an id or an explicit --all. ${outstanding.length} outstanding. Ids:\n` +
+                outstanding.map((d) => `  ${d.id}  ${d.agentType}`).join("\n"),
+            );
+          }
+          const nowIso = new Date().toISOString();
+          const result =
+            opts.waive !== undefined
+              ? waiveReview(ledger, nowIso, opts.waive, id)
+              : markReviewed(ledger, nowIso, id);
+          if (result.changed === 0) {
+            // Reporting success for a no-op is the dishonest-signal class this
+            // repo keeps closing.
+            throw new InitError(
+              id === undefined
+                ? "nothing changed — no outstanding delegated runs"
+                : `no outstanding delegated run with id "${id}"`,
+            );
+          }
+          return {
+            ledger: result.ledger,
+            result:
+              opts.waive !== undefined
+                ? `waived review for ${result.changed} delegated run(s): ${opts.waive}\n`
+                : `marked ${result.changed} delegated run(s) reviewed\n`,
+          };
+        });
+        process.stdout.write(message);
       } catch (err) {
         _fail(err);
       }

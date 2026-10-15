@@ -3,7 +3,7 @@ title: Session Transport
 type: concept
 tags: [r13, adr-0007, sse, transport, wire-protocol, idempotency]
 sources: ["docs/decisions/ADR-0007-remote-conversation-and-hosted-sessions.md", "src/interfaces/session-events.ts", "docs/plan/tasks/R13.5.md"]
-updated: 2026-08-29
+updated: 2026-10-08
 created: 2026-08-29
 ---
 
@@ -74,6 +74,15 @@ up past 200 events is dropped with a reason telling it to reconnect. The ring
 still holds everything, so **dropping it costs a reconnect, not data** — the
 alternative trades a correctness property for a convenience one.
 
+**Fixed 2026-10-09 (DUST3.15, USER decision DROP).** `close` writes a synthetic
+`SessionDroppedFrame` (`{type:"ended", dropped:true, reason}`) with **no `seq` and
+no SSE `id:` line** (`sseFrame` in `src/session/transport.ts`). An absent id leaves
+the client's `lastEventId` on the last real event, so a resume gets exactly what
+it missed, and no seq is reused. It is not a `SessionEvent`; the frozen contract
+in `src/interfaces/session-events.ts` carries a dated amendment. `chat-page.ts`
+renders it as "connection dropped, reconnecting" (the session is still live) and
+now skips any event whose seq it already rendered.
+
 ## Acknowledgement means delivered
 
 A POST returns success **only once the turn has actually reached the session**.
@@ -90,6 +99,15 @@ Every message carries a client-generated `messageId`. A retry after a dropped
 connection returns `status: "duplicate"` with the original `seq` **without
 delivering again**. This matters more than it looks: replaying a TCP segment is
 free, and replaying an instruction to an agent is not.
+
+"Exactly once" is stronger than the code gives. The handler is check-then-act:
+`ledger.lookup(messageId)` first, then the awaited attribution write and
+`session.deliver(text)`, and only afterwards `ledger.record(messageId, seq)`
+(`src/session/transport.ts:311-387`). Two concurrent POSTs carrying one
+`messageId` can both pass the lookup and both deliver (DUST1.10 row 24, from
+reading; not reproduced). The ledger is also per-process; for a joined session the
+queue keeps its own cross-process idempotency (`:355-359`). Sequential retries,
+the case the paragraph above describes, are covered.
 
 ## Bounds are stated, not silent
 

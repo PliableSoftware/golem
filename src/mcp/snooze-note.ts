@@ -2,7 +2,8 @@
  * Snooze park notes — persisting "where you're up to" as part of parking.
  *
  * The park procedure used to be two acts: `golem task add "<note>"` through Bash,
- * then the `snooze` MCP tool. Decision 45 made snooze enforcement the default, and
+ * then the `snooze` MCP tool. Decision 45 made snooze enforcement the default
+ * (enforcement is opt-in now, advisory by default since 2026-09-25), and
  * enforcement denies every non-`snooze` tool call — so step 1 was denied by step 2's
  * own mechanism (task `snooze-taskadd`, observed live 2026-07-30). Exempting the
  * `Bash` call would have re-opened the hole enforcement exists to close, matched on
@@ -19,6 +20,7 @@
 
 import { FileTaskStore } from "../tasks/store.js";
 import { createTask } from "../tasks/types.js";
+import { captureWorktree } from "../tasks/worktree.js";
 
 /** Max length of the derived one-line title (matches `taskTitle` in cli/task.ts). */
 const TITLE_MAX = 60;
@@ -56,7 +58,16 @@ export async function persistSnoozeNote(
     if (trimmed.length === 0) return { ok: false, error: "note is empty" };
     const title = snoozeNoteTitle(trimmed);
     const nowIso = opts.nowIso ?? new Date().toISOString();
-    const task = createTask({ prompt: trimmed, ...(title.length > 0 ? { title } : {}) }, nowIso);
+    // Where the session was parked: a linked worktree is not the repo root (r029).
+    const worktree = await captureWorktree(projectDir);
+    const task = createTask(
+      {
+        prompt: trimmed,
+        ...(title.length > 0 ? { title } : {}),
+        ...(worktree !== undefined ? { worktree } : {}),
+      },
+      nowIso,
+    );
     const stored = await new FileTaskStore(projectDir).put(task, nowIso);
     return { ok: true, id: stored.id };
   } catch (err) {

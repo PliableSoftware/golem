@@ -56,6 +56,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { CcrStore, estimateTokens, LocalDirBlobStore } from "../compression/index.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
 import { captureAfterWrite } from "../vibe/hook.js";
 import { type HookIo, readAll } from "./hook-io.js";
@@ -269,6 +270,11 @@ export async function runPostToolUseHook(
     // Redaction BEFORE storage or excerpting (hard rule): injected pipeline
     // stage first (defaults to pipelineRedact, T-C3), built-in secret strip
     // always on top — this order means injection/default can only strengthen.
+    // DUSTSEC.8: this process is not the proxy, so load the project's plugin
+    // redaction rules first (built-ins stay first; never throws).
+    if (options.redact === undefined) {
+      await ensurePluginRedactionRules(options.projectDir ?? payload.cwd ?? process.cwd());
+    }
     const stored = stripKnownSecrets((options.redact ?? pipelineRedact)(slot.text));
     const refId = createHash("sha256").update(stored, "utf8").digest("hex");
 

@@ -22,6 +22,7 @@
  *    the agent — trades a correctness property for a convenience one.
  */
 
+import { randomBytes } from "node:crypto";
 import type { SessionEvent } from "../interfaces/session-events.js";
 
 /**
@@ -37,11 +38,17 @@ export const RING_CAPACITY = 500;
 /** How many events may queue for ONE subscriber before it is dropped as too slow. */
 export const SUBSCRIBER_QUEUE_LIMIT = 200;
 
+export type SubscriberCloseKind = "dropped" | "shutdown";
+
 export interface Subscriber {
   /** Deliver one event. Returns false when the sink is backed up. */
   readonly send: (event: SessionEvent) => boolean;
-  /** Called when this subscriber is dropped, with the reason. */
-  readonly close: (reason: string) => void;
+  /**
+   * Called when this subscriber is closed, with the reason and WHY: `dropped` is a
+   * backpressure drop (the session is live; reconnect and resume), `shutdown` is the
+   * host going away (the session is over; a real `ended` event was published first).
+   */
+  readonly close: (reason: string, kind: SubscriberCloseKind) => void;
 }
 
 export interface AttachResult {
@@ -49,6 +56,8 @@ export interface AttachResult {
   readonly replay: readonly SessionEvent[];
   /** True when the requested cursor has already fallen out of the ring. */
   readonly gap: boolean;
+  /** True when the bus was closed by a shutdown: nothing more will ever arrive. */
+  readonly closed: boolean;
   /** Stop receiving. */
   readonly detach: () => void;
 }
@@ -67,6 +76,15 @@ export class SessionBus {
   private readonly backlog = new WeakMap<Subscriber, number>();
   /** Set once the session is over; a late attach is told immediately. */
   private ended: SessionEvent | undefined;
+  /** Set by {@link closeAll}: no new subscriber is accepted afterwards. */
+  private closed = false;
+
+  /**
+   * Identifies THIS bus instance. A bus rebuilt under the same session id (a host
+   * restart, a resume) restarts seq at 1, so a client must be able to tell that the
+   * seqs it holds belong to another instance. Sent on the `attached` frame.
+   */
+  readonly epoch: string = randomBytes(8).toString("hex");
 
   constructor(
     readonly sessionId: string,
@@ -89,6 +107,9 @@ export class SessionBus {
    * choose its own — a caller-chosen seq is how a ring stops being ordered.
    */
   publish<T extends Omit<SessionEvent, "seq">>(event: T): SessionEvent {
+    // A session ends once. A second `ended` (shutdown's closeAll, then the runner's
+    // exit handler) must not be stamped, stored or fanned out again.
+    if (event.type === "ended" && this.ended !== undefined) return this.ended;
     const stamped = { ...event, seq: this.nextSeq } as SessionEvent;
     this.nextSeq += 1;
     this.ring.push(stamped);
@@ -109,6 +130,7 @@ export class SessionBus {
         this.subscribers.delete(sub);
         sub.close(
           `dropped: this client fell more than ${SUBSCRIBER_QUEUE_LIMIT} events behind. Reconnect with Last-Event-ID to resume — nothing was lost.`,
+          "dropped",
         );
       }
     }
@@ -128,11 +150,14 @@ export class SessionBus {
     const gap = after > 0 && oldest !== undefined && after + 1 < oldest;
     const replay = this.ring.filter((e) => e.seq > after);
 
-    this.subscribers.add(sub);
-    this.backlog.set(sub, 0);
+    if (!this.closed) {
+      this.subscribers.add(sub);
+      this.backlog.set(sub, 0);
+    }
     return {
       replay,
       gap,
+      closed: this.closed,
       detach: () => {
         this.subscribers.delete(sub);
       },
@@ -144,11 +169,17 @@ export class SessionBus {
     return this.ended;
   }
 
-  /** Drop every subscriber, e.g. because the process is going away. */
+  /**
+   * Drop every subscriber because the process is going away. The session is over,
+   * so subscribers are first told with a REAL `ended` event (stamped, in the ring);
+   * a client must never have to conclude it from a closed socket.
+   */
   closeAll(reason: string): void {
+    this.publish({ type: "ended", reason }); // no-op when the session already ended
+    this.closed = true;
     for (const sub of [...this.subscribers]) {
       this.subscribers.delete(sub);
-      sub.close(reason);
+      sub.close(reason, "shutdown");
     }
   }
 }

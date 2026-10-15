@@ -84,7 +84,7 @@ switch. Most of the value is in the first, which carries almost none of the risk
 | # | Capability | What it grants | Risk |
 |---|---|---|---|
 | **1. Observe** | Read the blocked state, limits and telemetry from a paired device | Disclosure of tool arguments and project names | Moderate — and bounded by redaction |
-| **2. Authorize** | Answer a permission prompt the hook is holding open | Code execution on the developer's machine | **Severe** — for `read`/`write`/`unknown`, now carried first-party by Anthropic's channel relay (R12.7); the `destructive`/`outward` exclusion needs a hook fix to hold against it (R12.11, R12.12) |
+| **2. Authorize** | Answer a permission prompt the hook is holding open | Code execution on the developer's machine | **Severe** — for `read`/`write`/`unknown`, now carried first-party by Anthropic's channel relay (R12.7); the `destructive`/`outward` exclusion needs a hook fix to hold against it (R12.11, R12.12). *(Superseded 2026-10-09: the R12.12 hook fix was removed, DUSTSEC.10, so Golem no longer enforces this exclusion against a relay answer; task DUSTSEC.25 closes the gap.)* |
 | **3. Resume** | Start work in an idle session | — | ~~Structurally unavailable (Decision 37)~~ — **not built by choice; see the re-verification below** |
 
 Capability 3 is not a design choice. It does not exist, R12.7 re-verifies that
@@ -150,7 +150,7 @@ the opposite — read this paragraph together with the block below.]**
 > **What does not change:** the class line itself (§2) is unamended; this
 > re-verification is about which layer enforces it.
 >
-> **SHIPPED 2026-08-28 (R12.12) — the fix half.** Golem now registers a
+> **SHIPPED 2026-08-28 (R12.12) — the fix half. (The deny described here was removed 2026-10-09, DUSTSEC.10, USER decision: the hook now emits no decision and the native dialog asks the human. See ADR-0002.)** Golem now registers a
 > `PermissionRequest` hook (`src/hooks/permission-request.ts`, wired by `golem
 > init` and `golem autonomy wire` alongside its `PreToolUse` sibling) that
 > returns `hookSpecificOutput.decision.behavior: "deny"` for `destructive` and
@@ -172,6 +172,16 @@ the opposite — read this paragraph together with the block below.]**
 > **Until it is confirmed, treat the class line as documented-and-enforced but
 > not observed, for a user running both Golem and a connected permission-relay
 > channel.**
+>
+> **Superseded 2026-10-09 (DUSTSEC.10, USER decision).** The `deny` this block
+> describes was removed, so the class line is no longer enforced against a relay
+> answer by Golem: the native dialog opens and a relay may be notified of it
+> (R12.13 unconfirmed). Task DUSTSEC.25 restores enforcement on the answer side.
+>
+> **Amended 2026-10-09 (USER decision; spec Decision 60(b)).** Remote authorship
+> into a LIVE session is gated on `security.join_injection` being on (off by
+> default), not on a `PermissionRequest` deny being active. Hosted sessions
+> unchanged.
 >
 > **Disposition:** recommend cancelling R12.3/R12.4/R12.8/R12.9 (the pairing,
 > hook-timing, relay, and hosted-account stack built to carry capability 2
@@ -500,7 +510,7 @@ Revision 2 adds four consequences, and they are not small:
 
 ## What must be ratified before R12.3–R12.7 start
 
-1. **The class line in §2** — that `destructive` and `outward` are never remotely
+1. **The class line in §2** *(superseded 2026-10-09: Decision 61 made it a setting, and DUSTSEC.10 removed the R12.12 deny that enforced it; see DUSTSEC.25)* — that `destructive` and `outward` are never remotely
    approvable, with no setting to change it. This is the load-bearing decision;
    accepting it is what keeps ADR-0002 unamended.
 2. **That `unknown` (arbitrary Bash) IS remotely approvable.** Without it the
@@ -528,3 +538,68 @@ Related: [[Redaction Stage]], ADR-0002 (the gate this feeds), ADR-0003
 (credentials, the other "an attacker gets what?" ADR), ADR-0005 (the precedent for
 stating an absent mitigation), Decision 37 (why capability 3 does not exist),
 verification-notes §121→§124 (the certificate machinery).
+
+## Amendment (2026-10-08, DUST2.3)
+
+**Amended 2026-10-08 (DUST2.3; DECISIONS.md P7, default rule "doc follows shipped
+code"; SUMMARY row 1.10/r005; DUST1.10 C8).** The text above is unchanged and is
+history. Five sections were overtaken by later decisions or by code, and this ADR
+carried no pointer to any of them.
+
+- **Section 2 and Section 8 ("no remote approval of `destructive` or `outward` …
+  There is no flag for this").** Superseded by Decision 61 (2026-08-22, USER
+  DECISION), which amends Decision 59(a): a paired device MAY answer a
+  `destructive` or `outward` prompt behind a setting that is off by default.
+  Decision 61 is **decided, not shipped**: the setting is R13.9 (queued) and no
+  such key exists in the `security` settings today. What ships is the opposite
+  extreme. A hosted session always denies those classes
+  (`src/hooks/host-gate.ts:68-82`), and the R12.12 `PermissionRequest` deny
+  applied to every session when the gate was enabled (removed 2026-10-09,
+  DUSTSEC.10; see the ADR-0002 amendments). The threat-model rows that repeat "no setting" carry the same
+  pointer. Whether Decision 61 reaches hosted sessions is a separate open
+  contradiction (P3) and is not decided here.
+- **Section 8, "No remote surface that changes settings".** Whether
+  `REMOTE_DENIED_SETTINGS` (`src/config/loader.ts:144`) should also name the
+  `security.*` keys is an open question (P4) that is not decided here. Note only
+  that the list does not name them today.
+- **Section 3a, `rejectUnauthorized: true`.** The shipped server sets
+  `requestCert: true` and `rejectUnauthorized: false`
+  (`src/security/write-server.ts:160-170`). A handshake-level rejection reads as
+  "cannot connect" on a phone, so the decision moved into `authorizeWrite`, which
+  answers 401 and says which claim failed, and the certificate is verified
+  explicitly on every request. The module header documents this
+  (`write-server.ts:14-26`). The properties §3a cares about hold: Golem is its own
+  CA, the certificate is the only credential, and no bearer token exists. Only the
+  mechanism of rejection differs.
+- **Section 4 (decision binding to `{session, tool, digest, nonce, deadline}`).**
+  Not built and not planned. It belonged to R12.3, which was paused and then
+  cancelled by Decision 59(i) after R12.11 found that Anthropic relays permission
+  prompts to a channel first-party. No `nonce` exists anywhere under
+  `src/session`, `src/security` or `src/hooks`. Treat §4 as dead.
+- **Section 7 (decisions logged to `autonomy-log.jsonl` with the device
+  fingerprint).** For a hosted session the record is the host log instead
+  (`src/session/host-log.ts:1-22`), which ADR-0007 invariant 4 requires and which
+  stores turns and the host's tool decisions. UNVERIFIED: which log, if any,
+  records a decision made on the joined-session path; this amendment did not trace
+  `src/session/join-queue.ts` for it.
+
+Not amended here: the relay and account design (§3b, §3c) is not started; the
+DUST1.10 audit found nothing for it in `src/` (R13.10 is the task).
+
+## Amendment (2026-10-09, P3, USER decision)
+
+**Amended 2026-10-09 (DECISIONS.md P3, USER decision; spec Decision 60 and 61
+amendment notes).** The text above is unchanged and is history.
+
+- **Decision 61's opt-in setting reaches hosted sessions.** Decision 60(d) said that in
+  a hosted session `destructive` and `outward` are refused outright and that no
+  setting changes that. That sentence is amended: when the setting is on, a device may
+  answer a `destructive` or `outward` prompt in a hosted session too. This is consistent
+  with local sessions. ADR-0007 invariant 2 is therefore also amended for the
+  setting-on case.
+- **Decision 61's safeguards apply there unchanged:** off by default, fresh
+  re-authentication per answer, a loud log, and a kill switch.
+- **Not built.** The setting belongs to R13.9, which is queued. Until it exists nothing
+  is exposed and the shipped refusal stands. R13.9 must honour this amendment.
+- **How it was decided.** The recommendation was that hosted sessions stay locked. The
+  user chose otherwise.

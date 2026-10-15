@@ -48,7 +48,6 @@ export type {
 export { DEFAULT_SCOPES, UnknownChunkError } from "./knowledge.js";
 export type {
   PipelinePolicy,
-  SemanticCache,
   SemanticCompression,
   StageConfig,
 } from "./policy.js";

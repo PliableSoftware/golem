@@ -9,8 +9,9 @@
  * (CLAUDE.md hard rule; verification-notes §15).
  *
  * Request bodies are buffered (they are bounded JSON documents) so the A3
- * pipeline seam ({@link RequestPipeline}) can operate on them; at A1 the
- * pipeline is the identity, so forwarded bytes equal received bytes.
+ * pipeline seam ({@link RequestPipeline}) can operate on them; with the default
+ * identity pipeline forwarded bytes equal received bytes, and with the real
+ * pipeline they are redacted (and, at level >= 1, losslessly compacted).
  * No zod here on purpose: the proxy never interprets payloads, so there is
  * no boundary to validate — validation would require a parse/re-serialize
  * cycle that the byte-fidelity rule forbids.
@@ -22,12 +23,16 @@ import { pipeline } from "node:stream/promises";
 import { gunzipSync } from "node:zlib";
 import { type Dispatcher, Pool } from "undici";
 import { mapUpstreamError, PROXY_ERROR_HEADER } from "./errors.js";
-import {
-  forwardableRequestHeaders,
-  forwardableResponseHeaders,
-  isBypassRequest,
-} from "./headers.js";
+import { forwardableRequestHeaders, forwardableResponseHeaders } from "./headers.js";
 import { classifyRateLimit, decideRetry } from "./rate-limit-retry.js";
+import {
+  BodyBudget,
+  type BodyHold,
+  normalizeRequestBody,
+  RedactionAborted,
+  RequestBodyRefusal,
+  readBody,
+} from "./request-body.js";
 import {
   type ProxyConfig,
   type ProxyRequest,
@@ -36,27 +41,6 @@ import {
   resolveProxyConfig,
 } from "./types.js";
 import { UsageSniffer } from "./usage-sniffer.js";
-
-/**
- * Buffer the whole request body. Deliberately uncapped: the proxy binds
- * loopback-only and serves the local developer's own Claude Code traffic
- * (bounded JSON documents), so a size limit would only add a failure mode.
- * Revisit if the proxy ever binds a non-loopback interface.
- */
-function readBody(req: IncomingMessage): Promise<Buffer | null> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      if (chunks.length === 0) {
-        resolve(null);
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    });
-    req.on("error", reject);
-  });
-}
 
 /**
  * R9.2: replace the body's `model` with the target's real model id, for a
@@ -105,24 +89,18 @@ const MAX_POOLED_ORIGINS = 32;
 
 export class GolemProxy {
   readonly config: ProxyConfig;
+  /** DUSTSEC.21: request-body bytes held across concurrent requests. */
+  readonly #bodyBudget: BodyBudget;
 
   /**
-   * Toggle: when false, the proxy forwards every request as a raw passthrough
-   * (identity pipeline, no redaction/compression/brevity). The toggle is
-   * in-process — no process restart needed — so `golem off` is instant and
-   * does not affect the URL wired into Claude Code. True by default after
-   * construction; changed via {@link setPipelineEnabled} or on an admin
-   * request to `/__golem/pipeline/<enabled>`.
+   * When false, the proxy forwards every request as a raw passthrough (no
+   * redaction/compression/brevity). Fixed at construction from
+   * `proxy.bypass_all` (ADR-0004) and NEVER changed afterwards: DUSTSEC.2
+   * removed the unauthenticated `/__golem/pipeline/<bool>` endpoint that used
+   * to flip it, so redaction-off is only ever the persisted, CLI-only,
+   * loudly-surfaced setting, applied at the next proxy start.
    */
-  #pipelineEnabled: boolean;
-
-  setPipelineEnabled(enabled: boolean): void {
-    this.#pipelineEnabled = enabled;
-  }
-
-  pipelineEnabled(): boolean {
-    return this.#pipelineEnabled;
-  }
+  readonly #pipelineEnabled: boolean;
 
   private readonly server: Server;
   /**
@@ -140,6 +118,7 @@ export class GolemProxy {
 
   constructor(options: ProxyServerOptions = {}) {
     this.config = resolveProxyConfig(options);
+    this.#bodyBudget = new BodyBudget(this.config.maxInFlightBodyBytes);
     // R11.1: `proxy.bypass_all` starts the proxy with the pipeline OFF, which is
     // the same state `golem off` reaches at runtime — the difference is that this
     // one survives a restart, and the restart is the reason the runtime toggle
@@ -184,6 +163,11 @@ export class GolemProxy {
     return addr && typeof addr === "object" ? addr : null;
   }
 
+  /** Request-body bytes currently reserved against the in-flight cap (tests, diagnostics). */
+  get bodyBytesInFlight(): number {
+    return this.#bodyBudget.used;
+  }
+
   async close(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.server.close((err) => (err ? reject(err) : resolve()));
@@ -196,20 +180,6 @@ export class GolemProxy {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // R9.23 — admin endpoint for the pipeline toggle (`golem on`/`golem off`).
-    if (req.url === "/__golem/pipeline/true" && req.method === "POST") {
-      this.#pipelineEnabled = true;
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ pipeline_enabled: true }));
-      return;
-    }
-    if (req.url === "/__golem/pipeline/false" && req.method === "POST") {
-      this.#pipelineEnabled = false;
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ pipeline_enabled: false }));
-      return;
-    }
-
     // Statusline endpoint — returns Golem state as JSON for the CLI statusline tool
     if (req.url === "/__golem/statusline" && req.method === "GET") {
       try {
@@ -235,8 +205,9 @@ export class GolemProxy {
     // The proxy used to log the routing decision it took BEFORE forwarding and
     // nothing after, so a request that died mid-stream left no trace: the
     // investigation of a live "Connection lost mid-response" had to be run from
-    // the client's transcript and the process table. Every terminal path below
-    // now reports what became of the request. Metadata only — never bodies.
+    // the client's transcript and the process table. Most terminal paths below
+    // report what became of the request, including the translating path's
+    // upstream body-read and gunzip failures. Metadata only — never bodies.
     const startedAt = Date.now();
     const method = req.method ?? "GET";
     // Query stripped: a query string can carry identifiers, and the path is
@@ -293,15 +264,52 @@ export class GolemProxy {
     });
 
     let forward: ProxyRequest;
+    const hold: BodyHold = { bytes: 0 };
+    // Idempotent: called when the final upstream response headers arrive (the body
+    // is no longer needed: the retry loop has ended) and again on close.
+    const releaseHold = (): void => {
+      this.#bodyBudget.release(hold.bytes);
+      hold.bytes = 0;
+    };
     try {
-      const body = await readBody(req);
+      // Release what this request reserved once the response is done, however it ends.
+      res.once("close", releaseHold);
+      const body = await readBody(req, this.config.maxRequestBodyBytes, this.#bodyBudget, hold);
+      let headers = forwardableRequestHeaders(req.headers);
+      let readable = body;
+      // DUSTSEC.21: decode a content-encoded body so redaction can read it. Only
+      // when the pipeline is on: `proxy.bypass_all` forwards byte-faithfully.
+      if (body !== null && this.#pipelineEnabled) {
+        const normalized = normalizeRequestBody(body, headers, this.config.maxRequestBodyBytes);
+        // A decoded body is a separate buffer held alongside the wire form:
+        // reserve it too. (Identity and BOM-strip share the wire buffer.)
+        const extra = normalized.body.buffer === body.buffer ? 0 : normalized.body.length;
+        if (extra > 0 && !this.#bodyBudget.tryReserve(extra)) {
+          throw new RequestBodyRefusal(
+            503,
+            "golem proxy: too many large request bodies are in flight (proxy memory cap). " +
+              "Nothing was forwarded; retry shortly.",
+          );
+        }
+        hold.bytes += extra;
+        readable = normalized.body;
+        headers = normalized.headers;
+      }
       forward = {
         method: req.method ?? "GET",
         url: req.url ?? "/",
-        headers: forwardableRequestHeaders(req.headers),
-        body,
+        headers,
+        body: readable,
       };
     } catch (err) {
+      if (err instanceof RequestBodyRefusal) {
+        // Fail closed: nothing was forwarded. `connection: close` because an
+        // oversized body may still be arriving and is not worth draining.
+        res.setHeader("connection", "close");
+        if (err.status === 503) res.setHeader("retry-after", "1");
+        failProxy(err.status, err.message);
+        return;
+      }
       // We could not even read the client request — nothing to forward.
       failProxy(400, `golem proxy: could not read request (${String(err)})`);
       return;
@@ -313,7 +321,7 @@ export class GolemProxy {
     // runs first WITHIN the pipeline, so the hard rule is untouched.
     //
     // Fail-closed: an unknown target is an error, never a fallback to the
-    // default. Applied before the bypass check as well — `x-golem-bypass` turns
+    // default. Applied before the bypass check as well — `proxy.bypass_all` turns
     // off *processing*, and must not also turn a refused route into a silent
     // forward to somewhere the caller did not name.
     if (this.config.resolveRoute !== undefined) {
@@ -341,18 +349,76 @@ export class GolemProxy {
         }
         forward = { ...forward, body: rewritten };
       }
+    } else {
+      try {
+        this.config.onUnroutedRequest?.();
+      } catch {
+        // Observe-only: a selection-log failure must never reach the request.
+      }
     }
 
-    // A3 seam: redaction -> compression. FAIL-OPEN — a pipeline error must
-    // never break the session: fall back to forwarding the ORIGINAL request
-    // byte-faithfully (CLAUDE.md proxy-fidelity rule). Pipeline-disabled or
-    // bypass-header skips it (both forward the body untouched).
-    if (this.#pipelineEnabled && !isBypassRequest(req.headers)) {
+    // A3 seam: redaction -> compression. FAIL-SAFE, never fail-open (DUSTSEC.1,
+    // USER decision R1/S3). A pipeline error must not break the session, but it
+    // must not forward the raw body either: any compression, policy, telemetry or
+    // CCR-write failure would otherwise send an unredacted secret upstream. So
+    // on a throw we re-run REDACTION ALONE on the original request and forward
+    // that. If redaction itself throws (or the pipeline has no redaction-only
+    // entry point to prove it), we FAIL CLOSED: a 5xx, nothing forwarded.
+    // Pipeline-disabled (`proxy.bypass_all`, the single redaction-off path) skips
+    // this block and forwards the body untouched. No header or endpoint can do so.
+    if (this.#pipelineEnabled) {
+      const original = forward;
       try {
-        forward = await this.config.pipeline.process(forward);
+        forward = await this.config.pipeline.process(original, { signal: abort.signal });
       } catch (err) {
-        this.config.onPipelineError?.(err, forward);
-        // `forward` is still the original request — leave it unchanged.
+        // DUSTSEC.23: the walk stopped because the client hung up. Nothing is
+        // forwarded and there is nobody to answer, so skip the redact-only re-walk.
+        // ONLY that error counts: a real pipeline error is still reported to
+        // `onPipelineError` even if the client also left. The in-flight reservation
+        // is released by the response's close, as on every path.
+        if (err instanceof RedactionAborted) {
+          res.destroy();
+          report("client_gone", { detail: "the client hung up while the pipeline was running" });
+          return;
+        }
+        if (err instanceof RequestBodyRefusal) {
+          // The pipeline refused the BODY itself (e.g. duplicate JSON keys): a
+          // client error, answered directly. Nothing is forwarded.
+          failProxy(err.status, err.message);
+          return;
+        }
+        this.config.onPipelineError?.(err, original);
+        try {
+          const { redactOnly, redactOnlyAsync } = this.config.pipeline;
+          if (redactOnly === undefined && redactOnlyAsync === undefined) {
+            throw new Error("pipeline has no redaction-only fallback");
+          }
+          // DUSTSEC.23: prefer the sliced walk, so the fail-safe re-walk does not
+          // freeze the loop. A pipeline with only the sync one still gets it.
+          forward =
+            redactOnlyAsync !== undefined
+              ? await redactOnlyAsync.call(this.config.pipeline, original, {
+                  signal: abort.signal,
+                })
+              : (redactOnly as NonNullable<typeof redactOnly>).call(this.config.pipeline, original);
+        } catch (redactErr) {
+          if (redactErr instanceof RedactionAborted) {
+            res.destroy();
+            report("client_gone", { detail: "the client hung up during the redaction fallback" });
+            return;
+          }
+          if (redactErr instanceof RequestBodyRefusal) {
+            failProxy(redactErr.status, redactErr.message);
+            return;
+          }
+          failProxy(
+            502,
+            "golem proxy: the request pipeline failed and redaction could not be " +
+              "re-applied, so the request was NOT forwarded (fail closed, nothing " +
+              `reached the upstream). ${String(redactErr)}`,
+          );
+          return;
+        }
       }
     }
 
@@ -512,6 +578,13 @@ export class GolemProxy {
       attempt += 1;
     }
 
+    // DUSTSEC.21: the retry loop is over and nothing replays the request body after
+    // the response headers, so stop counting it against the in-flight cap: a long
+    // SSE stream must not hold its request's bytes for its whole life. (The proxy
+    // still references the buffer until the response ends; this bounds ADMISSION,
+    // it does not shrink the resident set of requests already streaming.)
+    releaseHold();
+
     // Translating upstream (R6.1 case b): convert the response to the Anthropic
     // shape. This is the ONLY path that parses/reserializes a response body — the
     // Anthropic passthrough below stays a raw byte pipe. An upstream error is
@@ -534,6 +607,12 @@ export class GolemProxy {
           raw = Buffer.from(await upstream.body.arrayBuffer());
         } catch {
           res.destroy();
+          report(abort.signal.aborted ? "client_gone" : "upstream_error", {
+            status: upstream.statusCode,
+            detail: abort.signal.aborted
+              ? "the client hung up while the upstream error body was being read"
+              : "the upstream error body could not be read to the end",
+          });
           return;
         }
         res.writeHead(upstream.statusCode, forwardableResponseHeaders(upstream.headers));
@@ -573,6 +652,7 @@ export class GolemProxy {
 
       // b1: non-streaming — buffer, translate, write the Anthropic JSON body.
       let raw: Buffer;
+      let stage: "read" | "gunzip" = "read";
       try {
         raw = Buffer.from(await upstream.body.arrayBuffer());
         // The Anthropic passthrough relays bytes verbatim, but the translating
@@ -580,10 +660,18 @@ export class GolemProxy {
         // auto-decompress; some OpenAI-schema upstreams, e.g. Moonshot, gzip).
         const enc = this.header(upstream.headers, "content-encoding");
         if (enc?.toLowerCase().includes("gzip")) {
+          stage = "gunzip";
           raw = gunzipSync(raw);
         }
       } catch {
         res.destroy();
+        report(abort.signal.aborted ? "client_gone" : "upstream_error", {
+          detail: abort.signal.aborted
+            ? "the client hung up while the upstream body was being read"
+            : stage === "gunzip"
+              ? "the upstream body claimed gzip but could not be gunzipped"
+              : "the upstream body could not be read to the end",
+        });
         return;
       }
       let translated: Buffer;

@@ -14,8 +14,8 @@ derived cache over it. Skim `WIKI.md`'s Index once per session before searching.
    served from cache — free and offline, as are `ingest` files and `golem note`
 4. **Keep what you find?** A raw capture is searchable but disconnected. Author
    a wiki page with real `[[wikilinks]]` to related pages, citing the source, so
-   graph traversal finds it later. No prior approval needed (Decision 44) — git
-   makes every write reviewable. ADRs go in `docs/decisions/`, not the wiki.
+   graph traversal finds it later. No prior approval needed (Decision 44) — writes
+   are files, not commits; commit them to review. ADRs go in `docs/decisions/`, not the wiki.
 
 Redaction-before-storage still applies, and contradictions are surfaced to the
 human, never auto-resolved.

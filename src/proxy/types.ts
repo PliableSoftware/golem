@@ -21,9 +21,7 @@
  */
 
 import type { Transform } from "node:stream";
-
-/** Header that forces pure passthrough. Stripped before forwarding upstream. */
-export const BYPASS_HEADER = "x-golem-bypass";
+import { DEFAULT_MAX_REQUEST_BODY_BYTES } from "./request-body.js";
 
 /**
  * The Anthropic Messages API `usage` block (R1.1 — net-of-cache measurement,
@@ -140,8 +138,8 @@ export type RouteResolver = (
  * Extension seam for the A3 pipeline (redaction -> compression).
  *
  * Contract:
- * - Invoked only when the request does NOT carry `x-golem-bypass`;
- *   bypassed requests are forwarded untouched, unconditionally.
+ * - Invoked on every request unless the proxy was started with `proxy.bypass_all`
+ *   (the single redaction-off path); no header or endpoint can skip it.
  * - May return a new {@link ProxyRequest}; `content-length` is recomputed
  *   by the proxy from the returned body, never by the pipeline.
  * - Must never reorder redaction after compression (CLAUDE.md hard rule).
@@ -151,7 +149,33 @@ export type RouteResolver = (
  */
 export interface RequestPipeline {
   readonly name: string;
-  process(request: ProxyRequest): Promise<ProxyRequest>;
+  /**
+   * `options.signal` aborts when the client goes away: a pipeline that can stop
+   * cheaply (the redaction walk does, between slices) rejects with an error and
+   * the proxy forwards nothing. DUSTSEC.23.
+   */
+  process(request: ProxyRequest, options?: PipelineRunOptions): Promise<ProxyRequest>;
+  /**
+   * DUSTSEC.1 — redaction alone, run by the proxy on the ORIGINAL request when
+   * `process` throws. Must be the same redaction `process` runs. Synchronous and
+   * total apart from redaction itself: if it throws, the proxy fails closed.
+   * A pipeline without it cannot be proven safe to fall back to, so a `process`
+   * error then also fails closed.
+   */
+  redactOnly?(request: ProxyRequest): ProxyRequest;
+  /**
+   * DUSTSEC.23 — the same redaction as {@link redactOnly}, byte for byte, with the
+   * JSON walk yielding to the event loop between slices so the fail-safe re-walk
+   * does not freeze every other session. The proxy prefers it when present and
+   * falls back to the synchronous `redactOnly`. Same fail-closed contract.
+   */
+  redactOnlyAsync?(request: ProxyRequest, options?: PipelineRunOptions): Promise<ProxyRequest>;
+}
+
+/** Per-request options the proxy hands the pipeline. */
+export interface PipelineRunOptions {
+  /** Aborts when the client disconnects before the pipeline finishes. */
+  readonly signal?: AbortSignal;
 }
 
 /** The A1 default: forwards every request byte-for-byte. */
@@ -167,10 +191,9 @@ export interface ProxyServerOptions {
    * byte-faithfully, redaction included in what is skipped. Set from
    * `proxy.bypass_all`, the explicit successor to slider level 0.
    *
-   * Distinct from the in-process `golem on`/`golem off` toggle only in that this
-   * one is a starting state read from settings, so it survives the restarts that
-   * silently reset that toggle. Defaults to enabled — the bypass is never the
-   * default (CLAUDE.md hard rule).
+   * The ONLY way to turn the pipeline off: a starting state read from settings,
+   * applied when the proxy starts (DUSTSEC.2 removed the live toggle). Defaults to
+   * enabled — the bypass is never the default (CLAUDE.md hard rule).
    */
   readonly pipelineEnabled?: boolean;
   /**
@@ -188,12 +211,26 @@ export interface ProxyServerOptions {
    * (Anthropic SSE streams emit `ping` events well within this.)
    */
   readonly bodyTimeoutMs?: number;
+  /**
+   * DUSTSEC.21: largest request body accepted, in bytes, on the wire and after
+   * decompression. Over it the proxy answers 413 and forwards nothing. Default
+   * 64 MiB.
+   */
+  readonly maxRequestBodyBytes?: number;
+  /**
+   * DUSTSEC.21: cap on request-body bytes held at once across concurrent
+   * requests (wire form plus decoded form). Over it a request is answered 503
+   * with Retry-After and nothing is forwarded. Default: the larger of 256 MiB and
+   * twice `maxRequestBodyBytes`.
+   */
+  readonly maxInFlightBodyBytes?: number;
   /** Request pipeline hook. Default: {@link identityPipeline}. */
   readonly pipeline?: RequestPipeline;
   /**
-   * Called when the pipeline throws and the proxy falls open to byte-faithful
-   * passthrough (the request is forwarded UNCHANGED). Observability only —
-   * it must not rethrow. Default: none.
+   * Called when the pipeline throws, before the proxy re-runs redaction alone on
+   * the original request and forwards that (or fails closed with a 502 if
+   * redaction cannot be re-applied; DUSTSEC.1). Observability only — it must
+   * not rethrow. Default: none.
    */
   readonly onPipelineError?: (err: unknown, request: ProxyRequest) => void;
   /**
@@ -223,11 +260,17 @@ export interface ProxyServerOptions {
    */
   readonly onRequestOutcome?: (outcome: ProxyRequestOutcome) => void;
   /**
+   * DUST2.17 — called once per request on the single-upstream path (no
+   * {@link resolveRoute}), where there is no resolver to report a selection.
+   * Takes no request data on purpose. Observe-only; a throw is swallowed.
+   */
+  readonly onUnroutedRequest?: () => void;
+  /**
    * R6.1 case (a): rewrite the headers sent upstream (e.g. strip the client's
    * Anthropic credential and inject a different provider's key under its
    * expected header — see src/providers). Applied to the forwarded headers
    * immediately before the upstream request, OUTSIDE the pipeline, so it also
-   * covers `x-golem-bypass` requests (the upstream still needs valid creds).
+   * covers `proxy.bypass_all` requests (the upstream still needs valid creds).
    * A transport/routing concern only — it never touches the body, so SSE and
    * tool-use fidelity is untouched. Default: none (the Anthropic passthrough
    * forwards the client's own auth verbatim).
@@ -368,6 +411,8 @@ export interface ProxyConfig {
   readonly connectTimeoutMs: number;
   readonly headersTimeoutMs: number;
   readonly bodyTimeoutMs: number;
+  readonly maxRequestBodyBytes: number;
+  readonly maxInFlightBodyBytes: number;
   readonly pipeline: RequestPipeline;
   readonly onPipelineError?: (err: unknown, request: ProxyRequest) => void;
   readonly onResponseUsage?: (usage: ResponseUsage | null, request: ProxyRequest) => void;
@@ -376,6 +421,7 @@ export interface ProxyConfig {
     request: ProxyRequest,
   ) => void;
   readonly onRequestOutcome?: (outcome: ProxyRequestOutcome) => void;
+  readonly onUnroutedRequest?: () => void;
   readonly mapUpstreamHeaders?: (
     headers: Record<string, string | string[]>,
   ) => Record<string, string | string[]>;
@@ -408,16 +454,22 @@ function defaultRateLimitSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export function resolveProxyConfig(options: ProxyServerOptions = {}): ProxyConfig {
+  const maxBody = options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES;
   return {
     upstreamBaseUrl: options.upstreamBaseUrl ?? DEFAULT_UPSTREAM_BASE_URL,
     connectTimeoutMs: options.connectTimeoutMs ?? 10_000,
     headersTimeoutMs: options.headersTimeoutMs ?? 300_000,
     bodyTimeoutMs: options.bodyTimeoutMs ?? 300_000,
+    maxRequestBodyBytes: maxBody,
+    maxInFlightBodyBytes: options.maxInFlightBodyBytes ?? Math.max(256 * 1024 * 1024, 2 * maxBody),
     pipeline: options.pipeline ?? identityPipeline,
     ...(options.onPipelineError !== undefined ? { onPipelineError: options.onPipelineError } : {}),
     ...(options.onResponseUsage !== undefined ? { onResponseUsage: options.onResponseUsage } : {}),
     ...(options.onResponseHeaders !== undefined
       ? { onResponseHeaders: options.onResponseHeaders }
+      : {}),
+    ...(options.onUnroutedRequest !== undefined
+      ? { onUnroutedRequest: options.onUnroutedRequest }
       : {}),
     ...(options.onRequestOutcome !== undefined
       ? { onRequestOutcome: options.onRequestOutcome }

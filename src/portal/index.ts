@@ -61,6 +61,8 @@ export {
   type PortalIdentity,
 } from "./client.js";
 export {
+  applyLinkOverrides,
+  assertLinkConfigTrusted,
   type PortalConfig,
   type PortalSettings,
   resolvePortalConfig,
@@ -126,12 +128,9 @@ export {
   statesMatch,
 } from "./pkce.js";
 export {
-  type ConfigWithTeam,
   type FetchTeamSettingsResult,
   fetchTeamSettings,
-  type LoadConfigWithTeamOptions,
   listTeamLayerCaches,
-  loadConfigWithTeamLayer,
   type ResolveForProjectOptions,
   type ResolveTeamLayerOptions,
   readTeamLayerCache,
@@ -172,6 +171,7 @@ export {
   PORTAL_ACCOUNT,
   type PortalTokenSet,
   type PortalTokenStore,
+  portalOrigin,
   portalTokenPresent,
   portalTokenStore,
   type TokenBinding,

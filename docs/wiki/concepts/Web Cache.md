@@ -2,9 +2,9 @@
 title: Web Cache
 type: concept
 tags: [webfetch, cache, hooks, knowledge, decision-42]
-sources: [src/hooks/web-fetch.ts, src/knowledge/web-cache.ts, docs/plan/verification-notes.md#44, docs/plan/verification-notes.md#120, docs/wiki/debriefs/2026-08-09-R9.7-webfetch-red-dot.md]
+sources: [src/hooks/web-fetch.ts, src/hooks/web-fetch/serve.ts, src/hooks/web-fetch/revalidate.ts, src/proxy/loopback-reach.ts, src/knowledge/web-cache.ts, src/knowledge/raw-fetch.ts, docs/plan/verification-notes.md#44, docs/plan/verification-notes.md#120, docs/wiki/debriefs/2026-08-09-R9.7-webfetch-red-dot.md]
 created: 2026-07-25
-updated: 2026-08-09
+updated: 2026-10-14
 ---
 
 # Web Cache
@@ -19,8 +19,8 @@ Source: `src/hooks/web-fetch.ts`, `src/knowledge/web-cache.ts`.
 ## The fetch-cache-serve flow (PreToolUse)
 
 On a `WebFetch`, a `PreToolUse` hook decides whether Golem answers from cache, or
-fetches the raw page itself and serves that — so Claude Code's `WebFetch` never runs
-on the happy path. Redaction runs **before** anything is stored (hard rule), and the
+fetches the raw page itself and serves that. On the deny floor `WebFetch` does not run;
+on the green path (below) it does run, but against a loopback stub rather than the origin. Redaction runs **before** anything is stored (hard rule), and the
 whole hook is **fail-open**: any error just lets `WebFetch` proceed.
 
 ```mermaid
@@ -39,14 +39,14 @@ sequenceDiagram
       Hook->>Net: conditional GET (etag / if-modified-since)
       Net-->>Hook: 304 unchanged / 200 changed / no-store
     end
-    Hook-->>CC: deny + cached content (fetch skipped)
+    Hook-->>CC: serve cached content (green: allow + stub, else deny)
   else miss / stale / legacy answer-entry
     Hook->>Net: fetch RAW page (fetchRawPage)
     Net-->>Hook: html/pdf → extracted text
     Note over Hook: redact BEFORE storage (hard rule)
     Hook->>Cache: put(url, content, raw:true)
     Hook->>KB: ingest chunks (best-effort)
-    Hook-->>CC: deny + raw content (WebFetch never runs)
+    Hook-->>CC: serve raw content (green: allow + stub, else deny)
   end
 ```
 
@@ -61,24 +61,69 @@ sequenceDiagram
   hook deliberately caches nothing (storing a prompt-specific answer is exactly the
   bug Decision 42 fixes).
 
-## A served page renders RED, and that is expected
+## A served page renders RED on the floor, GREEN on the shipped green path
 
-A serve is a `deny` — the only `PreToolUse` shape that returns content without running
-the tool — so Claude Code draws it as a **failed tool call**. Golem's best path (cache
-hit, no network fetch, no summarizer LLM call) is therefore the one that looks broken.
-The serve text says so out loud: it opens `NOT AN ERROR —` and names the cause.
+The floor serve is a `deny` — the only `PreToolUse` shape that returns content without
+running the tool — so Claude Code draws it as a **failed tool call**. The serve text
+says so out loud: it opens `NOT AN ERROR —` and names the cause.
 
-The green alternative (`updatedInput` + `allow` pointing at a loopback endpoint) was
-tested and **declined**: `WebFetch` upgrades `http`→`https` and validates the
-certificate, so the endpoint would need a Golem CA installed into Claude Code's
-process-wide trust — and it re-bills an uncached summarizer call per fetch. Measured
-and written up in `debriefs/2026-08-09-R9.7-webfetch-red-dot.md` (verification-notes §120).
+The green alternative **shipped** (R9.12, with the R9.19 reachability latch); the
+2026-08-09 write-up that declined it (`debriefs/2026-08-09-R9.7-webfetch-red-dot.md`,
+verification-notes §120) predates it. On the green path the hook answers `allow` with
+`updatedInput` pointing `WebFetch` at a loopback stub, and carries the raw cached page in
+`additionalContext` (`src/hooks/web-fetch/serve.ts:1-21,243-264`). It is chosen per call
+by `greenServeState` (`serve.ts:130-165`), which fails closed to the deny floor unless
+all four hold:
+
+1. a loopback endpoint has published its coordinates (the proxy daemon is up);
+2. the hook's `NODE_EXTRA_CA_CERTS` points at Golem's own certificate;
+3. a TLS probe of the endpoint validates against that certificate;
+4. R9.19: no evidence that an earlier rewrite in this window went unfollowed
+   (`decideReach`, `src/proxy/loopback-reach.ts:180`; optimistic once per endpoint instance).
+
+The stub, not the page, is what `WebFetch` fetches, so its summarizer never sees the
+content (Decision 42 holds). Whether Claude Code still makes a summarizer call on the
+stub, and what that costs: UNVERIFIED here.
 
 ## Freshness lifecycle
 
-An entry is *fresh* within its TTL (or an explicit `Cache-Control: max-age` /
-`Expires`). Optional conditional revalidation can confirm-or-refresh it without
-re-downloading the body; `no-store` or a changed `200` drops it.
+An entry is *fresh* while its age is under the TTL (`isFresh`, 168h default) **and**
+any explicit window holds. `Cache-Control: max-age` and `Expires` are recorded as
+`expiresAt` (`metaFrom`, `src/hooks/web-fetch/revalidate.ts`) and are honoured whether
+or not conditional revalidation is on: an explicit expiry can only *shorten* the TTL,
+never extend it, and is itself clamped to 30 days (`MAX_EXPLICIT_FRESHNESS_MS`).
+`max-age` wins over `Expires`; `s-maxage` is ignored (private cache); an absolute
+`Expires` is corrected by the response `Date` for clock skew; an invalid `Expires`, an
+unparseable stored `expiresAt`, or a future `fetchedAt` reads as **stale**, never as an
+error.
+
+When the window has lapsed: with revalidation off (`knowledge.webcache_revalidate`,
+default `false`) the page is re-fetched; with it on, a conditional GET (etag /
+if-modified-since) confirms or refreshes the entry without re-downloading the body (`304`
+updates the stored validators and expiry). A changed `200` drops the entry. Conditional
+revalidation was already shipped; it is unchanged.
+
+**What is never stored.** A response with `Cache-Control: no-store`, `private` or
+`no-cache`, a `Set-Cookie` response, or a URL carrying credentials is served to the
+model but **not cached and not ingested**, and any earlier copy of that URL is deleted
+from both the cache and the [[Knowledge Base]] (`isUncacheable`). Golem sends no
+`Authorization` header, so there is no credentialed response to refuse. Such a page is
+served in full up to the 8,000-char inline bound; beyond that it is truncated with a
+note that the full text is **not retained** (no CCR copy is written, so there is no
+`hash=` handle and nothing for `expand` to return). **Known limitation:** the
+fail-open path (`fetchRaw` threw, so Claude Code's own `WebFetch` ran) and legacy mode
+(`knowledge.webcache_fetch_raw` off) cannot know the response headers: the PostToolUse
+hooks (`runWebFetchPost` and the oversized-output CCR swap in
+`src/hooks/post-tool-use.ts`) may store that tool output regardless. On the green path
+the tool ran against the loopback stub, so the placeholder is what gets stored.
+
+**KB ingest.** A cached page is ingested under the opaque source key `web:<url>` (never
+joined to a base path, never a file name), only while `knowledge.enabled` is on and only
+up to `MAX_WEB_INGEST_CHARS` (1,000,000, the same ceiling as an indexed file); a larger
+page is cached and served but not embedded. Fetched content is untrusted data: it is
+redacted first (see [[Redaction Stage]]) and reaches the model only through the existing
+serve path. The cache file name is the first 128 bits of `sha256(url)` as hex, so no URL
+text reaches the file system (no traversal, reserved device names or length issues).
 
 ```mermaid
 stateDiagram-v2
@@ -95,6 +140,10 @@ stateDiagram-v2
 
 The web cache is the **exact-URL index + freshness clock**; semantic recall over the
 same fetched pages is the [[Knowledge Base]]'s job (they are ingested there too). A
-re-fetch of a known URL is therefore free and offline. See [[Architecture]] for how
+re-fetch of a known URL is therefore free and offline for the cache half. The KB half
+is best-effort: the hook ingests through its own process's `FileVectorDriver`
+(`web-fetch.ts:195-211`), and a running MCP server does not reload the file and can
+overwrite it on its next flush (`src/knowledge/file-driver.ts:153,218-232`), so the page
+may be missing from `search` while one is up (audit D6, not fixed here). See [[Architecture]] for how
 this fits the whole request path, and [[Redaction Stage]] for the redaction floor
 every storage path shares.

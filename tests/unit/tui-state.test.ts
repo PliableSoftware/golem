@@ -55,23 +55,37 @@ const SETTINGS_GROUP: ControlGroup = {
   ],
 };
 
+// Runtime tab: one enum (the compression dial, no danger) and two danger TOGGLES that
+// mirror real controls: `proxy.bypass_all` (off, enabling it is the risky direction)
+// and `telemetry.dashboard_lan` (already on, so turning it off is the safe direction).
 const RUNTIME_GROUP: ControlGroup = {
   id: "runtime",
   title: "Runtime",
   tab: "runtime",
   controls: [
     control({
-      id: "runtime:slider",
+      id: "runtime:compression",
       family: "runtime",
       kind: "enum",
       value: "1",
       options: [
-        { value: "0", label: "0 passthrough" },
+        { value: "off", label: "off" },
         { value: "1", label: "1 lossless" },
         { value: "2", label: "2 balanced" },
       ],
-      danger: "level 0 turns redaction off",
       writableScopes: ["local"],
+    }),
+    control({
+      id: "setting:proxy.bypass_all",
+      kind: "toggle",
+      value: false,
+      danger: "This disables REDACTION: secrets and PII reach the upstream unredacted.",
+    }),
+    control({
+      id: "setting:telemetry.dashboard_lan",
+      kind: "toggle",
+      value: true,
+      danger: "Exposes the project path and telemetry to every device on your network.",
     }),
   ],
 };
@@ -146,7 +160,7 @@ describe("navigation", () => {
     // No guidance group in this fixture, so the runtime tab is one more along.
     const runtime = press(next, { tab: true }).state;
     expect(runtime.tab).toBe("runtime");
-    expect(selectedControl(runtime)?.id).toBe("runtime:slider");
+    expect(selectedControl(runtime)?.id).toBe("runtime:compression");
     expect(press(runtime, { tab: true, shift: true }).state.tab).toBe("guidance");
   });
 
@@ -199,27 +213,25 @@ describe("toggling", () => {
 describe("enum controls", () => {
   const runtimeState = () => press(initialState(SURFACE), { tab: true, shift: true }).state;
 
-  it("steps forward with right arrow and wraps around the options", () => {
+  it("steps forward with right arrow", () => {
     const state = runtimeState();
     expect(state.tab).toBe("runtime");
-    // From "1", right goes to "2"; right again wraps to "0" — which is dangerous,
-    // so it must ask rather than apply.
     const toTwo = press(state, { rightArrow: true });
-    expect(toTwo.effects[0]).toMatchObject({ controlId: "runtime:slider", value: "2" });
+    expect(toTwo.effects[0]).toMatchObject({ controlId: "runtime:compression", value: "2" });
   });
 
   it("steps backward with left arrow", () => {
     const step = press(runtimeState(), { leftArrow: true });
-    // "1" back one is "0" — dangerous, so a confirm instead of an immediate write.
-    expect(step.effects).toEqual([]);
-    expect(step.state.mode).toEqual({ kind: "confirm", controlId: "runtime:slider", value: "0" });
+    // "1" back one is "off"; the dial carries no danger warning, so it writes at once.
+    expect(step.state.mode).toEqual({ kind: "browse" });
+    expect(step.effects[0]).toMatchObject({ controlId: "runtime:compression", value: "off" });
   });
 
   it("uses the control's own scope, not the panel's, when they differ", () => {
     const state = { ...runtimeState(), scope: "user" };
     const control = selectedControl(state);
     expect(control).not.toBeNull();
-    // The slider only writes local scope; a `user`-scoped session must not send
+    // The compression dial only writes local scope; a `user`-scoped session must not send
     // "user" to it.
     if (control !== null) expect(effectiveScope(state, control)).toBe("local");
     const step = press(state, { rightArrow: true });
@@ -230,14 +242,27 @@ describe("enum controls", () => {
 describe("dangerous changes", () => {
   const toConfirm = () => {
     const runtime = press(initialState(SURFACE), { tab: true, shift: true }).state;
-    return press(runtime, { leftArrow: true }).state; // → confirm level 0
+    // Down to setting:proxy.bypass_all (a danger toggle, off), space → confirm enabling it.
+    const onBypass = press(runtime, { downArrow: true }).state;
+    return press(onBypass, { input: " " }).state;
   };
 
   it("requires an explicit y", () => {
     const confirming = toConfirm();
     const step = press(confirming, { input: "y" });
+    const state = toConfirm();
+    expect(state.mode).toEqual({
+      kind: "confirm",
+      controlId: "setting:proxy.bypass_all",
+      value: true,
+    });
     expect(step.effects).toEqual([
-      { kind: "apply", controlId: "runtime:slider", value: "0", scope: "local" },
+      {
+        kind: "apply",
+        controlId: "setting:proxy.bypass_all",
+        value: true,
+        scope: effectiveScope(state, selectedControl(state) as Control),
+      },
     ]);
     expect(step.state.mode).toEqual({ kind: "browse" });
   });
@@ -252,11 +277,17 @@ describe("dangerous changes", () => {
   });
 
   it("does not confirm the safe direction", () => {
-    // Stepping 1 → 2 is not dangerous even though the control carries a warning.
+    // setting:telemetry.dashboard_lan is already on and carries a warning, but turning it
+    // OFF is the safe direction: no confirm, one immediate write.
     const runtime = press(initialState(SURFACE), { tab: true, shift: true }).state;
-    const step = press(runtime, { rightArrow: true });
+    const onLan = pressAll(runtime, [{ downArrow: true }, { downArrow: true }]).state;
+    const step = press(onLan, { input: " " });
     expect(step.state.mode).toEqual({ kind: "browse" });
     expect(step.effects).toHaveLength(1);
+    expect(step.effects[0]).toMatchObject({
+      controlId: "setting:telemetry.dashboard_lan",
+      value: false,
+    });
   });
 });
 

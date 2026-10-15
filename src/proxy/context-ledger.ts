@@ -29,10 +29,11 @@
  * schema identifier, not user data. Nothing here is a place to put text.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { estimateTokens } from "../compression/tokens.js";
+import { replaceViaTemp } from "../config/file-io.js";
 import { isRecord } from "../shared/json.js";
 
 /** Buckets a request's tokens are attributed to. Exhaustive by construction. */
@@ -435,9 +436,7 @@ export async function writeContextLedger(
   const ledger: ContextLedger = { ...core, capturedAt };
   const file = contextLedgerPath(projectDir);
   await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
-  await rename(tmp, file);
+  await replaceViaTemp(file, `${JSON.stringify(ledger, null, 2)}\n`);
 }
 
 /** Read the latest persisted ledger, or null (missing/corrupt/schema drift). */

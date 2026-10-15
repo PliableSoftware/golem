@@ -109,8 +109,8 @@ close-out step). Optional slug/topic: $ARGUMENTS
    files/decisions. Redaction-before-storage still applies.
 3. **Write it.** Call \`wiki_upsert\` with
    \`rel_path: "debriefs/YYYY-MM-DD-<slug>.md"\` and \`type: "debrief"\` — author
-   it directly (wiki writes are un-gated, Decision 44); every write is committed
-   to git and reviewable.
+   it directly (wiki writes are un-gated, Decision 44); the write is a file, not
+   a commit — commit it to review.
 4. **Record decisions.** If the work changed a spec Decision, note that in
    \`docs/golem-spec.md\`'s Decisions Log too (that stays authoritative).
 5. **Verify links.** Run \`golem wiki check\` via Bash so the new page's

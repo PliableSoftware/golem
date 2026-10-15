@@ -16,7 +16,9 @@ import http from "node:http";
 import path from "node:path";
 import { resolveEffectiveCompression } from "../compression/effective-level.js";
 import { unreachableHeadroomConfigKeys } from "../compression/headroom-adapter.js";
-import { loadConfig } from "../config/index.js";
+import { IMPORTANT_LOCKED } from "../config/control-surface-types.js";
+import { loadEffectiveConfig } from "../config/effective.js";
+import { MERGE_PER_KEY_LEAVES } from "../config/loader.js";
 import { defaultUserDir } from "../config/paths.js";
 // Narrow specifiers, not the `../hooks/index.js` barrel (~446ms — it pulls every
 // hook handler) for two small file reads.
@@ -24,7 +26,7 @@ import { readSessionState, resolveBlock } from "../hooks/session-state.js";
 import { STALE_AFTER_MS } from "../hooks/snooze-nudge.js";
 import { selectTarget } from "../inference/target-dispatcher.js";
 import { declaredWorkers, unknownWorkerWarnings } from "../inference/workers.js";
-import { listTeamLayerCaches, loadConfigWithTeamLayer } from "../portal/team-layer.js";
+import { listTeamLayerCaches } from "../portal/team-layer.js";
 import {
   listTargets,
   resolveDefaultTargetId,
@@ -137,12 +139,12 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
   const projectDir = path.resolve(options.projectDir);
   // `team-layer-fetch`: the team origin, POPULATED. Cache-only and unable to
   // fail, so status keeps working offline — and an unlinked project resolves
-  // byte-identically to a plain `loadConfig` (asserted in
+  // byte-identically to a plain `loadEffectiveConfig` (asserted in
   // tests/unit/portal/team-layer.test.ts). Without this, `golem status` would
   // report the effective config of a project WITHOUT its team policy, which is
   // the "believing you are under team policy when you are not" hazard pointed
   // the other way.
-  const { settings, provenance, warnings } = await loadConfigWithTeamLayer({
+  const { settings, provenance, warnings } = await loadEffectiveConfig({
     projectDir,
     ...(options.userDir !== undefined && { userDir: options.userDir }),
     ...(options.env !== undefined && { env: options.env }),
@@ -329,12 +331,29 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
 
   const config: Record<string, ConfigKeyStatus> = {};
   for (const [dotted, entry] of Object.entries(provenance)) {
-    const [section, key] = dotted.split(".", 2) as [string, string];
+    const [section, ...rest] = dotted.split(".") as [string, ...string[]];
     const sectionValues = (settings as unknown as Record<string, Record<string, unknown>>)[section];
+    // A per-field entry of a merge-per-key leaf (`inference.personas.<id>.<field>`)
+    // reads its own value; the leaf's entry names only the last layer to touch the
+    // map, so it is never reported locked (the pin is on the field).
+    const value = rest
+      .slice(1)
+      .reduce<unknown>(
+        (node, part) =>
+          typeof node === "object" && node !== null
+            ? (node as Record<string, unknown>)[part]
+            : undefined,
+        sectionValues?.[rest[0] ?? ""],
+      );
     config[dotted] = {
-      value: sectionValues?.[key],
+      value,
       layer: entry.layer,
       ...(entry.source !== undefined && { source: entry.source }),
+      ...(entry.important === true &&
+        !MERGE_PER_KEY_LEAVES.has(dotted) && {
+          important: true as const,
+          locked: IMPORTANT_LOCKED(entry.layer, entry.source),
+        }),
     };
   }
 
@@ -428,12 +447,13 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
     blocked: blockedView(resolveBlock(await readSessionState(projectDir))),
     warnings: [
       ...(cachedUpdate?.latest != null && semverGt(cachedUpdate.latest, options.version)
-        ? [...updateWarnings(cachedUpdate.latest), ...warnings]
-        : // R11.1: redaction-off is `proxy.bypass_all` now, not a level (ADR-0004).
-          // Same warning, keyed off the setting that actually does it.
-          settings.proxy.bypass_all
-          ? [...warnings, REDACTION_OFF_WARNING]
-          : warnings),
+        ? updateWarnings(cachedUpdate.latest)
+        : []),
+      ...warnings,
+      // R11.1: redaction-off is `proxy.bypass_all` now, not a level (ADR-0004).
+      // Same warning, keyed off the setting that actually does it. Independent of
+      // the update notice: an available update must never hide it (DUST3.4 S11).
+      ...(settings.proxy.bypass_all ? [REDACTION_OFF_WARNING] : []),
       ...(limits?.stale ? [LIMIT_STALE_WARNING] : []),
       // R9.4: a `worker_targets` key naming no worker would otherwise be silently
       // ignored — the failure mode the map shape trades per-key schema docs for.
@@ -500,7 +520,7 @@ async function collectDeviceStatus(projectDir: string): Promise<StatusReport["de
     } = await import("../security/index.js");
     const ca = await readDeviceCa(projectDir);
     if (ca === null) return undefined;
-    const { settings } = await loadConfig({ projectDir });
+    const { settings } = await loadEffectiveConfig({ projectDir });
     const [active, all, passcodeSet, factor, pending] = await Promise.all([
       activeDeviceCount(projectDir),
       listDevices(projectDir),

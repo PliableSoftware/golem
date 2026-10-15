@@ -55,7 +55,7 @@ function wikiSchemaTemplate(date: string): string {
     "| Zone | Where | Who writes | Rule |",
     "|---|---|---|---|",
     "| 1 — raw | local raw-capture stores (gitignored) | tooling/hooks | never committed; never hand-edited |",
-    "| 2 — wiki | `concepts/ entities/ sources/ syntheses/ questions/ artifacts/ debriefs/` | agent + human | **author freely** — create or refine pages without prior approval. Every write is committed to git, so it is diffable, reviewable, and revertible in history. Prefer append-and-refine over wholesale rewrites. |",
+    "| 2 — wiki | `concepts/ entities/ sources/ syntheses/ questions/ artifacts/ debriefs/` | agent + human | **author freely** — create or refine pages without prior approval. Writes are plain files, not commits — commit them to make them diffable, reviewable, and revertible in history. Prefer append-and-refine over wholesale rewrites. |",
     "",
     "> **Decisions (ADRs) live at `docs/decisions/`, outside this wiki.** They are",
     "> human-driven dev artifacts with a stricter rule — accepted ADRs immutable",
@@ -460,8 +460,8 @@ async function checkProseOutsideWiki(
 
 /**
  * `golem wiki check` (WS-W W2): frontmatter/date/link lint over every `.md`
- * page under `wikiDir`. Read-only — reports issues, never fixes them (the
- * wiki is plan-gated; a human or an approved agent write fixes what's found).
+ * page under `wikiDir`. Read-only — reports issues, never fixes them (a human
+ * or an agent write fixes what's found).
  *
  * Pass `projectDir` to also lint the prose files outside the wiki
  * (`PROSE_FILES_OUTSIDE_WIKI`) for retired identifiers.
@@ -566,22 +566,24 @@ export async function checkWiki(
     }
   }
 
-  // R11.5 — a debrief nobody indexed is a debrief nobody finds.
+  // R11.5 — a page nobody indexed is a page nobody finds.
   //
   // `WIKI.md`'s Index is the entry point the wiki-first rule tells every agent
-  // to skim, and the close-out checklist says to author a debrief — but nothing
-  // tied the two together, so the Index quietly fell 39 debriefs behind (every
-  // one from 2026-07-16 on). The vector index still found them; graph traversal
-  // from the Index did not, which is the half the wiki exists for.
+  // to skim; graph traversal starts there. A page is listed when the Index body
+  // names its wiki-relative path (how debriefs are listed) or links its title
+  // as `[[Title]]` (how every other page is listed). Originally scoped to
+  // `debriefs/` only, which let six concept/question/synthesis pages go
+  // unindexed unnoticed (DUST2.8).
   //
-  // Scoped to `debriefs/` deliberately: those are append-only records that must
-  // stay reachable. Concept pages are linked from each other and from the zone
-  // sections, so requiring an Index line for every one of them would be noise.
+  // Exempt: the schema page itself (`type: schema`, i.e. WIKI.md) — it IS the
+  // index. There is no generated-page allow-list because no wiki page is
+  // generated; add one here if that changes.
   const indexPage = pages.find((p) => p.type === "schema");
   if (indexPage !== undefined) {
     for (const page of pages) {
-      if (!page.relPath.startsWith("debriefs/")) continue;
+      if (page === indexPage) continue;
       if (indexPage.body.includes(page.relPath)) continue;
+      if (indexPage.body.includes(`[[${page.title}]]`)) continue;
       issues.push({
         relPath: page.relPath,
         message: "not listed in WIKI.md — add an Index line so graph traversal can reach it",

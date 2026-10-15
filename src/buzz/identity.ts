@@ -56,7 +56,12 @@ const execFileAsync = promisify(execFile);
 export const ORCHESTRATOR_ID = "golem";
 
 /** Buzz's Nostr keys are x-only 32-byte points rendered as 64 lowercase hex. */
-const HEX64_RE = /\b[0-9a-f]{64}\b/gu;
+const HEX64_RE = /\b[0-9a-f]{64}\b/u;
+
+/** Every 64-hex token in `text`, in order. A fresh global regex per call: no shared `lastIndex` state (DUSTSEC.6). */
+function allHex64(text: string): string[] {
+  return text.match(new RegExp(HEX64_RE.source, "gu")) ?? [];
+}
 
 /**
  * A stable, path-free key for one project's Buzz identities.
@@ -90,35 +95,68 @@ export interface Keypair {
   readonly secretHex: string;
 }
 
+/** A line's label: its first word, so a curve name later in the line is not a label. */
+const LABEL_PUB_RE = /^[\s\W_]*n?pub/iu;
+const LABEL_SEC_RE = /^[\s\W_]*n?sec/iu;
+
 /**
  * Parse `buzz-admin generate-key`'s stdout.
  *
  * The output format is documented only as "prints a public/secret keypair as
  * hex" (§19) — no verbatim sample exists in the notes — so the parser is
- * tolerant in a bounded way: labelled `pub`/`sec` lines win when present;
- * otherwise the two 64-hex tokens in order are public-then-secret, which
- * matches the documented phrasing. Anything else raises rather than guessing:
+ * tolerant in a bounded way: a `pub`/`sec`-labelled line that carries the hex
+ * decides which key is which; position never does. Anything else raises rather than guessing:
  * storing the wrong hex as a secret would burn an identity silently.
  * Extending §19 with the verbatim sample when Stage 2 runs is the follow-up.
  */
 export function parseGenerateKeyOutput(stdout: string): Keypair {
-  const hexes: string[] = stdout.match(HEX64_RE) ?? [];
+  const hexes = allHex64(stdout);
   if (hexes.length < 2) {
     throw new Error(
       `buzz-admin generate-key did not print two 64-hex keys (found ${hexes.length}) — ` +
         "refused to store a half-parsed identity.",
     );
   }
-  const pubLine = /^.*pub.*$/im.exec(stdout);
-  const secretLine = /^.*sec.*$/im.exec(stdout);
-  if (pubLine !== null && secretLine !== null) {
-    const pub = HEX64_RE.exec(pubLine[0]);
-    const sec = HEX64_RE.exec(secretLine[0]);
-    if (pub !== null && sec !== null) {
-      return { pubkeyHex: pub[0], secretHex: sec[0] };
+  // Classify by LABEL only, on lines that actually carry a hex. A label line
+  // with no hex (a bech32 `npub:`/`nsec:` line) is skipped; a line carrying
+  // both labels, or none, is unclassifiable. Position is never consulted: guessing
+  // is how a secret becomes the committed pubkey.
+  let pub: string | null = null;
+  let sec: string | null = null;
+  let clash = false;
+  for (const line of stdout.split(/\r?\n/u)) {
+    const hex = HEX64_RE.exec(line);
+    if (hex === null) continue;
+    // The label is the line's first word (`npub`/`nsec` included), never a substring:
+    // `public key (secp256k1): …` names a curve, and must not count as a secret label.
+    const isPub = LABEL_PUB_RE.test(line);
+    const isSec = LABEL_SEC_RE.test(line);
+    if (isPub === isSec) continue;
+    if (isPub) {
+      clash ||= pub !== null;
+      pub ??= hex[0];
+    } else {
+      clash ||= sec !== null;
+      sec ??= hex[0];
     }
   }
-  return { pubkeyHex: hexes[0] as string, secretHex: hexes[1] as string };
+  if (pub === null || sec === null || clash) {
+    throw new Error(
+      "buzz-admin generate-key output is ambiguous (no labelled public/secret hex lines — " +
+        "cannot tell the public key from the secret) — refused to guess; nothing was stored.",
+    );
+  }
+  return checkedPair(pub, sec);
+}
+
+function checkedPair(pubkeyHex: string, secretHex: string): Keypair {
+  if (pubkeyHex === secretHex) {
+    throw new Error(
+      "buzz-admin generate-key printed the same key twice — refused to store an identity " +
+        "whose public key equals its secret.",
+    );
+  }
+  return { pubkeyHex, secretHex };
 }
 
 /** A runner for `buzz-admin generate-key`: the PATH binary, or the same binary inside Docker. */
@@ -213,6 +251,13 @@ export async function runGenerateKey(): Promise<Keypair> {
   return parseGenerateKeyOutput(await runner.run());
 }
 
+/** Defence in depth for injected or future generators: never proceed with pubkey === secret. */
+function assertPubkeyIsNotSecret(pair: Keypair): void {
+  if (pair.pubkeyHex === pair.secretHex) {
+    throw new Error("refused to store an identity whose public key equals its secret.");
+  }
+}
+
 /** The subset of the store this module touches — injectable so tests never touch a keychain. */
 export type MintStore = Pick<CredentialStore, "resolve" | "store" | "forget">;
 
@@ -270,6 +315,7 @@ export async function mintIdentity(
 
   const generate = deps.generateKeypair ?? runGenerateKey;
   const pair = await generate();
+  assertPubkeyIsNotSecret(pair);
   await store.store(account, pair.secretHex);
   return { pubkeyHex: pair.pubkeyHex, account, minted: true };
 }
@@ -290,6 +336,7 @@ export async function rotateIdentity(
   await store.forget(account); // best-effort clean slate; store() overwrites anyway
   const generate = deps.generateKeypair ?? runGenerateKey;
   const pair = await generate();
+  assertPubkeyIsNotSecret(pair);
   await store.store(account, pair.secretHex);
   return { pubkeyHex: pair.pubkeyHex, account, minted: true };
 }

@@ -375,7 +375,8 @@ export class NativeLosslessCompression implements CompressionService {
     const tokensBefore = estimateTokens(JSON.stringify(messages));
 
     if (!policy.stages.losslessCompression) {
-      // Level 0 — byte-faithful passthrough (frozen-contract requirement).
+      // No lossless stage in the policy (`off`, redaction-only) — messages pass through unchanged
+      // (frozen-contract requirement).
       this.#recordRequest(projectId, tokensBefore, tokensBefore, {}, [], 0);
       return { messagesOut: messages, refs: [], stageSavings: {} };
     }

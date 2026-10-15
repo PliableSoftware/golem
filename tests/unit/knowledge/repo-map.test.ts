@@ -3,7 +3,7 @@
  * rank, and the budgeted render.
  *
  * `web-tree-sitter` + the grammars are devDependencies of this repo only (never
- * a `golem-run` dependency), so real parsing is testable here with no network.
+ * a `@pliable/golem` dependency), so real parsing is testable here with no network.
  *
  * The assertions that matter most are the two hard constraints: **byte
  * stability** (an unstable map re-prefills a cached prefix and is strictly worse

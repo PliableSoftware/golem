@@ -54,9 +54,10 @@
  * call, so a per-session latch would be a fresh latch every time.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 
 /** `.golem/state/loopback-serve-hits.json` — written by the endpoint, read by the hook. */
 export function loopbackHitsPath(projectDir: string): string {
@@ -120,9 +121,7 @@ async function readJson<T>(file: string, schema: z.ZodType<T>): Promise<T | null
 async function writeJson(file: string, value: unknown): Promise<boolean> {
   try {
     await mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await rename(tmp, file);
+    await replaceViaTemp(file, `${JSON.stringify(value, null, 2)}\n`);
     return true;
   } catch {
     return false;

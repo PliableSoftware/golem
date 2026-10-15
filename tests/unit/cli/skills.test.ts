@@ -271,3 +271,74 @@ describe("/golem-step — the stepwise pacing mode", () => {
     expect(skill).toContain("full");
   });
 });
+
+describe("dust skill (DUST4.1)", () => {
+  const skill = P0_SKILLS.dust;
+
+  it("is registered as a user-invoked skill with a description", () => {
+    if (skill === undefined) throw new Error("expected a dust skill");
+    expect(skill).toMatch(/^---\ndescription: .+\ninvocationMode: user\n---\n/);
+  });
+
+  // One stable phrase per lesson, so a wording pass cannot silently drop one.
+  const lessons: ReadonlyArray<[string, string]> = [
+    ["re-verify", "Re-verify every audit item against current code"],
+    ["worktree partition", "`git worktree`"],
+    ["read-only parallel", "run in parallel"],
+    ["default rule", "default rule"],
+    ["every choice listed", "Record every choice made"],
+    ["independent review", "Independent read-only review of every hard-rule change"],
+    ["review twice", "Review again after fixes"],
+    ["strip and compare", "Strip comments"],
+    ["serial verify", "Verify serially"],
+    ["stale CI gate", "CI gate for the pushed head"],
+    ["park", "/golem-park"],
+    ["placeholders", "bracketed REDACTED markers"],
+    ["trailers", "No attribution trailers"],
+  ];
+  it.each(lessons)("carries the lesson: %s", (_name, marker) => {
+    expect(skill).toContain(marker);
+  });
+
+  it("ends with a debrief template whose headings are pinned (DUST4.3)", () => {
+    if (skill === undefined) throw new Error("expected a dust skill");
+    const at = skill.indexOf("## Debrief template");
+    expect(at).toBeGreaterThan(skill.indexOf("## Standing rules"));
+    const template = skill.slice(at);
+    for (const heading of [
+      "Outcome",
+      "Default rules applied and where",
+      "Open exceptions",
+      "What review caught",
+      "Lessons",
+      "Follow-ups filed",
+    ]) {
+      expect(template).toContain(`**${heading}**`);
+    }
+  });
+
+  it("pins the Phase 1 audit method a dogfood run found missing (DUST4.4)", () => {
+    if (skill === undefined) throw new Error("expected a dust skill");
+    const audit = skill.slice(skill.indexOf("## Phase 1"), skill.indexOf("## Decisions record"));
+    for (const marker of [
+      "single partition",
+      "do not read earlier audit notes",
+      "- matches:",
+      "- drifted:",
+      "- partial:",
+      "- not started:",
+      "- contradicted:",
+      "claim of absence",
+      "A truncated tool read is not a read",
+      "one table row per claim",
+      "HIGH security items (",
+    ]) {
+      expect(audit.toLowerCase()).toContain(marker.toLowerCase());
+    }
+  });
+
+  it("names neither a literal redaction marker nor the bypass-off command", () => {
+    expect(skill).not.toContain(`[${"RE"}DACTED`);
+    expect(skill).not.toMatch(/bypass_all/);
+  });
+});

@@ -344,7 +344,7 @@ function applyEnumStep(state: PanelState, control: Control, delta: number): Pane
  * and the new value isn't the safe one, ask for confirmation first.
  */
 function requestApply(state: PanelState, control: Control, value: unknown): PanelStep {
-  if (control.danger !== undefined && needsConfirm(control, value)) {
+  if (control.danger !== undefined && needsConfirm(value)) {
     return step({
       ...state,
       status: null,
@@ -358,13 +358,11 @@ function requestApply(state: PanelState, control: Control, value: unknown): Pane
 
 /**
  * Which value of a dangerous control actually needs the confirm. Only the risky
- * setting does — turning redaction back ON should never prompt.
- *
- * Slider level 0 is the passthrough bypass (Decision 30); every other level is
- * safe. For a dangerous toggle, enabling it is the risky direction.
+ * setting does: for a dangerous toggle, enabling it is the risky direction, and
+ * turning it back off never prompts. (The slider's "level 0" enum branch left
+ * with the slider, ADR-0004; the bypass is the `proxy.bypass_all` toggle.)
  */
-function needsConfirm(control: Control, value: unknown): boolean {
-  if (control.kind === "enum") return String(value) === "0";
+function needsConfirm(value: unknown): boolean {
   return truthy(value);
 }
 
@@ -400,7 +398,7 @@ function cycleScope(state: PanelState, control: Control): PanelState {
 /**
  * The scope a write to `control` uses: the panel's current scope when the control
  * allows it, otherwise the control's own first (preferred) scope. This is what
- * keeps a `user`-scoped session from trying to write `user` to the slider, which
+ * keeps a `user`-scoped session from trying to write `user` to the compression dial, which
  * only ever writes local scope.
  */
 export function effectiveScope(state: PanelState, control: Control): string {

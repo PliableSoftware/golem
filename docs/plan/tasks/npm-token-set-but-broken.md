@@ -1,18 +1,25 @@
 ---
 task: npm-token-set-but-broken
 title: "`NPM_TOKEN` is set but does not work — so every release attempts a publish and goes red after succeeding"
-state: queued
+state: done
 owner: user
 size: S
 discipline: code
 design: "Observed 2026-09-04 on run 33855109816 (the old Release workflow, re-triggered by the `v0.1.1` tag force-push during the history rewrite). The step named *\"Publish (skipped without NPM_TOKEN)\"* did not skip — it ran and failed, which is only possible if `env.NODE_AUTH_TOKEN` was non-empty."
 gate: "Either `npm view golem-run version` resolves after a release, or the publish step genuinely skips and the release run is green end to end."
-blocked: "MITIGATED 2026-09-04 — releases are green again; publishing now needs `vars.NPM_PUBLISH == 'true'`. Closing it fully still needs the account owner to either delete the broken secret or replace it with a working token."
 depends_on: []
 touches: [.github/workflows/release.yml]
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-23
 ---
+
+> **RESOLVED 2026-09-23 (v0.54.3).** Root-caused, not just mitigated: the whole
+> "token is set but broken" problem class needed a static `NPM_TOKEN` secret to
+> exist. `npm-publish` now authenticates via npm's OIDC Trusted Publisher flow
+> (folded in from the standalone `publish.yml`, deleted) — no token, nothing to
+> leak or go stale. Confirmed via `gh secret list`: no secrets exist on this repo
+> at all. The `vars.NPM_PUBLISH` opt-in gate is also gone; every release
+> publishes. See docs/wiki/concepts/Release Pipeline.md.
 
 > **MITIGATED 2026-09-04 (USER: "bypass that for now").** The publish step no
 > longer fires on the presence of a secret. It requires the repository variable
@@ -62,3 +69,7 @@ in the one workflow whose whole job is to be trustworthy.
 `R7.5` (first npm publish + VS Code Marketplace publish + tag) is the task that
 owns actually going live on the registry. This one only concerns the secret being
 present-but-broken while publishing is meant to be off.
+
+## Dust 2026-10-08 note
+
+Dust 2026-10-08: gate no longer met because `golem-run` is E404 on npm and the v0.54.3 Release run `35854466422` is red (portal notify failed); the OIDC commit `d315b23` is not an ancestor of `v0.54.3`, so "RESOLVED (v0.54.3)" overstates it. Not reopened. (source: DUST1.11 audit, `docs/plan/audit/dust-1/DUST1.11.md` Plan hygiene; not re-verified live)

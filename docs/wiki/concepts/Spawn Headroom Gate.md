@@ -4,12 +4,17 @@ type: concept
 tags: [snooze, usage-limits, subagents, pre-tool-use, hooks, decision-38, decision-45, adr-0002]
 sources: [src/hooks/spawn-gate.ts, src/hooks/pre-tool-use.ts, src/hooks/snooze-nudge.ts, src/proxy/limit-prediction.ts, docs/plan/tasks/subagent-park.md, docs/plan/verification-notes.md]
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-10-08
 ---
 
 # Spawn Headroom Gate
 
-Golem refuses to **start** a subagent when the session (5h) usage window cannot
+> **Off by default (2026-09-25, USER decision).** `snooze.spawn_gate` defaults
+> `false` (`src/config/schema.ts:1201`); the park it follows defaults advisory
+> (`snooze.enforce: false`, see [[Usage Limit Park]]). Everything below describes
+> the gate when it is switched on.
+
+When enabled, Golem refuses to **start** a subagent when the session (5h) usage window cannot
 pay for it to finish. The gate lives in `src/hooks/spawn-gate.ts` and runs from
 the shared `PreToolUse` hook, immediately after the [[Usage Limit Park]].
 
@@ -55,6 +60,13 @@ the three-at-once fan-out, where every spawn in a batch reads the same pre-batch
 number and each one looks affordable alone. Allowed spawns are recorded in
 `.golem/state/spawn-gate.json`.
 
+The refusal reads the 5h reading and checks only `projected > 1`
+(`src/hooks/spawn-gate.ts:166-172`). Unlike the park, it does not test whether the
+window's reset time has already passed (`src/hooks/snooze-nudge.ts:113-115` does),
+so a fresh-looking reading just past its reset can still refuse a spawn. Per the
+DUST1.7 audit the spawn-state read-modify-write is also racy under parallel
+fan-out; that race is UNVERIFIED here.
+
 ## Never silently allow, never deadlock
 
 If utilization cannot be read (no reading yet, or the header feed has gone cold
@@ -76,7 +88,7 @@ dispatched from.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `snooze.spawn_gate` | `true` | Gate spawns on headroom at all (`GOLEM_SNOOZE_SPAWN_GATE`) |
+| `snooze.spawn_gate` | `false` | Gate spawns on headroom at all; opt in with `true` (`GOLEM_SNOOZE_SPAWN_GATE`) |
 | `snooze.spawn_cost_fraction` | `0.18` | Assumed share of a window per subagent (`GOLEM_SNOOZE_SPAWN_COST_FRACTION`) |
 
 `golem status`'s Limits line reports it alongside the park mode:

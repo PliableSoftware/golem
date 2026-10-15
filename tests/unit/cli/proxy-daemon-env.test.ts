@@ -71,3 +71,18 @@ describe("buildSpawnEnv", () => {
     expect(env[CREDENTIALS_INJECTED_ENV]).toBeUndefined();
   });
 });
+
+/**
+ * DUST3.5 / DUST1.11: the marker means "the parent resolved for you". Setting it
+ * with nothing injected made the auto-started daemon skip resolution and run
+ * with no gateway key at all.
+ */
+describe("daemonSpawnEnv", () => {
+  it("sets the marker only when credentials were injected", async () => {
+    const { daemonSpawnEnv } = await import("../../../src/cli/proxy-daemon.js");
+    expect(daemonSpawnEnv({ PATH: "/usr/bin" }, {})[CREDENTIALS_INJECTED_ENV]).toBeUndefined();
+    const withKey = daemonSpawnEnv({ PATH: "/usr/bin" }, { GOLEM_UPSTREAM_API_KEY: "x" });
+    expect(withKey[CREDENTIALS_INJECTED_ENV]).toBe("1");
+    expect(withKey.GOLEM_UPSTREAM_API_KEY).toBe("x");
+  });
+});

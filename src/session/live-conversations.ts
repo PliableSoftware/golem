@@ -30,9 +30,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import type { LiveConversation } from "../interfaces/join-queue.js";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
 
@@ -283,14 +284,7 @@ export class LiveConversationRegistry {
         updatedAt: new Date(this.#now()).toISOString(),
         conversations: this.list(),
       };
-      const tmp = `${file}.${process.pid}.tmp`;
-      await writeFile(
-        tmp,
-        `${JSON.stringify(payload, null, 2)}
-`,
-        "utf8",
-      );
-      await rename(tmp, file);
+      await replaceViaTemp(file, `${JSON.stringify(payload, null, 2)}\n`);
     } catch {
       // Observe-only: a snapshot nobody could write is a device that sees no
       // conversations, which is the safe direction (invariant 3).

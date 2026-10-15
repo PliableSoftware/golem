@@ -5,7 +5,7 @@
  *   - the effective config with per-key provenance (E1 loader),
  *   - whether this project is wired to Golem (init.ts file checks),
  *   - whether the proxy answers on the configured port (short HTTP probe),
- *   - the effective slider level.
+ *   - the effective compression level (`compression.level`).
  *
  * JSON output keys are snake_case, matching the settings-file conventions.
  *
@@ -45,6 +45,10 @@ export interface ConfigKeyStatus {
   readonly layer: string;
   /** File path or env var name behind the layer (absent for defaults). */
   readonly source?: string;
+  /** ADR-0008: the winning declaration is `!important` at {@link layer} (`default` = the `default!` floor). */
+  readonly important?: true;
+  /** Who pinned it and what can still override it; present exactly when {@link important} is. */
+  readonly locked?: string;
 }
 
 export interface StatusReport {
@@ -203,8 +207,8 @@ export interface StatusReport {
   /**
    * Whether a local model (Ollama) is reachable, and whether the `coder` MCP
    * tool is enabled. When reachable AND enabled, Golem is a local+upstream
-   * hybrid — the local model is available via the `coder` MCP tool at any slider
-   * level (Decision 30/31) — and `coder_model` names the concrete model that
+   * hybrid — the local model is available via the `coder` MCP tool at any
+   * compression level (Decision 30/31) — and `coder_model` names the concrete model that
    * role runs at this machine's hardware tier.
    */
   readonly local_model: {
@@ -368,7 +372,7 @@ export interface StatusOptions {
   readonly probeTimeoutMs?: number;
   /** R9.16: VS Code extensions dir; null means "no VS Code". Tests inject. */
   readonly vscodeExtensionsDir?: string | null;
-  /** Test injection (forwarded to loadConfig). */
+  /** Test injection (forwarded to loadEffectiveConfig). */
   readonly userDir?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Test injection for the local-model probe (avoids real network in tests). */

@@ -38,7 +38,7 @@ export {
  * because every existing consumer imports them from `compression/index.js`.
  */
 export { HEADROOM_CLIENT_NPM_PIN, HEADROOM_SIDECAR_PYPI_PIN } from "./pins.js";
-// The neutral semantic-compression seam (slider ≥3). The Headroom implementation
+// The neutral semantic-compression seam (`compression.level` ≥2). The Headroom implementation
 // (HeadroomSidecar) is imported directly from ./headroom-adapter.js by the CLI —
 // deliberately NOT re-exported here, to keep Headroom imports isolated to that
 // file and avoid an index↔adapter import cycle.

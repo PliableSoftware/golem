@@ -77,7 +77,7 @@ export default function register(program: Command): void {
   targetCmd
     .command("show")
     .description("Show one target in full (fails closed on an unknown id — never substitutes)")
-    .argument("<id>", "a target id from proxy.targets or proxy.accounts")
+    .argument("<id>", "a target id from proxy.targets or proxy.gateways")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--json", "machine-readable output", false)
     .action(async (id: string, opts: { dir: string; json: boolean }) => {
@@ -107,7 +107,7 @@ export default function register(program: Command): void {
   targetCmd
     .command("add")
     .description(
-      "Register a target in proxy.targets (non-secret config only — credentials stay with 'account login')",
+      "Register a target in proxy.targets (non-secret config only — credentials stay with 'gateway add/login')",
     )
     .argument("<id>", "new target id (e.g. coder, cheap)")
     .requiredOption(
@@ -151,7 +151,7 @@ export default function register(program: Command): void {
             : "";
           process.stdout.write(
             `registered target "${id}" (gateway: ${opts.gateway}).${note}\n` +
-              `Nothing routes on it yet — the registry is inert until proxy routing (R9.2) and coder dispatch (R9.3) land.\n`,
+              `Select it with \`golem target use ${id}\`, or name it explicitly when dispatching.\n`,
           );
         } catch (err) {
           _fail(err);
@@ -162,7 +162,7 @@ export default function register(program: Command): void {
   targetCmd
     .command("test")
     .description("Probe a target's stored credential against its own endpoint")
-    .argument("<id>", "a target id from proxy.targets or proxy.accounts")
+    .argument("<id>", "a target id from proxy.targets or proxy.gateways")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--json", "machine-readable output", false)
     .action(async (id: string, opts: { dir: string; json: boolean }) => {

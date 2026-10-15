@@ -3,7 +3,7 @@
  */
 
 import type { Command } from "commander";
-import { findProjectDir, loadConfig, migrateOnVersionChange } from "../../config/index.js";
+import { findProjectDir, loadEffectiveConfig, migrateOnVersionChange } from "../../config/index.js";
 import { VERSION } from "../../index.js";
 import { createProbeRunner, detectCapability, embedModelFor } from "../../inference/index.js";
 import { loopbackCaPath } from "../../proxy/loopback-cert.js";
@@ -38,7 +38,7 @@ async function commandExists(cmd: string): Promise<boolean> {
 
 async function ollamaEmbedReady(dir: string): Promise<boolean> {
   try {
-    const { settings } = await loadConfig({ projectDir: dir });
+    const { settings } = await loadEffectiveConfig({ projectDir: dir });
     const facts = await detectCapability(createProbeRunner());
     const model = embedModelFor(facts.tier, "text");
     return await ollamaHasModel(settings.inference.ollama_base_url, model);
@@ -79,9 +79,9 @@ async function initSummary(dir: string): Promise<string> {
 
 /**
  * Say plainly what was just trusted, why, and what it cannot do. Trust changes
- * should never be silent, even when they are the default — and the restart is
- * not optional: `NODE_EXTRA_CA_CERTS` is read once at startup (§112), so until
- * Claude Code restarts, served WebFetches keep using the deny path.
+ * should never be silent, even when they are the default. Most sessions pick
+ * the new CA up live (§125); restart Claude Code only if served WebFetches are
+ * still denied.
  */
 function loopbackCertNotice(projectDir: string): string {
   return [
@@ -105,11 +105,17 @@ function loopbackCertNotice(projectDir: string): string {
 export default function register(program: Command): void {
   program
     .command("init")
-    .description("Wire this project's Claude Code to Golem (proxy, MCP server, /golem/* skills)")
+    .description("Wire this project's Claude Code to Golem (proxy, MCP server, /golem-* skills)")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--dry-run", "show what would change without writing", false)
     .option("--foundry <url>", "front an Azure AI Foundry resource base URL")
     .option("--upstream <url>", "front a generic Anthropic-compatible gateway (e.g. OpenRouter)")
+    .option(
+      "--restore-skill <cmd>",
+      'recreate a Golem skill you deleted (repeatable; "all" for every one)',
+      (v: string, prev: string[]) => [...prev, v],
+      [] as string[],
+    )
     .option(
       "--no-loopback-cert",
       "don't generate or trust Golem's loopback CA (cache-served WebFetches keep showing as denied/red)",
@@ -120,6 +126,7 @@ export default function register(program: Command): void {
         dryRun: boolean;
         foundry?: string;
         upstream?: string;
+        restoreSkill: string[];
         loopbackCert: boolean;
       }) => {
         try {
@@ -128,6 +135,7 @@ export default function register(program: Command): void {
             dryRun: opts.dryRun,
             ...(opts.foundry !== undefined ? { foundry: opts.foundry } : {}),
             ...(opts.upstream !== undefined ? { upstream: opts.upstream } : {}),
+            ...(opts.restoreSkill.length > 0 ? { restoreSkills: opts.restoreSkill } : {}),
             // commander maps `--no-loopback-cert` onto `loopbackCert: false`
             ...(opts.loopbackCert === false ? { noLoopbackCert: true } : {}),
           });
@@ -143,7 +151,7 @@ export default function register(program: Command): void {
             process.stdout.write(`  config   ${line}\n`);
           }
           // R9.23: always start the proxy daemon after wiring
-          const { settings } = await loadConfig({ projectDir: opts.dir });
+          const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
           const pid = await startDetached(
             opts.dir,
             settings.proxy.port,
@@ -201,7 +209,7 @@ export default function register(program: Command): void {
     .option("--dry-run", "show what would change without writing", false)
     .action(async (opts: { dir: string; dryRun: boolean }) => {
       try {
-        const { settings } = await loadConfig({ projectDir: opts.dir });
+        const { settings } = await loadEffectiveConfig({ projectDir: opts.dir });
         const report = await golemUninit({
           projectDir: opts.dir,
           dryRun: opts.dryRun,

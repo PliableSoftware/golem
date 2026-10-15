@@ -50,7 +50,10 @@ describe("collectSessionStateReport", () => {
     expect(() => sessionStateReportSchema.parse(report)).not.toThrow();
     expect(report.proxy.running).toBeNull(); // unknown, not a false "off"
     expect(report.local_model.reachable).toBeNull();
-    expect(report.compression.level).toBe("1"); // config default still resolves
+    // Unknown, not an invented "1": the dial could not be read, so say so.
+    expect(report.compression.level).toBe("unknown");
+    expect(report.compression.name).toBe("unknown");
+    expect(report.compression.redaction_off).toBe(false);
   });
 
   it("surfaces a fresh blocked flag with its reason", async () => {

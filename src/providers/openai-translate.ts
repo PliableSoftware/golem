@@ -424,7 +424,9 @@ export function anthropicToOpenAIChat(
   const requestedModel = opts.model ?? parsed.model ?? "";
   const model = opts.keepVendorPrefix === true ? requestedModel : stripVendorPrefix(requestedModel);
   if (model === "") {
-    throw new Error("no upstream model: set proxy.upstream_model for this provider");
+    throw new Error(
+      "no upstream model: set proxy.upstream_model for this provider, or the target's `models[]` / `golem target add --model`",
+    );
   }
 
   const tools: OpenAITool[] | undefined = parsed.tools?.map((t) => ({

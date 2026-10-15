@@ -187,7 +187,7 @@ describe("checkWiki", () => {
       wikiDir,
       "WIKI.md",
       { ...OK_FM, title: "WIKI", type: "schema" },
-      "- debriefs/2026-08-01-listed.md — the one that is indexed",
+      "- debriefs/2026-08-01-listed.md — the one that is indexed\n- [[Prompt Caching]] — concept",
     );
     await writePage(
       wikiDir,
@@ -210,14 +210,22 @@ describe("checkWiki", () => {
     expect(unlisted[0]?.relPath).toBe("debriefs/2026-08-02-forgotten.md");
   });
 
-  it("does not require an Index line for a concept page (R11.5 — debriefs only)", async () => {
+  it("flags an unlisted concept page, but accepts a [[Title]] or path listing", async () => {
     const wikiDir = resolveWikiDir(projectDir, "docs/wiki");
-    await writePage(wikiDir, "WIKI.md", { ...OK_FM, title: "WIKI", type: "schema" }, "no list");
+    await writePage(
+      wikiDir,
+      "WIKI.md",
+      { ...OK_FM, title: "WIKI", type: "schema" },
+      "- [[Prompt Caching]] — listed by title\n- questions/Why.md — listed by path",
+    );
     await writePage(wikiDir, "concepts/Prompt Caching.md", OK_FM, "See [[WIKI]].");
+    await writePage(wikiDir, "questions/Why.md", { ...OK_FM, title: "Why" }, "See [[WIKI]].");
+    await writePage(wikiDir, "concepts/Orphan.md", { ...OK_FM, title: "Orphan" }, "See [[WIKI]].");
 
     const report = await checkWiki(wikiDir);
 
-    expect(report.issues).toEqual([]);
+    const unlisted = report.issues.filter((i) => i.message.includes("not listed in WIKI.md"));
+    expect(unlisted.map((i) => i.relPath)).toEqual(["concepts/Orphan.md"]);
   });
 
   it("flags a frontmatter parse error", async () => {

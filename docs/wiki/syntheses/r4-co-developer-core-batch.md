@@ -69,3 +69,9 @@ seven tasks landed 2026-07-16.
   companion app)** remain ⛔ ON HOLD (Decision 36) — the hold lifts only on an
   explicit user call, informed by R4.3/R4.7's measurements.
 
+
+## Rebaseline 2026-10-08
+
+- "five local tools" (R4.3): the MCP surface is now 11 tools (`search`, `fetch`, `expand`, `stats`, `ingest`, `coder`, `code`, `devices`, `snooze`, `wiki_read`, `wiki_upsert`). Count from the registered tool list; UNVERIFIED against a single registration site.
+- "R5 and R6 remain ON HOLD (Decision 36)": both shipped (`docs/plan/SHIPPED.md:28` for R6; R5 see [[R5 — Autonomy & orchestration batch retrospective]] page's follow-ups). The hold is lifted.
+- "propose plan-gated task" / promote consent: plan-gating of wiki writes was reversed by Decision 44 (`docs/golem-spec.md:542`). `golem wiki promote` exists at `src/cli/commands/wiki.ts:171`.

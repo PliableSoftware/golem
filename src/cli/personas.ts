@@ -15,7 +15,7 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { loadConfig } from "../config/index.js";
+import { loadEffectiveConfig } from "../config/index.js";
 import type { LayerName } from "../config/loader.js";
 import {
   type PersonaLane,
@@ -67,7 +67,7 @@ export async function collectPersonas(
   projectDir: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<PersonasReport> {
-  const { settings, provenance, warnings } = await loadConfig({ projectDir, env });
+  const { settings, provenance, warnings } = await loadEffectiveConfig({ projectDir, env });
   const personas = settings.inference.personas;
   const registry = withDefaultTarget(settings);
 
@@ -233,7 +233,7 @@ export async function ejectPersonaPrompt(
   id: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<EjectResult> {
-  const { settings } = await loadConfig({ projectDir, env });
+  const { settings } = await loadEffectiveConfig({ projectDir, env });
   const personas = settings.inference.personas;
   if (!Object.hasOwn(personas, id)) {
     const known = Object.keys(personas).sort().join(", ");

@@ -3,7 +3,7 @@ title: Hosted multi-turn claude CLI spike (R13.1)
 type: synthesis
 tags: [r13, adr-0007, spike, stream-json]
 sources: [https://code.claude.com/docs/en/cli-reference]
-updated: 2026-08-23
+updated: 2026-10-08
 created: 2026-08-23
 ---
 
@@ -15,7 +15,7 @@ Client `2.1.235`. This page records what R13.1 measured before building on `docs
 
 | item | label | result |
 |---|---|---|
-| Multi-turn input | **[OBSERVED]** | `-p --input-format stream-json --output-format stream-json` accepts second message after first `result` event, same `session_id` kept |
+| Multi-turn input | **[OBSERVED]** | `-p --input-format stream-json --output-format stream-json --verbose` accepts second message after first `result` event, same `session_id` kept |
 | Structured output | **[OBSERVED]** | Tool calls and tool results arrive as separate event objects correlatable by `tool_use_id` |
 | Interruption | **[OBSERVED]** Windows / **[UNESTABLISHED]** POSIX | `child.kill(SIGINT)` does not interrupt a running turn on Windows — process-kill only |
 | Resume/identity | **[OBSERVED, partial]** / **[UNESTABLISHED]** reboot | Cross-process resume works; machine-reboot survival not tested |
@@ -23,6 +23,15 @@ Client `2.1.235`. This page records what R13.1 measured before building on `docs
 | Permission behaviour | **[OBSERVED]** | Headless `ask` resolves to synchronous refusal — no dialog possible |
 | Proxy interposition | **[OBSERVED]** | Traffic flows wherever `ANTHROPIC_BASE_URL` points |
 | Cost/lifetime | **[OBSERVED]** rough | $0.21-$0.51 per trivial turn cold-cache at Opus-5; idle costs nothing beyond OS process |
+
+`--verbose` is part of the working command line, not an option: without it
+`--output-format stream-json` does not emit the per-event stream and the host would
+see only a final result (`src/session/host.ts:33-38`, citing verification-notes
+§142/§147). The row as first recorded omitted it, so reproducing the spike from
+the original text would fail. The spike measured that the runner *accepts* a
+second message after the first `result`; the shipped `golem session host start`
+does not yet use that, and closes stdin after the first result
+(`src/cli/commands/session-host.ts:144`, see [[Hosted Session]]).
 
 ## Verdict
 

@@ -80,9 +80,17 @@ export const SELECTION_CASES: readonly SelectionCase[] = [
     prompt: "Show me the cumulative compression statistics for this project.",
     expected: "stats",
   },
-  // level — set the slider
-  { id: "level-1", prompt: "Set Golem's slider to level 2.", expected: "level" },
-  { id: "level-2", prompt: "Turn the compression dial up to aggressive.", expected: "level" },
+  // code — whole-repo code map
+  {
+    id: "code-1",
+    prompt: "Which files define the proxy's request pipeline, and what are their main functions?",
+    expected: "code",
+  },
+  {
+    id: "code-2",
+    prompt: "Give me an overview of where the token-counting code lives before I open anything.",
+    expected: "code",
+  },
   // devices — hardware tier
   {
     id: "devices-1",
@@ -187,20 +195,6 @@ export const ARGUMENT_CASES: readonly ArgumentCase[] = [
     tool: "fetch",
     prompt: "Give me the full text of chunk c_8f21ab — the preview is cut off.",
     expect: { chunk_id: "c_8f21ab" },
-  },
-  {
-    id: "arg-level-1",
-    tool: "level",
-    prompt: "Set Golem's slider to level 2.",
-    expect: { level: 2 },
-  },
-  {
-    id: "arg-level-2",
-    tool: "level",
-    // Out-of-range bait: "maximum" is a word in the prompt, 0–5 is a bound in the
-    // schema. `schema-validation` removes that bound.
-    prompt: "Turn the slider up to the maximum aggressive setting.",
-    expect: { level: 3 },
   },
   {
     id: "arg-search-1",

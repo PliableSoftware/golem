@@ -58,6 +58,21 @@ function lookupFor(content: string, label = "https://example.com/page") {
 const big = (marker: string) => marker.repeat(Math.ceil(600 / marker.length));
 
 describe("substituteKnownContent", () => {
+  it("counts only refs it actually stored (DUST3.9)", async () => {
+    const content = big("stored-once ");
+    const messages = [{ role: "user", content }];
+    const ccr = newStore();
+
+    const first = await substituteKnownContent(messages, lookupFor(content), ccr);
+    expect(first.substitutions).toBe(1);
+    expect(first.ccrRefsStored).toBe(1);
+
+    // Same content again: substituted, but the blob already exists, so nothing is stored.
+    const second = await substituteKnownContent(messages, lookupFor(content), ccr);
+    expect(second.substitutions).toBe(1);
+    expect(second.ccrRefsStored).toBe(0);
+  });
+
   it("substitutes recognized user text content above minChars", async () => {
     const content = big("known-page-content ");
     const messages = [{ role: "user", content }];

@@ -86,14 +86,6 @@ function foldRequests(
   };
 }
 
-/** Windowed CompressionStats for exactly `window` (no fallback). */
-export function windowedStats(
-  events: readonly TelemetryEvent[],
-  opts: { readonly projectId?: string; readonly window: BenchWindow; readonly nowMs: number },
-): CompressionStats {
-  return foldRequests(events, opts.projectId, windowStartMs(opts.window, opts.nowMs));
-}
-
 /**
  * Windowed stats for `preferred`, widening to the next window when the narrower
  * one recorded no requests (24h → 7d → all). Keeps the headline recent when
@@ -111,11 +103,13 @@ export function windowedStatsWithFallback(
       : opts.preferred === "7d"
         ? ["7d", "all"]
         : ["all"];
-  let last = foldRequests(events, opts.projectId, windowStartMs("all", opts.nowMs));
+  // `order` is never empty and always ends in "all", so the last fold is the
+  // one returned when no window had requests.
+  let last: { stats: CompressionStats; windowApplied: BenchWindow } | undefined;
   for (const window of order) {
     const stats = foldRequests(events, opts.projectId, windowStartMs(window, opts.nowMs));
-    last = stats;
-    if (stats.requests > 0) return { stats, windowApplied: window };
+    last = { stats, windowApplied: window };
+    if (stats.requests > 0) return last;
   }
-  return { stats: last, windowApplied: "all" };
+  return last as WindowedStats;
 }

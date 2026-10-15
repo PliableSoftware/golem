@@ -14,8 +14,12 @@ import { setConfig } from "../../src/cli/config.js";
 import { loadConfig } from "../../src/config/index.js";
 import {
   assertLeafRename,
+  DEPRECATED_SETTINGS,
+  deprecationFor,
   liveKeyFor,
   migrationFrom,
+  RETIRED_SETTINGS,
+  retirementFor,
   SETTING_MIGRATIONS,
 } from "../../src/config/migrations.js";
 import { useTempDirs } from "../helpers/tmp.js";
@@ -49,12 +53,6 @@ describe("the migration table", () => {
   it("every entry renames a retired leaf onto a live one, within one section", () => {
     expect(SETTING_MIGRATIONS.length).toBeGreaterThan(0);
     for (const m of SETTING_MIGRATIONS) {
-      // R14.3: worker_targets → personas is a structural change (map → record
-      // with different value shape). The old key is kept as a deprecated leaf
-      // with a warning; no automatic migration is performed.
-      if (m.from === "inference.worker_targets" && m.to === "inference.personas") {
-        continue;
-      }
       expect(assertLeafRename(m), `${m.from} → ${m.to}`).toBeUndefined();
     }
   });
@@ -215,5 +213,110 @@ describe("the two intermediate historical spellings still forward (R9.23)", () =
     expect(
       warnings.some((w) => /"inference\.default_target".*renamed to "inference\.model"/.test(w)),
     ).toBe(true);
+  });
+});
+
+// DUSTSEC.13 (USER decision G1): `inference.worker_targets` is a LIVE setting.
+// It is a schema leaf that routing reads at the highest precedence, so listing
+// it as retired (and saying it raises) was documentation of a behaviour that
+// never existed.
+describe("inference.worker_targets is live, not retired", () => {
+  it("is not in RETIRED_SETTINGS and has no retirement record", () => {
+    expect(RETIRED_SETTINGS.map((r) => r.path)).not.toContain("inference.worker_targets");
+    expect(retirementFor("inference.worker_targets")).toBeUndefined();
+  });
+
+  it("loads with no error and no warning, and is not rewritten into personas", async () => {
+    await writeJson(projectFile(), {
+      inference: { worker_targets: { coder: "openrouter-qwen3" } },
+    });
+    const { settings, warnings } = await loadConfig({ projectDir, userDir });
+    expect(settings.inference.worker_targets).toEqual({ coder: "openrouter-qwen3" });
+    expect(settings.inference.personas.coder?.model).toBeUndefined();
+    expect(warnings.filter((w) => w.includes("worker_targets"))).toEqual([]);
+  });
+});
+
+describe("knowledge.vector_db_url is deprecated: accepted, ignored, warned once", () => {
+  it("is in DEPRECATED_SETTINGS and still a live schema leaf (not retired)", () => {
+    expect(DEPRECATED_SETTINGS.map((d) => d.path)).toContain("knowledge.vector_db_url");
+    expect(deprecationFor("knowledge.vector_db_url")?.note).toBeTruthy();
+    expect(retirementFor("knowledge.vector_db_url")).toBeUndefined();
+  });
+
+  it("loads without raising and warns exactly once, naming the key and the file", async () => {
+    await writeJson(projectFile(), { knowledge: { vector_db_url: "http://localhost:6333" } });
+    const { warnings } = await loadConfig({ projectDir, userDir });
+    const hits = warnings.filter((w) => w.includes("knowledge.vector_db_url"));
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatch(/deprecated/i);
+    expect(hits[0]).toContain("settings.json");
+  });
+
+  it("still accepts an old malformed (non-URL) value instead of failing", async () => {
+    await writeJson(projectFile(), { knowledge: { vector_db_url: "not a url" } });
+    const { settings, warnings } = await loadConfig({ projectDir, userDir });
+    expect(settings.knowledge.vector_db_url).toBe("not a url");
+    expect(warnings.filter((w) => w.includes("knowledge.vector_db_url"))).toHaveLength(1);
+  });
+
+  it("does not warn when the key is unset", async () => {
+    const { warnings } = await loadConfig({ projectDir, userDir });
+    expect(warnings.filter((w) => w.includes("vector_db_url"))).toEqual([]);
+  });
+
+  it("accepts a non-string value (42, null) without failing the load", async () => {
+    for (const value of [42, null]) {
+      await writeJson(projectFile(), { knowledge: { vector_db_url: value } });
+      const { warnings } = await loadConfig({ projectDir, userDir });
+      expect(warnings.filter((w) => w.includes("knowledge.vector_db_url"))).toHaveLength(1);
+    }
+  });
+
+  it("never echoes the value, even a URL with a password", async () => {
+    const secret = ["hunter", "2"].join("");
+    const url = `http://user:${secret}@localhost:6333`;
+    await writeJson(projectFile(), { knowledge: { vector_db_url: url } });
+    const { warnings } = await loadConfig({ projectDir, userDir });
+    expect(warnings.length).toBeGreaterThan(0);
+    for (const w of warnings) expect(w).not.toContain(secret);
+  });
+
+  it("warns for the GOLEM_KNOWLEDGE_VECTOR_DB_URL environment spelling too, without the value", async () => {
+    const secret = ["hunter", "2"].join("");
+    const { warnings } = await loadConfig({
+      projectDir,
+      userDir,
+      env: { GOLEM_KNOWLEDGE_VECTOR_DB_URL: `http://u:${secret}@localhost:6333` },
+    });
+    const hits = warnings.filter((w) => w.includes("knowledge.vector_db_url"));
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("GOLEM_KNOWLEDGE_VECTOR_DB_URL");
+    expect(hits[0]).toMatch(/deprecated/i);
+    for (const w of warnings) expect(w).not.toContain(secret);
+  });
+
+  it("the user-facing warning carries no internal task id", async () => {
+    await writeJson(projectFile(), { knowledge: { vector_db_url: "http://x" } });
+    const { warnings } = await loadConfig({ projectDir, userDir });
+    const w = warnings.find((x) => x.includes("vector_db_url")) ?? "";
+    expect(w).toContain("future release");
+    expect(w).not.toContain("dead-code");
+  });
+
+  it("a team layer carrying it is refused, with the value not shown", async () => {
+    const secret = ["hunter", "2"].join("");
+    const { warnings, refused, settings } = await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer: {
+        settings: { knowledge: { vector_db_url: `http://u:${secret}@evil:6333` } },
+        source: "acme",
+      },
+    });
+    expect(refused).toContain("knowledge.vector_db_url");
+    expect(settings.knowledge.vector_db_url).toBeUndefined();
+    for (const w of warnings) expect(w).not.toContain(secret);
   });
 });

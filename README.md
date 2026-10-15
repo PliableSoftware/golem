@@ -1,26 +1,27 @@
 # Golem — a universal pre-LLM processing layer
 
-**[golem.run](https://golem.run)** · npm `golem-run` · CLI `golem`
+**[golem.run](https://golem.run)** · npm `@pliable/golem` · CLI `golem`
 
 Local-first **TypeScript** proxy + unified MCP server that sits in front of
 your LLM traffic and handles what shouldn't have to hit a model provider
 first: **redaction** (secrets/PII stripped before anything leaves the
 machine), **local tools** (vector knowledge base, tiered Ollama inference, CCR
 expansion), **routing** (Claude, with Foundry/OpenRouter adapters extending
-the same pipeline), and **honest observability** (real billed-token telemetry,
-not estimates). Compression (Golem-native lossless stage; optional
+the same pipeline), and **honest observability** (the prompt-cache report uses
+the billed `usage` from API responses; savings and tokens-saved figures are
+estimates, about 4 characters per token). Compression (Golem-native lossless stage; optional
 [Headroom](https://github.com/headroomlabs-ai/headroom) Python sidecar for
 ML-heavy stages) is part of the pipeline too, but it's *situational* — it pays
 off on non-caching upstreams, not on Anthropic's cached traffic, where the
 honest number today is ~0% (see `docs/plan/verification-notes.md` §54).
 
-Claude Code is Golem's flagship, most-verified integration — byte-faithful
-proxying, native MCP tools, `/golem/*` skills — with the same pipeline
+Claude Code is Golem's flagship, most-verified integration — lossless, prefix-stable
+proxying, native MCP tools, `/golem-<cmd>` skills — with the same pipeline
 designed to extend to other gateways. Native Windows, macOS, and Linux.
 
 ## How it works
 
-One local process exposes two doors — a **transparent proxy** (every request) and an
+Golem exposes two doors — a **transparent proxy** (every request) and an
 **MCP server** (explicit tools) — over one shared engine, and talks to local models
 (Ollama, on this box or a LAN GPU box), a vector knowledge base, and the upstream
 LLM:
@@ -34,12 +35,12 @@ flowchart LR
 ```
 
 Every `POST /v1/messages` runs a fixed pipeline — **redaction always first** (never
-reordered), then situational compression, then a byte-faithful forward at
+reordered), then situational compression, then a lossless, prefix-stable forward at
 compression level ≤ 1:
 
 ```mermaid
 flowchart LR
-  R["Request"] --> RD["Redact"] --> LA["Local-answer?<br/>(opt-in short-circuit)"] --> CO["Compress<br/>(situational)"] --> FW["Forward<br/>byte-faithful at level <= 1"] --> UP["Upstream"]
+  R["Request"] --> RD["Redact"] --> LA["Local-answer?<br/>(on by default, confidence-gated)"] --> CO["Compress<br/>(situational)"] --> FW["Forward<br/>lossless, prefix-stable at level <= 1"] --> UP["Upstream"]
 ```
 
 Full component diagrams — request lifecycle by compression level, web-fetch caching,
@@ -56,11 +57,19 @@ curl -fsSL https://golem.run | sh
 irm https://golem.run | iex
 ```
 
-The installer is npm-first: it uses `npm i -g golem-run` when Node ≥ 22 is
+The installer is npm-first: it uses `npm i -g @pliable/golem` when Node ≥ 22 is
 present, and falls back to a self-contained binary (no Node needed) otherwise
 (spec Decision 41). Then run `golem init` in your project. Already have Node?
-`npm i -g golem-run` works directly. Keep current with `golem update` (the VS
+`npm i -g @pliable/golem` works directly. Keep current with `golem update` (the VS
 Code extension also surfaces an update prompt). Release process: [RELEASING.md](RELEASING.md).
+
+### Removing a skill, and getting it back
+
+Delete `.claude/skills/golem-<cmd>/` and it stays deleted: `golem init` records which
+skills the project was offered (`.golem/state/skills-offered.json`) and does not
+re-seed a removed one. A skill added in a later release is offered once. To bring one
+back, run `golem init --restore-skill <cmd>` (repeatable, or `--restore-skill all`).
+A skill you edited is always kept; `golem uninit` clears the record.
 
 ## Settings
 
@@ -105,6 +114,7 @@ Settings section — all three render from one surface, `golem config schema --j
 - **Live-doc findings:** [docs/plan/verification-notes.md](docs/plan/verification-notes.md)
 - **Agent guidance:** [CLAUDE.md](CLAUDE.md)
 - **Project wiki:** [docs/wiki/](docs/wiki/) (knowledge base — see [WIKI.md](docs/wiki/WIKI.md))
+- **Docs drifted from the code?** `/golem-dust` runs the audit, rebaseline and refactor shake-out ([method](docs/wiki/concepts/Dust%20Method.md))
 
 ## Development
 

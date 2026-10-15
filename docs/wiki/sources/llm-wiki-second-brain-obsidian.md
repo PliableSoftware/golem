@@ -42,3 +42,8 @@ Golem adopted, adapted, or rejected:
 Author's core claim, worth keeping: connection density compounds — the 100th
 ingested article links to ~30 earlier pages, which is what makes a wiki an asset
 rather than "a polished hallucination". The gate + citations are what earn that.
+
+## Rebaseline 2026-10-08
+
+- `delegate` (line 33) is now the `coder` MCP tool (`src/mcp/coder-tools.ts`).
+- "plan-before-write" posture was reversed by Decision 44 (`docs/golem-spec.md:542`): the agent writes wiki pages directly; git is the review.

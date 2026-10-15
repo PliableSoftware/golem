@@ -14,7 +14,6 @@ import {
   InMemoryVectorDriver,
   isMemoryChunkId,
   KNOWLEDGE_SCHEMA_VERSION,
-  NotImplementedYetError,
   openKnowledgeBase,
   type StoredChunk,
 } from "../../../src/knowledge/index.js";
@@ -128,12 +127,6 @@ describe("GolemKnowledgeBase read path", () => {
     // (pure-TS hashing embedder). Empty index → empty results, never an error.
     const kb = openKnowledgeBase({ projectDir: "/tmp/x", driver: new InMemoryVectorDriver() });
     await expect(kb.search("q", "proj", 4, new Set(["knowledge"]))).resolves.toStrictEqual([]);
-  });
-
-  it("a configured vector_db_url selects the (stubbed) Qdrant driver", () => {
-    expect(() =>
-      openKnowledgeBase({ projectDir: "/tmp/x", vectorDbUrl: "http://localhost:6333" }),
-    ).toThrow(NotImplementedYetError);
   });
 });
 

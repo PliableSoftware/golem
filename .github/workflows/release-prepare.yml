@@ -59,7 +59,7 @@ permissions:
 jobs:
   prepare:
     name: Bump and open the release PR
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Refuse to run anywhere but development
         if: ${{ github.ref != 'refs/heads/development' }}
@@ -67,12 +67,12 @@ jobs:
           echo "::error::run this workflow on 'development' — it opens development → main. Got ${{ github.ref }}."
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: development
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm

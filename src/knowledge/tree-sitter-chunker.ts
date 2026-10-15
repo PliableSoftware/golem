@@ -12,11 +12,11 @@
  * returned here.
  *
  * `web-tree-sitter` + the `tree-sitter-typescript`/`tree-sitter-javascript`
- * grammar packages are NEVER a `golem-run` dependency (regular or optional) —
+ * grammar packages are NEVER a `@pliable/golem` dependency (regular or optional) —
  * CLAUDE.md's "no heavyweight deps in the default install" hard rule and
  * verification-notes §27's rejection of native tree-sitter bindings for the
  * default apply to the WASM payload too. They are a separate, user-installed
- * opt-in (added alongside `golem-run` in the same `node_modules` tree, e.g.
+ * opt-in (added alongside `@pliable/golem` in the same `node_modules` tree, e.g.
  * as project devDependencies); this module resolves them with a plain
  * dynamic `import()` and degrades to `null` — the caller falls back to the
  * heuristic `chunkCode` — on ANY failure: package absent, WASM init

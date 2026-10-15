@@ -3,7 +3,7 @@
 #   curl -fsSL https://golem.run | sh
 #
 # Tiered, npm-first:
-#   1. Node >= 22 + npm present         -> npm install -g golem-run  (self-updating)
+#   1. Node >= 22 + npm present         -> npm install -g @pliable/golem  (self-updating)
 #   2. otherwise                        -> download the standalone binary (no Node)
 #   3. GOLEM_INSTALL_NODE=1 only        -> bootstrap Node, then retry (1)
 #
@@ -50,14 +50,14 @@ next_steps() {
 }
 
 install_via_npm() {
-  spec="golem-run"
-  [ -n "${GOLEM_VERSION:-}" ] && spec="golem-run@${GOLEM_VERSION}"
+  spec="@pliable/golem"
+  [ -n "${GOLEM_VERSION:-}" ] && spec="@pliable/golem@${GOLEM_VERSION}"
   info "installing $spec globally via npm ..."
   if npm install -g "$spec"; then
     next_steps
     return 0
   fi
-  warn "npm install failed. If golem-run isn't published yet, this is expected — see https://golem.run"
+  warn "npm install failed. If @pliable/golem isn't published yet, this is expected — see https://golem.run"
   return 1
 }
 

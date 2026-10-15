@@ -29,12 +29,6 @@ export interface UsageTotals {
   readonly outputTokens: number;
 }
 
-/** Per-level usage rollup, scoped like {@link CompressionStats}. */
-export interface UsageByLevel {
-  readonly projectId: string | null;
-  readonly byLevel: Readonly<Record<number, UsageTotals & { readonly requests: number }>>;
-}
-
 /**
  * R2.6 (verification-notes §58/§59) A/B rollup: usage samples split by
  * whether `compression.force_semantic_on_caching` was on for that sample,
@@ -258,13 +252,6 @@ export interface TelemetryStore {
    * project; omit for the global (projectId: null) view.
    */
   aggregate(projectId?: string): Promise<CompressionStats>;
-  /**
-   * Roll up recorded `usage` (kind: "usage") events by slider level (R1.1) —
-   * the net-of-cache A/B input. `projectId` scopes to one project; omit for
-   * the global view. Independent of {@link aggregate}: usage events never
-   * count toward `CompressionStats` (that stays the gross-token headline).
-   */
-  aggregateUsageByLevel(projectId?: string): Promise<UsageByLevel>;
   /**
    * Roll up recorded `usage` events by the R2.6 `semanticForced` tag
    * (verification-notes §58/§59) — the gate-on vs gate-off-for-this-tier A/B

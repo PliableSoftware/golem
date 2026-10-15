@@ -11,7 +11,7 @@
  *
  * **Golem ships none of its bytes.** The module is resolved from the *user's own*
  * install (`npm i -g caveman-shrink`, a local `node_modules`, or an explicit path),
- * the same tier-2 shape as `golem ext`: never vendored, never auto-downloaded, and
+ * the same tier-2 shape as `golem pkg`: never vendored, never auto-downloaded, and
  * absence is a reported fact.
  *
  * **Absence must not become an identity transform.** If the package cannot be

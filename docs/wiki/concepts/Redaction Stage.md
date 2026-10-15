@@ -2,43 +2,93 @@
 title: Redaction Stage
 type: concept
 tags: [security, pipeline, redaction, t-c3, r1-batch]
-sources: [src/pipeline/redaction-rules.ts, src/pipeline/redaction.ts, docs/plan/verification-notes.md, docs/plan/verification-notes.md#§55, docs/plan/verification-notes.md#§56, docs/plan/verification-notes.md#§140]
+sources: [src/pipeline/redaction-rules.ts, src/pipeline/redaction.ts, src/pipeline/body-redaction.ts, docs/plan/tasks/DUSTSEC.23.md, docs/plan/verification-notes.md, docs/plan/verification-notes.md#§55, docs/plan/verification-notes.md#§56, docs/plan/verification-notes.md#§140]
 created: 2026-07-10
-updated: 2026-08-22
+updated: 2026-10-14
 ---
 
 # Redaction Stage
 
 Golem strips secrets/PII from traffic before anything is transformed, stored, or
-forwarded (CLAUDE.md hard rule: never weaken or reorder this stage after
-compression). Two passes, always in this order:
+forwarded (CLAUDE.md hard rule: redaction is never weakened or reordered). Two passes, always in this order:
 
-1. **Rule table** (`REDACTION_RULES` in `src/pipeline/redaction-rules.ts`) — one
-   auditable list, applied in table order: PEM private-key blocks first (so
-   narrower rules can't shred their base64 body), then provider key shapes
-   (most-specific-first, e.g. `sk-ant-` before generic `sk-`), then structured
-   formats (JWT, connection-string passwords), then PII (Luhn-gated credit-card
-   numbers, emails). Order is part of the audit surface — see the file's
-   top-of-file doc comment.
-2. **High-entropy backstop** (`isHighEntropyToken`) — catches uncontexted
+1. **Rule table** — one auditable list, applied in table order (built-ins in
+   `BUILT_IN_RULES`, `src/pipeline/redaction-rules.ts:104`; the exported
+   `REDACTION_RULES` is a frozen copy, `:249`, so mutating it changes nothing —
+   DUSTSEC.7): PEM private-key blocks first (so narrower rules can't shred their
+   base64 body), then provider key shapes (most-specific-first, e.g. `sk-ant-`
+   before generic `sk-`), then structured formats (JWT, connection-string
+   passwords), then email PII (Luhn-gated credit-card numbers sit in the same
+   band). The last built-in is **not** PII: `nostr-secret-key` (`nsec1...`, R14.3,
+   `:225`) is appended after `email`. Plugin rules follow the built-ins
+   (`activeRedactionRules()`, `:521`; see [[Plugin Seams]]). Order is part of the
+   audit surface — see the file's top-of-file doc comment.
+2. **High-entropy backstop** (`isHighEntropyToken`, `:413`) — catches uncontexted
    secrets the table missed. Candidates are unbroken base64/base64url-charset
    runs bounded to 32-128 chars (`ENTROPY_CANDIDATE_RE` /
-   `ENTROPY_MAX_CANDIDATE_CHARS`), scored by Shannon entropy against a 4.2
-   bits/char threshold.
+   `ENTROPY_MAX_CANDIDATE_CHARS`, `:276-281`), scored by Shannon entropy against a
+   4.2 bits/char threshold (`:289`). Three exclusions apply before the score
+   (`:413-433`): integrity hashes (`sha512-...`), **pure-hex** tokens (dashes and
+   underscores ignored: git SHAs, sha256 digests, UUIDs, Golem's own CCR
+   `hash=<sha256>` markers), and tokens with **fewer than 2 of 3 character
+   classes** (lowercase, uppercase, digit), plus path-like tokens (below).
 
-Both passes are pure functions of the input (no clock, no randomness, no
-config) — required for prompt-cache prefix stability — and idempotent:
-placeholders (`[REDACTED:<kind>:<n>]`) use a charset no rule's pattern matches,
-so re-redacting redacted text is a no-op.
+## What "pure" and "idempotent" mean today
+
+Neither claim is as strong as earlier revisions of this page said.
+
+- **Not a pure function of the input alone.** The table is
+  `activeRedactionRules()` = built-ins plus whatever plugin rules this process
+  registered (`:521`). Plugin rules come from `plugins.load` config at startup,
+  and a plugin `validate` callback is arbitrary code and can be impure
+  (`src/plugins/loader.ts:248-257`). The built-in table has no clock, no
+  randomness and no config, and the table is sealed for the life of the process
+  once registered (`registerExtraRedactionRules`, `:483`), which is what keeps
+  prompt-cache prefixes stable within a process.
+- **Idempotent for most rules, not all.** Placeholders
+  (bracketed, carrying a kind and an ordinal) use a charset most rules do not match, so
+  re-redacting redacted text is normally a no-op. The exception is
+  `connection-password`: its capture group `([^\s@/]+)` accepts `[`, `]` and `:`
+  (`src/pipeline/redaction-rules.ts:195`), so it re-matches its own placeholder,
+  and a second pass over a body with several connection-string passwords can
+  renumber them. This is a **known bug** (DUST1.1 headline 6; audit item S10),
+  left for Phase 3. Do not rely on idempotence or on a re-redacted prefix being
+  stable for that rule. Plugin patterns are not constrained to avoid the
+  placeholder charset either.
 
 ## Where it runs
 
-Redaction is **stage 1 of the pipeline and is never reordered after compression**.
-The single exception is `proxy.bypass_all`, a deliberate full bypass where nothing
-runs. It is **not** a dial value: ADR-0004 gave it its own persisted setting
-precisely so that no number could turn redaction off, and it is CLI-only, never
-the default, and surfaced loudly wherever it is active — see
-[[Compression Levels]] and [[Architecture]].
+Redaction is **stage 1 of the pipeline and is never reordered after compression**
+(`src/pipeline/pipeline.ts:497-504`; it runs at every compression level). One
+stage runs before it by design: join injection (stage 0.9, `pipeline.ts:449`),
+and what it injects is then redacted by stage 1.
+
+The single exception is `proxy.bypass_all`, a deliberate full bypass where
+nothing runs. It is **not** a dial value: ADR-0004 gave it its own persisted
+setting precisely so that no number could turn redaction off, and it is CLI-only,
+never the default, and surfaced loudly wherever it is active — see
+[[Compression Levels]] and [[Architecture]]. There is no other redaction-off
+path:
+
+- The per-request `x-golem-bypass` header and the `POST /__golem/pipeline/*`
+  admin endpoint are **removed** (DUSTSEC.2); `#pipelineEnabled` is fixed from
+  `bypass_all` at construction and never changed afterwards
+  (`src/proxy/server.ts:109`).
+- **A pipeline error does not forward the raw body.** On any throw in
+  `pipeline.process`, the proxy re-runs redaction alone on the original request
+  (`redactOnly`, `src/pipeline/pipeline.ts:383`) and forwards that; if redaction
+  itself throws, or the pipeline has no `redactOnly`, it fails closed with a
+  **502** and forwards nothing (`src/proxy/server.ts:329-353`; DUSTSEC.1, USER
+  decision R1/S3). The proxy prefers `redactOnlyAsync`, the same redaction with
+  the walk sliced (DUSTSEC.23, below), so the re-walk does not freeze the event
+  loop either; `redactOnly` is kept for callers that cannot await. `redactOnly` leaves a body that is not a rewritable
+  Messages JSON request unchanged, the same verdict `process` reaches.
+- `bypass_all` is guarded against agents by a PreToolUse hook
+  (`src/hooks/bypass-guard.ts`, DUSTSEC.3) that denies `golem off`,
+  `golem config set` naming `proxy.bypass_all`, a truthy
+  `GOLEM_PROXY_BYPASS_ALL` assignment and edits of `.golem` settings JSON that set
+  it. This is a deny on the documented spellings, **not a sandbox**: an agent with
+  arbitrary shell has process authority (the file's own header says so).
 
 ```mermaid
 flowchart LR
@@ -47,6 +97,8 @@ flowchart LR
   L0 -->|"false (default)"| P1["Pass 1 — rule table (table order)"]
   P1 --> P2["Pass 2 — high-entropy backstop"]
   P2 --> NEXT["then compression / storage / forward"]
+  P1 -. "pipeline throws" .-> RO["redaction alone, then forward"]
+  RO -. "redaction throws" .-> F["502, nothing forwarded"]
 ```
 
 ## Known false-positive classes (entropy backstop)
@@ -80,6 +132,59 @@ triggering character, per the hard rule against weakening redaction — every
 negative case added to guard a false positive is paired with a positive case
 proving real secrets of that shape still redact
 (`tests/unit/pipeline/redaction-audit.test.ts`).
+
+## Resolved: the request walk yields to the event loop (DUSTSEC.23, 2026-10-14)
+
+The JSON walk used to run every rule over every string synchronously: about 0.7 s
+per MiB of many small strings on the review machine (about 0.33 s per MiB on the
+measuring machine), so a 32 MiB body (the `proxy.max_request_body_bytes` default)
+held the event loop for 10 to 26 s and stalled every other session's streams. The
+size limit bounds what is admitted, not how long redaction takes.
+
+- **Two walks, one output.** The sync `redactRequestBody` (hooks, the conversation
+  store) is the original recursive walk, untouched. The proxy request path
+  (`process`, `redactOnlyAsync`, `redactAnyBodyAsync`) uses `redactRequestBodyAsync`
+  in `src/pipeline/redaction.ts`: an ITERATIVE walk with an explicit stack (no
+  recursion, so no call-stack limit of its own, and no allocation per primitive) that
+  yields to the event loop with `setImmediate` every `REDACTION_SLICE_MS` (20 ms of
+  wall time; the clock is read at the top of the loop every 256 cost units: one unit per
+  value committed, per container entered and per container finished, plus one per 32
+  characters of a string, so a body made only of empty containers is sliced as well). Same rules, same order, same placeholder table; output is
+  **byte-identical** to the sync walk, held by a differential test (random JSON,
+  every recorded shape at every turn length, primitive-heavy bodies, no mutation,
+  the non-JSON and refused body classes, idempotence). A first version made the
+  sync walk a generator too; review showed that cost nesting depth, so it is not.
+- **Depth.** Bisected through the real proxy, old / now: objects 3432 / 4466, arrays
+  4340 / 4466, mixed 4387 / 4466; direct the async walk reaches 4471, where the
+  whole-body `JSON.stringify` stops, for every shape.
+- **Measured** (32 MiB, about 700,000 short strings): old sync 10.5 to 11.1 s and one
+  stall of that length; async 10.4 to 10.6 s with 20 ms slices, worst stall 102 to
+  107 ms. Numbers array (31 MB): old 275 ms, async 240 ms. A worker thread was
+  measured and rejected: 11.8 s wall, a 142 ms main-thread stall to
+  structured-clone the body, two resident copies, and a crash path to make
+  fail-closed.
+- **What still blocks, per body class** (worst stall measured): many small strings
+  102 to 107 ms walk only, 313 to 547 ms with the parse and the duplicate-key scan
+  (that scan is about 300 ms on a key-dense 32 MiB body, the parse about 150 ms,
+  each one call, now in separate turns; the token-estimate `JSON.stringify` about
+  105 ms, whose result is reused for the forwarded bytes instead of stringifying
+  twice); a 31 MB numbers array 106 to 155 ms; container-heavy 32 MB bodies
+  (`[[],...]`, `[{},...]`, 16-deep empty arrays) 195, 252 and 376 ms against sync
+  walks of 553, 607 and 787 ms (the rest of that is the `JSON.stringify` of such a
+  body, which is slow and one call; their async wall time is about 1.2 to 1.3x sync);
+  one 30 MB string or a 30 MB non-JSON text body about 0.5 s (one rule scan cannot be
+  sliced). So a slice is 20 ms, but the worst stall is a slice plus the largest single
+  unsliceable call on that body class (100 to 375 ms measured, 0.5 s for one huge
+  string), not a flat bound, and the single huge string is not fixed.
+- **Fail closed, unchanged.** A throw inside any slice rejects; `process` then falls
+  back to `redactOnlyAsync` exactly as it fell back to `redactOnly`, and a failure
+  there is a 502 with nothing forwarded.
+- **Cancellation.** The proxy passes the request's abort signal to the pipeline. A
+  client that hangs up mid-walk makes the walk reject between slices, nothing is
+  forwarded, the redact-only re-walk is skipped (nobody would read the answer), the
+  outcome is reported as `client_gone`, and the in-flight reservation is released by
+  the response close as on every other path. Only a `RedactionAborted` counts: a real
+  pipeline error is reported to `onPipelineError` first, even if the client also left.
 
 ## Open, not yet fixed
 

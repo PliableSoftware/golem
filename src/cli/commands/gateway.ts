@@ -2,8 +2,9 @@
  * golem gateway — extracted from program.ts (R8.27), renamed from account in R9.23.
  */
 
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import { findProjectDir } from "../../config/index.js";
+import { MalformedSecretError, normalizePipedSecret } from "../../credentials/validate.js";
 import {
   isKeylessProvider,
   UPSTREAM_AUTH_SCHEMES,
@@ -89,10 +90,13 @@ export default function register(program: Command): void {
     .argument("<id>", "a gateway id from proxy.gateways, or the default provider id")
     .option("--dir <path>", "project directory", process.cwd())
     .option("--no-probe", "store without verifying the key against the upstream first")
-    .option(
-      "--store <backend>",
-      "where to store: 'keychain' (default, the OS store) or 'file' (UNENCRYPTED plaintext, explicit opt-in)",
-      "keychain",
+    .addOption(
+      new Option(
+        "--store <backend>",
+        "where to store: 'keychain' (default, the OS store) or 'file' (UNENCRYPTED plaintext, explicit opt-in)",
+      )
+        .choices(["keychain", "file"])
+        .default("keychain"),
     )
     .action(async (id: string, opts: { dir: string; probe: boolean; store: string }) => {
       try {
@@ -101,7 +105,7 @@ export default function register(program: Command): void {
           process.stdout.write(
             "warning: storing UNENCRYPTED plaintext on disk (protected only by file permissions).\n",
           );
-        const piped = process.stdin.isTTY ? "" : (await readStdin()).trim();
+        const piped = await readPipedSecret();
         const result = await loginGateway(opts.dir, id, new Date().toISOString(), {
           probe: opts.probe,
           store: storeTarget,
@@ -203,7 +207,10 @@ export default function register(program: Command): void {
               : `registered gateway "${id}" (${provider} ${opts.baseUrl}). Next: golem gateway login ${id}  (set its key), then  golem gateway use ${id}.\n`,
           );
           if (opts.login) {
-            const result = await loginGateway(opts.dir, id, new Date().toISOString(), {});
+            const piped = await readPipedSecret();
+            const result = await loginGateway(opts.dir, id, new Date().toISOString(), {
+              ...(piped !== "" ? { secret: piped } : {}),
+            });
             process.stdout.write(
               `stored credential for "${result.account}" — ${result.stored_in} (probe: ${result.probe}).\n`,
             );
@@ -226,7 +233,7 @@ export default function register(program: Command): void {
           keepCredential: opts.keepCredential,
         });
         const credential = opts.keepCredential
-          ? `Its stored credential was KEPT'— remove it with: golem gateway logout ${id}.`
+          ? `Its stored credential was KEPT — remove it with: golem gateway logout ${id}.`
           : result.credential_removed.length > 0
             ? `Logged out first — credential removed from: ${result.credential_removed.join(", ")}.`
             : "No stored credential to remove.";
@@ -237,6 +244,27 @@ export default function register(program: Command): void {
         _fail(err);
       }
     });
+}
+
+/**
+ * A secret piped on stdin (`echo $KEY | golem gateway login <id>`), or "" when
+ * there is nothing piped (a TTY, or stdin closed empty). Errors are InitErrors so
+ * every route exits 2 with "Nothing stored.".
+ */
+async function readPipedSecret(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const raw = await readStdin();
+  if (raw === "") return "";
+  try {
+    const key = normalizePipedSecret(raw);
+    if (key === "") {
+      throw new InitError("no key was provided on stdin (it was only whitespace). Nothing stored.");
+    }
+    return key;
+  } catch (err) {
+    if (err instanceof MalformedSecretError) throw new InitError(`${err.message} Nothing stored.`);
+    throw err;
+  }
 }
 
 async function readStdin(): Promise<string> {

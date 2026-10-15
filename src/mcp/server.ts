@@ -75,7 +75,7 @@ export function createGolemMcpServer(deps: import("./deps.js").GolemMcpServerDep
 }
 
 function registerTools(server: McpServer, deps: import("./deps.js").GolemMcpServerDeps): void {
-  // R9.11: built HERE rather than further down, because `expand`/`stats`/`level`
+  // R9.11: built HERE rather than further down, because `expand`/`stats`
   // (and `devices`/`snooze`) are registered above where it used to be declared and
   // were therefore the only tools recording NOTHING. That gap was not visible as a
   // gap: `stats` reported per-tool call counts for the instrumented tools and
@@ -237,7 +237,7 @@ function registerTools(server: McpServer, deps: import("./deps.js").GolemMcpServ
   );
 
   registerDevicesTool(server, deps, tel);
-  registerSnoozeTool(server, deps);
+  registerSnoozeTool(server, deps, tel);
 
   if (deps.knowledge !== undefined) {
     registerKnowledgeTools(
@@ -267,6 +267,7 @@ function registerTools(server: McpServer, deps: import("./deps.js").GolemMcpServ
         // R13.12 — one prompt for both mechanisms, and the model the harness
         // subagent is meant to run on (when `default_coder` names a model).
         ...(deps.coderPrompt === undefined ? {} : { coderPrompt: deps.coderPrompt }),
+        ...(deps.teamPrompt === undefined ? {} : { teamPrompt: deps.teamPrompt }),
         ...(deps.harnessCoderModel === undefined
           ? {}
           : { harnessCoderModel: deps.harnessCoderModel }),

@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   extractHtmlText,
   extractPdfText,
-  isPdfExtractionAvailable,
   PdfExtractionUnavailableError,
 } from "../../../src/knowledge/extractors.js";
 import { rmTemp } from "../../helpers/tmp.js";
@@ -113,16 +112,12 @@ describe("extractPdfText", () => {
  * reporting `not-installed` and by `planIngest`'s existing per-file catch.
  */
 describe("optional unpdf (Decision 53)", () => {
-  it("reports PDF extraction as available when unpdf is installed", async () => {
-    await expect(isPdfExtractionAvailable()).resolves.toBe(true);
-  });
-
   it("names the install remedy in the unavailable error", () => {
     const err = new PdfExtractionUnavailableError();
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe("PdfExtractionUnavailableError");
     expect(err.message).toContain("unpdf");
-    expect(err.message).toContain("golem ext status");
+    expect(err.message).toContain("golem pkg");
   });
 
   it("is caught by planIngest's per-file guard rather than aborting the run", async () => {

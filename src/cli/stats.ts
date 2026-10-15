@@ -3,11 +3,11 @@
  *
  * The CLI (and dashboard) read savings through the thin {@link StatsSource}
  * seam rather than a concrete service, so A4's durable telemetry store
- * (src/telemetry/, built in parallel) can be plugged in later without
- * touching command code: it only has to expose `stats()` returning the frozen
+ * (src/telemetry/) plugs in without touching command code: it only has to expose `stats()` returning the frozen
  * CompressionStats shape plus a kind/note describing its history horizon.
  *
- * Until telemetry lands, {@link liveStatsSource} wraps the real A2
+ * Telemetry has landed and is preferred once it has recorded requests; otherwise
+ * {@link liveStatsSource} wraps the real A2
  * CompressionService (NativeLosslessCompression) — accurate per-stage
  * attribution, but in-memory per process, so a fresh CLI invocation starts
  * from zero. That caveat is surfaced as `note` in every report.
@@ -35,7 +35,8 @@ export interface StatsSource {
 
 export const LIVE_STATS_NOTE =
   "Live compression-service counters for this process only; " +
-  "durable per-project history starts when telemetry (task A4) lands.";
+  "durable per-project history lives in the telemetry store, which `golem stats` prefers once it has recorded requests. " +
+  "Token figures are estimates (about 4 characters per token).";
 
 /** StatsSource over the real A2 lossless stage for `projectDir`'s CCR store. */
 export function liveStatsSource(projectDir: string): StatsSource {
@@ -123,7 +124,8 @@ export async function collectStats(
 
 export const TELEMETRY_WINDOW_NOTE =
   "Durable per-project savings over a rolling window (telemetry store); " +
-  "situational per spec Decision 23 — near-0% on cached Anthropic traffic.";
+  "situational per spec Decision 23 — near-0% on cached Anthropic traffic. " +
+  "Token figures are estimates (about 4 characters per token); requests counts rewritten requests only.";
 
 /**
  * A {@link StatsReport} scoped to a rolling savings window, folded from raw
@@ -201,10 +203,10 @@ export function renderStats(report: StatsReport): string {
       ? `, ${report.window === report.window_applied ? report.window : `${report.window}→${report.window_applied}`}`
       : "";
   lines.push(`Golem savings (${scope}${windowLabel})`);
-  lines.push(`  requests:       ${report.requests}`);
-  lines.push(`  tokens before:  ${report.tokens_before}`);
-  lines.push(`  tokens after:   ${report.tokens_after}`);
-  lines.push(`  tokens saved:   ${report.tokens_saved}`);
+  lines.push(`  rewritten requests:  ${report.requests}`);
+  lines.push(`  est. tokens before:  ${report.tokens_before}`);
+  lines.push(`  est. tokens after:   ${report.tokens_after}`);
+  lines.push(`  est. tokens saved:   ${report.tokens_saved}`);
   lines.push(
     `  CCR refs:       ${report.ccr_refs_stored} stored / ${report.ccr_refs_retrieved} retrieved`,
   );

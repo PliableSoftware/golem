@@ -4,7 +4,7 @@ type: concept
 tags: [snooze, usage-limits, pre-tool-use, hooks, decision-38, decision-45, adr-0002]
 sources: [src/hooks/snooze-nudge.ts, src/hooks/pre-tool-use.ts, src/proxy/limit-prediction.ts, src/cli/status-render.ts, docs/plan/proposals/golem-snooze.md, docs/plan/tasks/snooze-taskadd.md]
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-10-08
 ---
 
 # Usage Limit Park
@@ -12,7 +12,13 @@ updated: 2026-08-22
 As the session (5h) usage window fills, Golem stops the agent working and
 redirects it to **park**: one `snooze` call that files a durable note and waits
 for the reset, instead of burning the last of the window and losing its place.
-Spec Decisions 38 (snooze) and 45 (enforcement by default).
+Spec Decisions 38 (snooze) and 45.
+
+> **Superseded default (2026-09-25, USER decision).** Decision 45 made enforcement
+> the default. The code now ships **advisory**: `snooze.enforce` and
+> `snooze.spawn_gate` both default `false` (`src/config/schema.ts:1200-1201`).
+> Enforcement and the spawn gate are opt-in. The guidance rule
+> `golem-snooze-hold` carries the same wording ([[Guidance Rules]]).
 
 ## The parts
 
@@ -30,13 +36,14 @@ returns the park instruction as the deny reason.
 
 ## Advisory vs enforcing
 
-`snooze.enforce` (default **true**, env `GOLEM_SNOOZE_ENFORCE`):
+`snooze.enforce` (default **false** since 2026-09-25, `src/config/schema.ts:1200`; env `GOLEM_SNOOZE_ENFORCE`; the hook reads it at `src/hooks/pre-tool-use.ts:70-78` and falls back to advisory if the config read throws):
 
-- **Enforcing** — every tool call outside `PARK_EXEMPT_TOOLS` is denied until the
-  agent parks or the window resets. The block must persist, so no one-shot marker
-  is written.
-- **Advisory** — a single redirect per reset window, which the agent can work
-  past.
+- **Advisory (default)** — a single redirect per reset window, which the agent can
+  work past. The one-shot marker is written when the redirect fires
+  (`src/hooks/pre-tool-use.ts:281-285`).
+- **Enforcing** (`snooze.enforce: true`) — every tool call outside
+  `PARK_EXEMPT_TOOLS` is denied until the agent parks or the window resets. The
+  block must persist, so no one-shot marker is written.
 
 An honest limit: a `PreToolUse` deny cannot stop the model spending tokens
 *reacting* to it. Enforcement funnels the model to `snooze` fast; it is not a
@@ -83,8 +90,12 @@ spawn — see [[Spawn Headroom Gate]].
 ## Visibility
 
 ```
+Limits: 5h window 42% used (resets …) · observed 2m ago · park advisory · spawns ungated
 Limits: 5h window 42% used (resets …) · observed 2m ago · park enforced · spawns allowed ~18%/agent
 Limits: STALE (last reading 240m ago, 5h 17%) — auto-park blind; … · park enforced · spawns warn-once
 ```
+
+The first line is the default (advisory, gate off); the second shows both opted in
+(`src/cli/status-render.ts:100-140`).
 
 Related: [[Spawn Headroom Gate]] · [[Guidance Rules]] · [[Plan Tasks]]

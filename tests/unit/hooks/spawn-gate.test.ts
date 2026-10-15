@@ -44,6 +44,20 @@ describe("isSpawnTool", () => {
   });
 });
 
+describe("decideSpawnGate and a reset window", () => {
+  it("allows when the window has already reset, however high the stale utilization was", () => {
+    const stale: LimitPrediction = {
+      observedAtIso: OBSERVED,
+      fiveHour: { utilization: 0.95, resetAtIso: "2026-08-22T11:59:45.000Z" }, // before NOW
+    };
+    expect(decideSpawnGate(stale, {}, NOW_MS).kind).toBe("allow");
+  });
+
+  it("still refuses when the reset is in the future", () => {
+    expect(decideSpawnGate(prediction(0.95), {}, NOW_MS).kind).toBe("refuse");
+  });
+});
+
 describe("decideSpawnGate", () => {
   it("allows a spawn with room to finish", () => {
     const d = decideSpawnGate(prediction(0.5), {}, NOW_MS);

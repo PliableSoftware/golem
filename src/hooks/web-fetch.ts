@@ -1,15 +1,19 @@
 /**
  * WebFetch hooks (KB-backed web cache; verification-notes §44).
  *
- * - PreToolUse(WebFetch): if the exact URL is already in the project's web cache
- *   and still fresh, DENY the fetch and hand Claude the cached content via
- *   `permissionDecisionReason` (PreToolUse has no output-substitution field, but
- *   the deny reason is shown to Claude and the network fetch is skipped). Else
- *   allow the fetch (empty output).
- * - PostToolUse(WebFetch): capture the fetched content — redact, write it to the
- *   web cache, and ingest it into the vector KB (so `search` finds it and
- *   re-fetches stay in sync). Store-only: writes NO stdout, so it never conflicts
- *   with the CCR-swap PostToolUse hook that shares the WebFetch matcher.
+ * - PreToolUse(WebFetch): the canonical engine in raw mode (Decision 42). If the
+ *   exact URL is already in the project's web cache and still fresh, DENY the
+ *   fetch and hand Claude the cached content via `permissionDecisionReason`
+ *   (PreToolUse has no output-substitution field, but the deny reason is shown to
+ *   Claude and the network fetch is skipped). On a miss it fetches the RAW page
+ *   itself, redacts it, writes it to the web cache, ingests it into the vector
+ *   KB (so `search` finds it) and serves it via the same deny. Only a failed
+ *   self-fetch allows WebFetch to run (empty output). With raw mode off it
+ *   serves a fresh cached entry, else allows the fetch.
+ * - PostToolUse(WebFetch): store-only capture, used when WebFetch actually ran —
+ *   it caches Claude Code's answer only with raw mode off (the legacy behavior).
+ *   Writes NO stdout, so it never conflicts with the CCR-swap PostToolUse hook
+ *   that shares the WebFetch matcher.
  *
  * Fail-safe: any error → exit 0 with no stdout (the fetch proceeds / the capture
  * is skipped) so a hook can never break a session. Redaction runs BEFORE storage
@@ -30,18 +34,20 @@ import {
   fetchRawPage,
   type IncrementalIngest,
   isFresh,
+  MAX_WEB_INGEST_CHARS,
   type RawPage,
   supportsIncremental,
   WebCache,
   type WebCacheMeta,
   webCacheDir,
 } from "../knowledge/index.js";
+import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { isLoopbackStubUrl } from "../proxy/loopback-serve.js";
 import { type HookIo, readAll } from "./hook-io.js";
 import { pipelineRedact, type RedactFn, stripKnownSecrets } from "./redact.js";
 import {
+  isUncacheable,
   metaFrom,
-  parseCacheControl,
   type RevalidateFn,
   type RevalidateResponse,
 } from "./web-fetch/revalidate.js";
@@ -130,7 +136,7 @@ export interface WebFetchHookOptions {
   readonly nowIso?: string;
   /** Inject a WebCache (tests); default: `<projectDir>/.golem/webcache`. */
   readonly cache?: WebCache;
-  /** Build a KB for the project (cli injects buildKnowledgeStack). Post hook only. */
+  /** Build a KB for the project (cli injects buildKnowledgeStack); fetched pages are ingested into it. */
   readonly buildKnowledge?: (projectDir: string) => Promise<KnowledgeBase | null>;
   /**
    * Pipeline redaction stage; defaults to `pipelineRedact` (the full
@@ -152,8 +158,8 @@ export interface WebFetchHookOptions {
   /**
    * Decision 42: fetch the RAW page ourselves (default {@link fetchRawPage} via
    * the CLI wiring; tests inject a fake). When present AND {@link fetchRawEnabled}
-   * allows it, the PostToolUse hook caches/ingests the raw page instead of Claude
-   * Code's prompt-specific WebFetch answer. A raw fetch that throws caches
+   * allows it, the PreToolUse hook caches/ingests the raw page and serves it via
+   * `deny`, instead of Claude Code's prompt-specific WebFetch answer. A raw fetch that throws caches
    * nothing (an honest miss) — the answer is never stored. Absent → legacy
    * answer-capture behavior.
    *
@@ -200,6 +206,8 @@ async function ingestWebPage(
   fetchedAt: string,
 ): Promise<void> {
   if (options.buildKnowledge === undefined) return;
+  // Size limit: an oversized page stays cached/served but is not embedded.
+  if (content.length > MAX_WEB_INGEST_CHARS) return;
   const kb = await options.buildKnowledge(projectDir);
   if (kb !== null && supportsIncremental(kb)) {
     await (kb as KnowledgeBase & IncrementalIngest).ingestText(projectDir, `web:${url}`, content, {
@@ -207,6 +215,32 @@ async function ingestWebPage(
       fetchedAt,
       kind: "web",
     });
+  }
+}
+
+/** Best-effort removal of a URL's chunks from the KB (a page that turned uncacheable). */
+async function dropIngestedPage(
+  options: WebFetchHookOptions,
+  projectDir: string,
+  url: string,
+): Promise<void> {
+  if (options.buildKnowledge === undefined) return;
+  try {
+    const kb = await options.buildKnowledge(projectDir);
+    if (kb !== null && supportsIncremental(kb))
+      await kb.removeSourcePaths(projectDir, [`web:${url}`]);
+  } catch {
+    // best-effort only
+  }
+}
+
+/** A URL with embedded credentials is never stored: the key would hold the secret. */
+function hasCredentials(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.username !== "" || u.password !== "";
+  } catch {
+    return false;
   }
 }
 
@@ -261,8 +295,19 @@ async function fetchCacheAndServe(
   }
 
   // Redact BEFORE storing/serving (hard rule): pipeline stage first, built-in strip on top.
+  // DUSTSEC.8: plugin redaction rules are loaded into this process first.
+  if (options.redact === undefined) await ensurePluginRedactionRules(projectDir);
   const content = stripKnownSecrets((options.redact ?? pipelineRedact)(raw.content));
   if (content.length === 0) return false; // empty extraction → let WebFetch try
+
+  // DUST2.13: `no-store`/`private`/`no-cache`, Set-Cookie, or a credentialed URL →
+  // serve what we fetched, but store nothing and drop any earlier copy (cache + KB).
+  if (isUncacheable(raw.headers) || hasCredentials(url)) {
+    await cache.delete(url);
+    await dropIngestedPage(options, projectDir, url);
+    await serveFetched(io, projectDir, url, content, ctx, false);
+    return true;
+  }
 
   const meta: WebCacheMeta = { ...metaFrom({ status: 200, ...raw.headers }, nowMs), raw: true };
   await cache.put(url, content, nowIso, meta);
@@ -365,45 +410,58 @@ export async function runWebFetchPre(
       return 0;
     }
 
+    // DUST2.13: an explicit freshness window (Cache-Control max-age / Expires,
+    // stored as `expiresAt`) can only SHORTEN the TTL above. A window that has
+    // lapsed — or whose stored date is unparseable — means stale.
+    const window =
+      entry.expiresAt === undefined
+        ? "none"
+        : Date.parse(entry.expiresAt) > nowMs
+          ? "fresh"
+          : "expired";
+
     // Optional conditional revalidation (opt-in): confirm the cached copy is
     // still current before serving it, so a changed page isn't served stale.
-    if (
+    const revalidating =
       options.revalidate !== undefined &&
-      (options.revalidateEnabled === undefined || (await options.revalidateEnabled(projectDir)))
-    ) {
-      // Honor an explicit freshness window (Cache-Control max-age / Expires) —
-      // no network round-trip while the copy is provably fresh.
-      const explicitlyFresh = entry.expiresAt !== undefined && Date.parse(entry.expiresAt) > nowMs;
-      if (!explicitlyFresh) {
-        let res: RevalidateResponse | null = null;
-        try {
-          res = await options.revalidate(url, {
-            etag: entry.etag,
-            lastModified: entry.lastModified,
-            fetchedAt: entry.fetchedAt,
-          });
-        } catch {
-          res = null; // offline / failure → fall through and serve the cache (still within TTL)
+      (options.revalidateEnabled === undefined || (await options.revalidateEnabled(projectDir)));
+
+    if (window === "fresh" || (window === "none" && !revalidating)) {
+      // provably fresh (explicit window) or within the default TTL → serve, no network
+    } else if (!revalidating || options.revalidate === undefined) {
+      // Expired explicit window and no revalidation: refetch (raw mode) or fall open.
+      await serveMiss();
+      return 0;
+    } else {
+      let res: RevalidateResponse | null = null;
+      try {
+        res = await options.revalidate(url, {
+          etag: entry.etag,
+          lastModified: entry.lastModified,
+          fetchedAt: entry.fetchedAt,
+        });
+      } catch {
+        res = null; // offline / failure → fall through and serve the cache (still within TTL)
+      }
+      if (res !== null) {
+        if (isUncacheable(res)) {
+          await cache.delete(url);
+          await dropIngestedPage(options, projectDir, url);
+          await serveMiss(); // uncacheable now → re-fetch ourselves (raw mode) or fall open
+          return 0;
         }
-        if (res !== null) {
-          if (parseCacheControl(res.cacheControl).noStore) {
-            await cache.delete(url);
-            await serveMiss(); // uncacheable now → re-fetch ourselves (raw mode) or fall open
-            return 0;
-          }
-          if (res.status === 200) {
-            // Changed: drop the stale entry, then re-fetch. We deliberately do NOT
-            // stash the new validators onto the old content — a cancelled re-fetch
-            // must never leave old content that a future 304 serves as fresh.
-            await cache.delete(url);
-            await serveMiss();
-            return 0;
-          }
-          if (res.status === 304) {
-            await cache.updateMeta(url, metaFrom(res, nowMs)); // unchanged → refresh validators/expiry
-          }
-          // 304 and any other status fall through to serving the cached copy.
+        if (res.status === 200) {
+          // Changed: drop the stale entry, then re-fetch. We deliberately do NOT
+          // stash the new validators onto the old content — a cancelled re-fetch
+          // must never leave old content that a future 304 serves as fresh.
+          await cache.delete(url);
+          await serveMiss();
+          return 0;
         }
+        if (res.status === 304) {
+          await cache.updateMeta(url, metaFrom(res, nowMs)); // unchanged → refresh validators/expiry
+        }
+        // 304 and any other status fall through to serving the cached copy.
       }
     }
 
@@ -456,6 +514,7 @@ export async function runWebFetchPost(
     const nowIso = options.nowIso ?? new Date().toISOString();
     // Redact BEFORE storing/ingesting (hard rule): pipeline stage first
     // (defaults to pipelineRedact), built-in secret strip always on top.
+    if (options.redact === undefined) await ensurePluginRedactionRules(projectDir);
     const content = stripKnownSecrets((options.redact ?? pipelineRedact)(text));
     if (content.length === 0) return 0;
 

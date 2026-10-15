@@ -9,7 +9,18 @@ updated: 2026-07-11
 
 # ADR-0001: File Watcher Backend
 
-**Status:** accepted
+**Status:** superseded by [[ADR-0009 Polling File Watcher]] (2026-10-08). The
+decision text below is unchanged and is history.
+
+> **Amended 2026-10-08 (DUST2.3; DECISIONS.md K1, SUMMARY row 1.4/r089).** The
+> Decision section was never what shipped. `src/knowledge/file-watcher.ts:1-27`
+> polls on every OS and does not call `node:fs.watch`; there is no `chokidar`
+> dependency. The 2026-07-17 fix replaced the `fs.watch` design after libuv
+> aborted the process on Windows and macOS CI (verification-notes §68), and that
+> failure applies to the per-directory Linux design in Option 2 as well. What
+> survived: the `FileWatcher` interface seam, and the debounce plus re-stat layer
+> in front of `reindexFiles` / `removeSourcePaths`. ADR-0009 records the shipped
+> design and its rationale.
 
 ## Context
 

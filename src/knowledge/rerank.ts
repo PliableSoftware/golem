@@ -8,7 +8,7 @@
  *
  * Unlike `distillPage` et al., a rerank failure must never turn an already-
  * successful search into an error: any problem here (unreachable model,
- * malformed JSON, invented or dropped chunkIds) falls back to the pre-rerank
+ * malformed JSON, invented, dropped or repeated chunkIds) falls back to the pre-rerank
  * order instead of throwing.
  */
 
@@ -83,20 +83,23 @@ export async function rerankHits(
     if (!parsed.success) {
       return [...hits];
     }
+    // The model must account for every original hit exactly once. An invented,
+    // dropped or repeated chunkId means the ordering isn't trustworthy, so the
+    // whole answer is rejected rather than repaired.
+    const order = parsed.data.order;
+    if (order.length !== hits.length) {
+      return [...hits];
+    }
     const byId = new Map(hits.map((hit) => [hit.chunk.chunkId, hit]));
     const seen = new Set<string>();
     const reordered: Hit[] = [];
-    for (const id of parsed.data.order) {
+    for (const id of order) {
       const hit = byId.get(id);
-      if (hit !== undefined && !seen.has(id)) {
-        seen.add(id);
-        reordered.push(hit);
+      if (hit === undefined || seen.has(id)) {
+        return [...hits];
       }
-    }
-    // The model must account for every original hit exactly once; a dropped
-    // or invented chunkId means the ordering isn't trustworthy.
-    if (reordered.length !== hits.length) {
-      return [...hits];
+      seen.add(id);
+      reordered.push(hit);
     }
     return reordered;
   } catch {
