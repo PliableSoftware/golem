@@ -303,8 +303,11 @@ describe("DUSTSEC.23 deep nesting: the async walk never loses depth the sync wal
         }
         if (depth <= 2000) expect(sync.ok).toBe(true);
         // The iterative walk has no call-stack limit of its own: only the whole-body
-        // JSON.stringify (about 4471 levels) bounds it.
-        if (depth <= 4400) expect(async_.ok).toBe(true);
+        // JSON.stringify bounds it (about 4471 levels on a developer machine, but the exact
+        // figure depends on the Node version and the runner's stack, so a CI runner can stop
+        // earlier). The portable guarantees are the two above: it equals the sync walk
+        // wherever the sync walk succeeds, and it succeeds at modest depths.
+        if (depth <= 2000) expect(async_.ok).toBe(true);
       });
     }
   }
