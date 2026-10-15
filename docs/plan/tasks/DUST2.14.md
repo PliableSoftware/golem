@@ -46,3 +46,21 @@ Safe readings implemented; none blocks the gate.
    the UI model)?
 4. **Multi-root and file-root builds** still use the one-shot full index (no mid-build
    checkpoint); only the single-directory-root build resumes.
+
+### Known limits after independent review (DUST2.14, documented, no code)
+
+- **File replaced by a directory of the same name, or grown past 1 MB.** The watcher's scan
+  skips both, so no event fires and the file's old chunks stay until the next session's sync
+  (which sees it as deleted). Search can return that stale text for the rest of the session.
+- **realpath TOCTOU.** The daemon re-resolves each changed path before reading it, but a symlink
+  swapped in between that check and the read still slips through. The scan itself never follows
+  symlinks, so exploiting it needs a local writer racing the daemon (low).
+- **Startup sync and daemon can embed the same file.** Reduced, not removed: the daemon starts
+  after the sync, skips a file the manifest already records at the same stat, and remembers what
+  it indexed. A file edited while the sync runs is indexed by whichever sees it first.
+- **Redaction before embedding** is unchanged and remains a USER decision: chunks are indexed as
+  read, through the single `#embedChunks`/`upsert` path a full ingest uses.
+- **Leader gap.** When the leader dies, edits made before a follower's next retry (30s) and
+  takeover are picked up by the takeover catch-up sync, not instantly.
+- **A scan counts every walked file.** A tree with more than 10x `maxFiles` regular files (50 000
+  at the default) is not watched at all (the wiki still is, on its own watcher).

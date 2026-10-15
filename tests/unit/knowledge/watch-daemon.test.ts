@@ -652,7 +652,9 @@ describe("per-project leader election (the vector store's own lock discipline)",
     const old = new Date(Date.now() - 10 * 60_000);
     await utimes(leaseOf(), old, old); // the heartbeat stopped long ago
     clock.advance(30_000);
-    for (let i = 0; i < 200 && follower.daemon.stats.role !== "leader"; i += 1) {
+    // acquireLock does real fs work and a short real sleep: wait on the CONDITION.
+    const deadline = Date.now() + 10_000;
+    while (follower.daemon.stats.role !== "leader" && Date.now() < deadline) {
       await new Promise((r) => setImmediate(r));
     }
     expect(follower.daemon.stats.role).toBe("leader");
