@@ -169,16 +169,42 @@ async function chunkFileContent(
   return chunkFile(file, content);
 }
 
-/** Recursively collect chunkable file paths under `root` (a dir or a file). */
-async function collectFiles(root: string): Promise<{ seen: string[]; skipped: number }> {
-  const seen: string[] = [];
+/** The walk saw more files than its limit allows (see {@link collectFiles}). */
+export class WalkLimitError extends Error {
+  constructor(readonly walked: number) {
+    super(`walk stopped after ${walked} files`);
+    this.name = "WalkLimitError";
+  }
+}
+
+/** One walked, chunkable file: its path and the ONE stat taken for it. */
+interface WalkedFile {
+  readonly abs: string;
+  readonly mtimeMs: number;
+  readonly size: number;
+}
+
+/**
+ * Recursively collect chunkable files under `root` (a dir or a file), with the single
+ * stat taken for each (a second stat per file was the scan's dominant cost). `walked`
+ * counts EVERY regular file seen, chunkable or not; `walkLimit` aborts the walk with
+ * {@link WalkLimitError} once that count passes it, so a data directory of tens of
+ * thousands of non-chunkable files cannot make a poll unbounded.
+ */
+async function collectFiles(
+  root: string,
+  walkLimit = Number.POSITIVE_INFINITY,
+): Promise<{ seen: WalkedFile[]; skipped: number; walked: number; rootIsFile: boolean }> {
+  const seen: WalkedFile[] = [];
   let skipped = 0;
+  let walked = 0;
 
   const info = await stat(root);
   if (info.isFile()) {
-    if (isChunkableExtension(path.extname(root)) && info.size <= MAX_FILE_BYTES) seen.push(root);
-    else skipped += 1;
-    return { seen, skipped };
+    if (isChunkableExtension(path.extname(root)) && info.size <= MAX_FILE_BYTES) {
+      seen.push({ abs: root, mtimeMs: info.mtimeMs, size: info.size });
+    } else skipped += 1;
+    return { seen, skipped, walked: 1, rootIsFile: true };
   }
 
   const walk = async (dir: string): Promise<void> => {
@@ -192,6 +218,8 @@ async function collectFiles(root: string): Promise<{ seen: string[]; skipped: nu
         if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
         await walk(full);
       } else if (entry.isFile()) {
+        walked += 1;
+        if (walked > walkLimit) throw new WalkLimitError(walked);
         if (!isChunkableExtension(path.extname(entry.name))) {
           continue; // not a skip we count — just not a target type
         }
@@ -201,16 +229,15 @@ async function collectFiles(root: string): Promise<{ seen: string[]; skipped: nu
             skipped += 1;
             continue;
           }
+          seen.push({ abs: full, mtimeMs: st.mtimeMs, size: st.size });
         } catch {
           skipped += 1;
-          continue;
         }
-        seen.push(full);
       }
     }
   };
   await walk(root);
-  return { seen, skipped };
+  return { seen, skipped, walked, rootIsFile: false };
 }
 
 /**
@@ -219,8 +246,8 @@ async function collectFiles(root: string): Promise<{ seen: string[]; skipped: nu
  */
 export async function planIngest(root: string, options: IngestOptions = {}): Promise<IngestPlan> {
   const absRoot = path.resolve(root);
-  const { seen, skipped } = await collectFiles(absRoot);
-  const rootIsFile = (await stat(absRoot)).isFile();
+  const { seen: walkedFiles, skipped, rootIsFile } = await collectFiles(absRoot);
+  const seen = walkedFiles.map((f) => f.abs);
   const baseDir = options.baseDir ?? (rootIsFile ? path.dirname(absRoot) : absRoot);
 
   const chunks: PreparedChunk[] = [];
@@ -266,25 +293,28 @@ export interface FileState {
  * the auto-index can detect what changed since last time.
  */
 export async function scanFiles(root: string, baseDirOverride?: string): Promise<FileState[]> {
+  return (await scanTree(root, baseDirOverride)).files;
+}
+
+/**
+ * {@link scanFiles} plus the count of every regular file the walk saw, one stat per
+ * chunkable file. `walkLimit` bounds the walk (throws {@link WalkLimitError}).
+ */
+export async function scanTree(
+  root: string,
+  baseDirOverride?: string,
+  walkLimit?: number,
+): Promise<{ files: FileState[]; walked: number }> {
   const absRoot = path.resolve(root);
-  const { seen } = await collectFiles(absRoot);
-  const rootIsFile = (await stat(absRoot)).isFile();
+  const { seen, walked, rootIsFile } = await collectFiles(absRoot, walkLimit);
   const baseDir = baseDirOverride ?? (rootIsFile ? path.dirname(absRoot) : absRoot);
-  const out: FileState[] = [];
-  for (const abs of seen) {
-    try {
-      const st = await stat(abs);
-      out.push({
-        abs,
-        sourcePath: sourcePathFor(baseDir, abs),
-        mtimeMs: st.mtimeMs,
-        size: st.size,
-      });
-    } catch {
-      // vanished between walk and stat — ignore
-    }
-  }
-  return out;
+  const files = seen.map((f) => ({
+    abs: f.abs,
+    sourcePath: sourcePathFor(baseDir, f.abs),
+    mtimeMs: f.mtimeMs,
+    size: f.size,
+  }));
+  return { files, walked };
 }
 
 /**
@@ -298,12 +328,28 @@ export async function chunkFilesRelativeTo(
   baseDir: string,
   options: IngestOptions = {},
 ): Promise<PreparedChunk[]> {
+  return (await chunkFilesChecked(files, baseDir, options)).chunks;
+}
+
+/**
+ * {@link chunkFilesRelativeTo} that says which files could NOT be read (a transient
+ * EBUSY/EPERM on Windows, a file that vanished). Such a file is a failure to retry,
+ * not a file with no content: the caller must neither record it as indexed nor drop
+ * its existing chunks.
+ */
+export async function chunkFilesChecked(
+  files: readonly string[],
+  baseDir: string,
+  options: IngestOptions = {},
+): Promise<{ chunks: PreparedChunk[]; unreadable: string[] }> {
   const chunks: PreparedChunk[] = [];
+  const unreadable: string[] = [];
   for (const file of files) {
     let content: string;
     try {
       content = await readChunkableContent(file);
     } catch {
+      unreadable.push(file);
       continue;
     }
     const sourcePath = sourcePathFor(baseDir, file);
@@ -311,5 +357,5 @@ export async function chunkFilesRelativeTo(
       chunks.push({ ...raw, sourcePath });
     }
   }
-  return chunks;
+  return { chunks, unreadable };
 }

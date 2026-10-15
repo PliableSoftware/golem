@@ -25,6 +25,7 @@ import {
   type InferenceService,
   type KnowledgeBase,
 } from "../../interfaces/index.js";
+import type { IndexWatchDaemon } from "../../knowledge/index.js";
 import { initPlugins } from "../../plugins/index.js";
 import {
   perGatewayEnvVar,
@@ -36,7 +37,12 @@ import { readServedModel } from "../../proxy/served-model.js";
 import { openTelemetryStore } from "../../telemetry/index.js";
 import { VERSION } from "../../version.js";
 import { FederatedWikiReader, FileWikiStore } from "../../wiki/index.js";
-import { ensureProjectIndexed } from "../auto-index.js";
+import {
+  type EnsureIndexedResult,
+  embedderSignatureForModel,
+  ensureProjectIndexed,
+  startKnowledgeWatch,
+} from "../auto-index.js";
 import { buildKnowledgeStack } from "../build-knowledge.js";
 import { credentialEnvForProxy } from "../gateways.js";
 import { InitError } from "../init.js";
@@ -195,6 +201,8 @@ export default function register(program: Command): void {
           process.stderr.write(`golem: ${w}\n`),
         );
         let knowledge: KnowledgeBase | undefined;
+        let indexWatch: IndexWatchDaemon | undefined;
+        let shuttingDown = false;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled
           ? new FileWikiStore({
@@ -214,25 +222,47 @@ export default function register(program: Command): void {
             // decision it makes on the user's behalf has to be stated, not
             // inferred from a rebuild that just happens to take a long time.
             if (stack.notice !== undefined) process.stderr.write(`golem kb: ${stack.notice}\n`);
-            void ensureProjectIndexed({
-              projectDir: opts.dir,
-              projectId: opts.dir,
-              knowledge: stack.knowledge,
-              embedMode: stack.embedMode,
-              embedModel: stack.embedModel,
-              tier: stack.facts.tier,
-              watchPaths: settings.knowledge.watch_paths,
-              // R11.2: this is THE automatic caller — it fires on every session
-              // start, so it is the one that must be capped. `golem index` (the
-              // explicit ask) passes no cap and syncs whatever is pending.
-              maxAutoFiles: settings.knowledge.auto_index_max_files,
-              now: new Date().toISOString(),
-              log: (m) => process.stderr.write(`golem kb: ${m}\n`),
-            }).catch((e) =>
-              process.stderr.write(
-                `golem kb: auto-index failed (${e instanceof Error ? e.message : String(e)})\n`,
-              ),
-            );
+            const kbLog = (m: string): void => void process.stderr.write(`golem kb: ${m}\n`);
+            const syncOnce = (): Promise<EnsureIndexedResult> =>
+              ensureProjectIndexed({
+                projectDir: opts.dir,
+                projectId: opts.dir,
+                knowledge: stack.knowledge,
+                embedMode: stack.embedMode,
+                embedModel: stack.embedModel,
+                tier: stack.facts.tier,
+                watchPaths: settings.knowledge.watch_paths,
+                // R11.2: this is THE automatic caller — it fires on every session
+                // start, so it is the one that must be capped. `golem index` (the
+                // explicit ask) passes no cap and syncs whatever is pending.
+                maxAutoFiles: settings.knowledge.auto_index_max_files,
+                now: new Date().toISOString(),
+                log: kbLog,
+              });
+            // DUST2.14: sync first, THEN keep the index fresh (wiki + watch_paths) while
+            // this server lives. The daemon starts after the sync so the manifest it
+            // checks already carries this session's embedder; if the sync did real work a
+            // second scan catches what changed while it ran (the watcher's baseline is
+            // taken after it).
+            void (async () => {
+              try {
+                const first = await syncOnce();
+                if (first.action !== "skipped" && first.action !== "deferred") await syncOnce();
+              } catch (e) {
+                kbLog(`auto-index failed (${e instanceof Error ? e.message : String(e)})`);
+              }
+              indexWatch = await startKnowledgeWatch({
+                projectDir: opts.dir,
+                projectId: opts.dir,
+                knowledge: stack.knowledge,
+                watchPaths: settings.knowledge.watch_paths,
+                wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir),
+                signature: embedderSignatureForModel(stack.embedMode, stack.embedModel),
+                sync: syncOnce,
+                log: kbLog,
+              });
+              if (shuttingDown) void indexWatch?.close();
+            })().catch(() => {});
           } catch (err) {
             process.stderr.write(
               `golem: knowledge base unavailable, serving without it (${err instanceof Error ? err.message : String(err)})\n`,
@@ -320,74 +350,95 @@ export default function register(program: Command): void {
             process.stderr.write(`golem: ${message}
 `),
         });
-        process.once("exit", () => closeKnowledgeWatchers(knowledge));
-        await serveStdio({
-          compression: mcpCompressionService(opts.dir, telemetry),
-          ...(plugins.mcpTools.length > 0 ? { pluginTools: plugins.mcpTools } : {}),
-          telemetry,
-          // R11.1: read-only. The `level` tool is gone with the slider
-          // (ADR-0004), so nothing on the MCP surface can change how much of the
-          // pipeline runs — `stats` only reports it.
-          compressionLevel: () => coerceCompressionLevel(settings.compression.level),
-          compressionGate: (level) => {
-            const up = resolveUpstreamDisplay(settings.proxy);
-            const assumeCaching = upstreamAssumesCaching(up.provider);
-            return resolveEffectiveCompression({
-              level,
-              upstreamBaseUrl: up.baseUrl,
-              ...(assumeCaching !== undefined && { assumeCachingUpstream: assumeCaching }),
-              headroomSidecar: settings.compression.headroom_sidecar,
-              forceSemanticOnCaching: settings.compression.force_semantic_on_caching,
-            });
-          },
-          projectRootDir: opts.dir,
-          localEndpoint: settings.inference.ollama_base_url,
-          ...knowledgeServerDeps(opts.dir, settings, knowledge),
-          ...(inference !== undefined ? { inference } : {}),
-          ...(inference !== undefined ? { coder: inference } : {}),
-          // R9.3: `coder` may draft on any declared target.
-          //
-          // R10.8: wired whenever there is a local service to fall back to at
-          // all, not only when several targets exist. The old
-          // `listTargets(...).length > 1` guard was sound while the dispatcher's
-          // only job was to offer a CHOICE — with one target there was nothing
-          // to choose. Now the dispatcher also decides *where an unrouted draft
-          // goes*, and skipping it in the single-target case would restore
-          // exactly the implicit-local behaviour this task removes, for the one
-          // configuration (a fresh project) where it is most surprising. The
-          // §110 schema cost is still avoided: `coder` only grows the `target`
-          // parameter when there is more than one selectable target, and that
-          // decision now lives in `registerCoderTool` where the schema is built.
-          ...(inference !== undefined
-            ? { targetDispatcher: createCoderDispatcher(settings, inference, opts.dir) }
-            : {}),
-          ...(settings.inference.local_editor_enabled ? { localEditor: true } : {}),
-          // R13.12 — the coder framing, and the harness-subagent model when
-          // `default_coder` names a model rather than a registry target. A
-          // malformed `default_coder` must not stop the MCP server from starting:
-          // every other tool still works, and `golem init`/`golem status` are
-          // where a config error belongs. Warn on stderr and carry on.
-          ...(settings.inference.coder_prompt === undefined
-            ? {}
-            : { coderPrompt: settings.inference.coder_prompt }),
-          ...(harnessCoderModel === undefined ? {} : { harnessCoderModel }),
-          ...(settings.knowledge.repo_map_enabled ? { codeRoot: opts.dir } : {}),
-          ...(lspBridge !== undefined ? { lsp: lspBridge } : {}),
-          ...(inference !== undefined && settings.knowledge.rerank_enabled
-            ? { rerank: inference }
-            : {}),
-          ...(wiki !== undefined
-            ? {
-                wiki,
-                wikiSearch: settings.knowledge.user_wiki_enabled
-                  ? new FederatedWikiReader(
-                      wiki,
-                      new FileWikiStore({ wikiDir: defaultUserWikiDir() }),
-                    )
-                  : wiki,
-              }
-            : {}),
+        // The client going away (stdin EOF, transport close) or a termination signal
+        // must END the process: it cannot wait for `exit`, which does not fire while
+        // anything still holds the event loop. Idempotent; the hard exit is a
+        // backstop so a wedged close cannot keep an orphan alive.
+        const shutdown = (code: number): void => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          closeKnowledgeWatchers(knowledge);
+          const backstop = setTimeout(() => process.exit(code), 3000);
+          backstop.unref();
+          void (indexWatch?.close() ?? Promise.resolve()).finally(() => process.exit(code));
+        };
+        process.once("exit", () => {
+          void indexWatch?.close();
+          closeKnowledgeWatchers(knowledge);
         });
+        for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+          process.once(sig, () => shutdown(0));
+        }
+        await serveStdio(
+          {
+            compression: mcpCompressionService(opts.dir, telemetry),
+            ...(plugins.mcpTools.length > 0 ? { pluginTools: plugins.mcpTools } : {}),
+            telemetry,
+            // R11.1: read-only. The `level` tool is gone with the slider
+            // (ADR-0004), so nothing on the MCP surface can change how much of the
+            // pipeline runs — `stats` only reports it.
+            compressionLevel: () => coerceCompressionLevel(settings.compression.level),
+            compressionGate: (level) => {
+              const up = resolveUpstreamDisplay(settings.proxy);
+              const assumeCaching = upstreamAssumesCaching(up.provider);
+              return resolveEffectiveCompression({
+                level,
+                upstreamBaseUrl: up.baseUrl,
+                ...(assumeCaching !== undefined && { assumeCachingUpstream: assumeCaching }),
+                headroomSidecar: settings.compression.headroom_sidecar,
+                forceSemanticOnCaching: settings.compression.force_semantic_on_caching,
+              });
+            },
+            projectRootDir: opts.dir,
+            localEndpoint: settings.inference.ollama_base_url,
+            ...knowledgeServerDeps(opts.dir, settings, knowledge),
+            ...(inference !== undefined ? { inference } : {}),
+            ...(inference !== undefined ? { coder: inference } : {}),
+            // R9.3: `coder` may draft on any declared target.
+            //
+            // R10.8: wired whenever there is a local service to fall back to at
+            // all, not only when several targets exist. The old
+            // `listTargets(...).length > 1` guard was sound while the dispatcher's
+            // only job was to offer a CHOICE — with one target there was nothing
+            // to choose. Now the dispatcher also decides *where an unrouted draft
+            // goes*, and skipping it in the single-target case would restore
+            // exactly the implicit-local behaviour this task removes, for the one
+            // configuration (a fresh project) where it is most surprising. The
+            // §110 schema cost is still avoided: `coder` only grows the `target`
+            // parameter when there is more than one selectable target, and that
+            // decision now lives in `registerCoderTool` where the schema is built.
+            ...(inference !== undefined
+              ? { targetDispatcher: createCoderDispatcher(settings, inference, opts.dir) }
+              : {}),
+            ...(settings.inference.local_editor_enabled ? { localEditor: true } : {}),
+            // R13.12 — the coder framing, and the harness-subagent model when
+            // `default_coder` names a model rather than a registry target. A
+            // malformed `default_coder` must not stop the MCP server from starting:
+            // every other tool still works, and `golem init`/`golem status` are
+            // where a config error belongs. Warn on stderr and carry on.
+            ...(settings.inference.coder_prompt === undefined
+              ? {}
+              : { coderPrompt: settings.inference.coder_prompt }),
+            ...(harnessCoderModel === undefined ? {} : { harnessCoderModel }),
+            ...(settings.knowledge.repo_map_enabled ? { codeRoot: opts.dir } : {}),
+            ...(lspBridge !== undefined ? { lsp: lspBridge } : {}),
+            ...(inference !== undefined && settings.knowledge.rerank_enabled
+              ? { rerank: inference }
+              : {}),
+            ...(wiki !== undefined
+              ? {
+                  wiki,
+                  wikiSearch: settings.knowledge.user_wiki_enabled
+                    ? new FederatedWikiReader(
+                        wiki,
+                        new FileWikiStore({ wikiDir: defaultUserWikiDir() }),
+                      )
+                    : wiki,
+                }
+              : {}),
+          },
+          () => shutdown(0),
+        );
       } catch (err) {
         _fail(err);
       }

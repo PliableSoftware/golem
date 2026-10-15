@@ -65,10 +65,11 @@ export {
   readCollectionDim,
 } from "./file-driver.js";
 export type { FileChangeBatch, FileWatcher, FileWatcherOptions } from "./file-watcher.js";
-export { watchPath } from "./file-watcher.js";
+export { WatchCapExceededError, watchPath } from "./file-watcher.js";
 export { DEFAULT_HASH_DIM, hashEmbed, hashingEmbedFn, tokenize } from "./hashing-embedder.js";
 export type { FileState, IngestPlan, PreparedChunk } from "./ingest.js";
 export {
+  chunkFilesChecked,
   chunkFilesRelativeTo,
   chunkIdFor,
   MAX_FILE_BYTES,
@@ -76,13 +77,17 @@ export {
   projectBaseDir,
   SKIP_DIRS,
   scanFiles,
+  scanTree,
+  sourcePathFor,
   toPosix,
+  WalkLimitError,
 } from "./ingest.js";
 export type { EmbedFn, IncrementalIngest, KnowledgeBaseOptions } from "./knowledge-base.js";
 export {
   GolemKnowledgeBase,
   isMemoryChunkId,
   NotImplementedYetError,
+  PartialReindexError,
   supportsIncremental,
 } from "./knowledge-base.js";
 export type { RawPage, RawPageHeaders } from "./raw-fetch.js";
@@ -125,6 +130,20 @@ export {
   hasParseError,
   isSymbolExtractable,
 } from "./tree-sitter-chunker.js";
+export type {
+  AppliedChange,
+  IndexVerdict,
+  IndexWatchDaemon,
+  IndexWatchDaemonOptions,
+  IndexWatchStats,
+  Timers,
+} from "./watch-daemon.js";
+export {
+  startIndexWatchDaemon,
+  WATCH_APPLY_FILES,
+  WATCH_MAX_FILES,
+  WATCH_POLL_MS,
+} from "./watch-daemon.js";
 export type { WebCacheEntry, WebCacheMeta } from "./web-cache.js";
 export {
   isFresh,

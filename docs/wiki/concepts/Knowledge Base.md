@@ -2,9 +2,9 @@
 title: Knowledge Base
 type: concept
 tags: [rag, vector, search, knowledge, embeddings]
-sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/search.ts, src/cli/auto-index.ts, src/knowledge/driver.ts, src/wiki/frontmatter.ts, docs/golem-spec.md#3.1]
+sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/search.ts, src/cli/auto-index.ts, src/knowledge/watch-daemon.ts, src/knowledge/file-watcher.ts, src/knowledge/driver.ts, src/wiki/frontmatter.ts, docs/golem-spec.md#3.1]
 created: 2026-07-25
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 # Knowledge Base
@@ -44,6 +44,60 @@ flowchart LR
   WATCH["File watcher (opt)"] -.->|"on change"| RE["reindex changed / remove deleted"]
   RE --> UP
 ```
+
+## Index freshness: the watch daemon and resumable builds (DUST2.14)
+
+While `golem mcp serve` is up, `startKnowledgeWatch` (`src/cli/auto-index.ts`) runs one
+**watch daemon** (`src/knowledge/watch-daemon.ts`) over the index roots (`knowledge.watch_paths`,
+else the project) **and the wiki dir**, so a `wiki_upsert` or an editor save reaches the vector
+index without a manual `ingest`. The server runs the session-start sync first and starts the
+daemon after it. `GOLEM_KB_WATCH=off` disables it (a known switch, not an unknown setting). The
+wiki stays the truth: the daemon only reads pages and writes the derived index.
+
+- **One leader per project.** Only the session holding the lease (`.golem/state/kb-watch.lease`)
+  polls and embeds. The lease is the vector store's own lockfile protocol (`acquireLock`: owner
+  token, heartbeat, stale take-over with a token re-check). Followers do not poll; they retry
+  every 30s, so a crashed leader is replaced, and the new leader runs a catch-up sync first. A
+  leader that finds its lease taken demotes itself. `close()` releases it.
+- **The wiki always has its own watcher.** It is small and the point of the feature, so it never
+  depends on an outer root covering it: a project over the file cap, or a wiki under a dot-dir
+  (which the outer scan will not walk), still has the wiki watched. A wiki outside the project
+  is keyed `external:`.
+- **Polling, bounded.** Same polling watcher on every OS (no native dependency; the pages it
+  watches are the [[Wiki-First Knowledge|wiki]]). A cap of 5000 chunkable files per root and a
+  walk limit of 10x that over ALL files (a bigger tree is not watched, with a log line; one that
+  grows past it pauses until it shrinks), 2s poll, debounce, `node_modules`/`.git`/`dist`/`.golem`
+  and dot-dirs pruned, one stat per file per scan. Every timer is unref'd and `mcp serve` closes
+  the daemon and exits on stdin EOF, transport close, or SIGTERM/SIGINT/SIGHUP, so a
+  disconnected client never leaves an orphan. Pending work is keyed by path, so an event storm
+  or a rename-over-existing settles on the final state; one apply at a time, deletions first,
+  slices of 20 files.
+- **Never loses a page to a failed edit.** `reindexFiles` embeds before it deletes, so a down
+  embedder keeps the old chunks. An unreadable file (EBUSY/EPERM) is a failed path
+  (`PartialReindexError`): its old chunks stay and it is never recorded as indexed. Failed paths
+  are retried with capped exponential backoff (2s up to 60s, 8 tries, then logged and dropped);
+  a newer save supersedes a pending retry.
+- **Never writes into another build's index.** Before any apply the daemon compares the
+  manifest's embedder signature with its own and halts (one log line, lease released) on a
+  mismatch or a newer manifest format; an unreadable manifest just requeues. The manifest
+  recorder checks the signature too. A file the manifest already records at the same stat
+  (another session did it) is skipped.
+- **Never throws into the host.** Every failure is counted (`daemon.stats.errors`), logged, and
+  swallowed. Shutdown closes watchers, clears timers, drops queued work and waits for the apply
+  in flight.
+- **Never reads outside a root.** Each changed path is re-resolved with `realpath.native` and
+  dropped unless still inside its root's real path.
+- **Checkpoints.** The manifest (`manifest.json` beside each collection) is **versioned**
+  (`version: 1`), written atomically (`replaceViaTemp`) and validated on read. Only a readable
+  file that fails to parse or validate is discarded (logged) and the collection rebuilt; an
+  *unreadable* manifest (a transient Windows lock) skips the sync, and a *newer-format* one is
+  never wiped or written over (a newer golem owns it). The first build starts from an empty
+  manifest marked `building: true` and runs the same checkpointed sync (deletions first, then a
+  checkpoint every 20 files); a rerun after a kill continues it **uncapped** (the auto-index cap
+  does not apply to an unfinished build), and the marker clears when it finishes. Files that
+  could not be read are left out of the recorded map so the next sync retries them.
+
+See [[Auto-Index Cost]] for what the session-start sync spends.
 
 ## Search path (read) — graph-first, then vector
 
