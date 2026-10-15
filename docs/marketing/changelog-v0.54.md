@@ -2,7 +2,7 @@
 
 **DRAFT. Not published. Not a source of truth.** See [`README.md`](README.md). Written 2026-10-08 on branch `dust5/changelog`. Facts come from [`CLAIMS.md`](CLAIMS.md) or from a named commit; each entry ends with an HTML comment naming its ledger id or sha. Nothing in this file is a release note, an advisory or an announcement. Whether to cut a release or publish an advisory is the user's decision (DUST5.8).
 
-**Refreshed 2026-10-15 against `c6bad35` (`origin/development`). UNREVIEWED: no fact-check has run on the refresh.** It adds the merges after `a3f1d39` (PRs #270 to #314). The first pass, its review and the entries it covers were not re-verified except where an entry below says it changed. Every cited sha was checked with `git cat-file -t` (a commit) and `git tag --contains` (no tag). The ledger rows for the new entries are C-27 to C-53.
+**Refreshed 2026-10-15 against `c6bad35` (`origin/development`). FACT-CHECKED ONCE on 2026-10-15 (verdict CONCERNS: no block, no false security claim, 12 text findings). All 12 were fixed by the orchestrator and the fixes were NOT re-checked. Rows C-07 to C-10, C-12 to C-14, C-17, C-18, C-20, C-22 to C-24 and C-26 were not re-read by the author and were not spot-checked by the reviewer.** It adds the merges after `a3f1d39` (PRs #270 to #314, selected: the entries below are the ones that change behaviour; #303 is the dust3 leftovers, a proxy outcome report for translating-path body-read and decompression failures, a wiki frontmatter round-trip fix and stale-comment fixes). The first pass, its review and the entries it covers were not re-verified except where an entry below says it changed. Every DUSTSEC sha and every sha added after `a3f1d39` was checked with `git cat-file -t` (a commit) and `git tag --contains` (no tag); earlier shas carried over from the first pass are not all untagged (the v0.54 line is tagged), and line 14 says which. The ledger rows for the new entries are C-27 to C-53.
 
 ## Read this first: what the tags say
 
@@ -133,7 +133,7 @@ Each of these was found while the claims ledger was built or by the review of th
 - Accepted weakenings, listed in the PR and the task doc: the card rule no longer redacts a separator-free Luhn-valid run glued onto a hex-only token (`a<card>`, `<card>f`); only the last 128 characters of an email local part before the `@` are redacted; a second redaction pass can over-redact a glued scheme with a placeholder in the password position (nothing leaks). Not fixed: a card preceded by digits and a space is missed, before and after.
 <!-- C-30; 0082fdc1; 340b982d; 1a4aa000; 101dc477 -->
 
-**DUST2.23: a pipeline policy could say "redaction off"** (PR #311, merge `8b0cea5a`; code `0b444898`). The `redaction` field of the stage policy is now the literal type `true`, a runtime check throws on anything else, and the proxy then falls back to redaction alone. `proxy.bypass_all` is unchanged and is still the one way off. Over-redaction of path-like tokens with `=` or `+` was deliberately left as it is. <!-- C-31; 8b0cea5a; 0b444898 -->
+**DUST2.23: a pipeline policy could say "redaction off"** (PR #311, merge `8b0cea5a`; code `0b444898, reverted by `5e73fb5e` before the merge`). The `redaction` field of the stage policy is now the literal type `true`, a runtime check throws on anything else, and the proxy then falls back to redaction alone. `proxy.bypass_all` is unchanged and is still the one way off. Over-redaction of path-like tokens with `=` or `+` was deliberately left as it is. <!-- C-31; 8b0cea5a; 0b444898 -->
 
 #### DUSTSEC.10: the human is asked again at PermissionRequest. Merged, unreleased; a gap is open.
 
@@ -169,7 +169,7 @@ Phase 3 re-checked the Phase 1 findings against current code (52 did not reprodu
 ### Other work on `development` (not security)
 
 - Phase 2 rebaseline of the spec, wiki and ADRs against the shipped code, and the hard-rule wording change from the retired wording to "lossless and prefix-stable at level <= 1" (PR #225, `32f3b64`, merge `6a1f0d9`; Phase 2 is PRs #225 and #230-#240). Redaction and dedup rewrite the body, so the older wording was dropped. <!-- C-11; B-20; 32f3b64; 6a1f0d9 -->
-- Phase 3 refactor: PRs #242-#256, 12 safe dead-code deletions and 63 confirmed bugs. Tests went from 4296 to 4464 per the Phase 3 debrief. 25 dead-code proposals were left for the user. <!-- 2026-10-08-DUST3-refactor.md; a857765; 9cf5432 -->
+- Phase 3 refactor: PRs #242-#256, 12 dead-code deletions and 63 confirmed bugs. Tests went from 4296 to 4464 per the Phase 3 debrief. 25 dead-code proposals were left for the user. <!-- 2026-10-08-DUST3-refactor.md; a857765; 9cf5432 -->
 - Drafts under `docs/marketing/` are excluded from local answers (PR #259, `49bd546`, merge `51e6681`). <!-- C-15; 49bd546; 51e6681 -->
 - The claims ledger (PR #262, merge `f866023`). <!-- f866023 -->
 
@@ -179,10 +179,10 @@ Added in the refresh (merges after `a3f1d39`):
 - Symlink fix: the release scripts silently did nothing, with exit 0, when started through a symlinked path; a regression of the line above, caught by the advisory macOS job (PR #310, merge `ed35fa59`, code `efe9a7ac`). <!-- C-43; ed35fa59; efe9a7ac -->
 - A Golem skill you delete stays deleted; `golem init --restore-skill` opts back in (PR #299, merge `b15f04d2`, code `b7968e4c`). <!-- C-44; b15f04d2; b7968e4c -->
 - Credential backends return a secret as written, minus one trailing newline; gateway key ingestion trims and refuses control characters, a byte-order mark and characters above U+00FF (R8.29, PR #300, merge `4f1a32fc`, code `f607bc01`). <!-- C-45; 4f1a32fc; f607bc01 -->
-- The vector store's lock is fenced against a stalled writer, and a file watched outside the project is keyed by its absolute path so it no longer deletes the project's chunks (PR #305, merge `2726dabf`, code `a7361b82`, `070c56e0`, `b4d1c469`). Two residuals are documented; nothing here has run on real Windows. <!-- C-46; C-47; 2726dabf; a7361b82; 070c56e0; b4d1c469 -->
+- The vector store's lock is fenced against a stalled writer, and a file watched outside the project is keyed by its absolute path so it no longer deletes the project's chunks (PR #305, merge `2726dabf`, code `a7361b82`, `070c56e0`, `b613df21; the real-path comparison fix for Windows short names is `b4d1c469``). Two residuals are documented; nothing here has run on real Windows. <!-- C-46; C-47; 2726dabf; a7361b82; 070c56e0; b4d1c469 -->
 - Hosted sessions: a backpressure-dropped frame carries no `seq`, the bus has an `epoch`, and the host log rotates past 5 MiB keeping 3 (PR #286, merge `a5c856fa`, code `7c5ac69c`, `28374c4e`). <!-- C-48; a5c856fa; 7c5ac69c; 28374c4e -->
 - `golem task resume --spawn` reports a failed launch, and the session report says `unknown` rather than inventing a compression level (PR #301, merge `f7ff3f6f`, code `3790f81f`). <!-- C-49; f7ff3f6f; 3790f81f -->
-- README says savings figures are estimates and only the cache report uses billed usage (PR #283, merge `02709f43`, code `975fd23c`). `blocked` is metadata on a queued task, not a state (PR #284, merge `3f452acb`, code `d37ad6ad`). <!-- C-51; C-52; 02709f43; 975fd23c; 3f452acb; d37ad6ad -->
+- README says savings figures are estimates and that the prompt-cache report uses billed usage (PR #283, merge `02709f43`, code `975fd23c`). `blocked` is metadata on a queued task, not a state (PR #284, merge `3f452acb`, code `d37ad6ad`). <!-- C-51; C-52; 02709f43; 975fd23c; 3f452acb; d37ad6ad -->
 - Windows: EPERM, EACCES and EBUSY are retried as contention on win32 in atomic writes and locks (PRs #272 and #275, merges `97350b30`, `0cacd44b`, code `c713b6e0`). The Windows CI leg is the only evidence that this helps. <!-- C-53; 97350b30; 0cacd44b; c713b6e0 -->
 - Housekeeping with no claim made about it here: dead-code deletions and test-pacing fixes (PRs #289 to #295), task and roadmap tooling (PRs #296, #302), wiki checks (PRs #297, #298), CI action versions (PR #279), plan docs (PRs #273, #274, #278, #280, #281, #288). <!-- 2f9cefd6; 3f452acb; 997c0d29 -->
 
@@ -212,7 +212,7 @@ Contained in tag `v0.54.3`. Includes the fix finishing the `inference.default_ta
 
 PR #182. Everything after it up to `v0.54.3` is the list above plus these, all contained in `v0.54.3` and not in `v0.54.0`:
 
-- A project can be bound to its team in committed config (PR #185, `6ffa72a`, merge `c0abe9a`); the proxy and `golem status` load through the team layer (PR #188, `80a665b`, merge `694f313`); `golem team skills` and `golem team sync` (`9e575d9`, `0e15996`); the team origin fetches per-org (`ee5846d`). The team layer's own ranking is in the ledger (C-21). Where team policy is enforced is an open question and is not claimed here (B-01). <!-- C-21; B-01; 6ffa72a; c0abe9a; 80a665b; 694f313; 9e575d9; ee5846d -->
+- A project can be bound to its team in committed config (PR #185, `6ffa72a`, merge `c0abe9a`); the proxy and `golem status` load through the team layer (PR #188, `80a665b`, merge `694f313`); `golem team skills` and `golem team sync` (`9e575d9`, `0e15996`); the team origin fetches per-org (`ee5846d`). The team layer's own ranking is in the ledger (C-21). Where team policy applies is stated in C-33; nothing beyond it is claimed (B-01). <!-- C-21; B-01; 6ffa72a; c0abe9a; 80a665b; 694f313; 9e575d9; ee5846d -->
 - A personal style guide (`golem vibe`) (PR #195, `7f1e3a0`, merge `1f4b612`). <!-- 7f1e3a0; 1f4b612 -->
 
 ## Open points in this draft

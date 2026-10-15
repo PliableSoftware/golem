@@ -12,7 +12,7 @@ It has a proxy that sits in front of model traffic and an MCP server that offers
 
 ## Redaction before the model
 
-The proxy redacts the JSON body of `POST /v1/messages` requests before any other pipeline stage runs and before the request is forwarded. <!-- C-01 -->
+The proxy redacts the JSON body of `POST /v1/messages` requests before compression and before the request is forwarded. <!-- C-01 -->
 A request to any other path gets redaction only: the same rules in the same order, and no other stage. A JSON body is walked whatever its content label says, and a body that is not JSON is redacted as text. <!-- C-01 -->
 A body sent with a content encoding (gzip, deflate, brotli) is decoded first and forwarded uncompressed. An unsupported encoding gets a 415, a body that cannot be decoded gets a 400, and in both cases nothing is forwarded. A JSON body that repeats an object key is refused with a 400, and a body that looks UTF-16 or UTF-32 is refused with a 502. <!-- C-27 -->
 The request-body limit is 32 MiB by default, on the wire and after decompression, and a memory cap on bodies in flight answers 503. <!-- C-27 -->
@@ -25,7 +25,7 @@ Redaction is best-effort pattern matching, not a guarantee. What it does not do,
 - The redaction walk is synchronous, so the size limit bounds what is admitted, not how long a walk takes. <!-- C-01 -->
 - A secret in a run longer than 128 characters is found only when it starts with a named prefix, and some shapes are found only at the edge of the run. A long random run with no named prefix, and some keys with junk on both sides, are not redacted. Cutting out a secret is repeated at most 16 times, then the proxy answers 502 and forwards nothing. <!-- C-29 -->
 - The long-token sweep skips a whole token shaped like a documented `srvtoolu_` or `msgbatch_` id, because it used to corrupt them. A `container_` id is still rewritten. <!-- C-28 -->
-- The named rules were rewritten so a 10 MB run no longer overflows the stack. That change accepted two weakenings: a Luhn-valid digit run glued onto a hex-only token is no longer redacted as a card, and only the last 128 characters of an email's local part before the `@` are redacted. A card number preceded by digits and a space is missed, before and after that change. <!-- C-30 -->
+- The named rules were rewritten so a 10 MB run no longer overflows the stack. That change accepted weakenings, among them: a Luhn-valid digit run glued onto a hex-only token is no longer redacted as a card; only the last 128 characters of an email's local part before the `@` are redacted; and a second redaction pass can re-redact a placeholder that a glued scheme exposes in a connection string's password position (over-redaction only, nothing is left in clear). A card number preceded by digits and a space is missed, before and after that change. <!-- C-30 -->
 
 Every compression level, including `off`, runs redaction, and no level value can turn it off. A pipeline policy built in code can no longer say "redaction off" either: the type forbids it and a runtime check throws. <!-- C-02; C-31 -->
 If the pipeline throws, the proxy re-runs redaction alone on the original request and forwards that. <!-- C-03 -->
@@ -41,7 +41,7 @@ A remote team layer cannot set it. <!-- C-06 -->
 
 A Claude Code hook that used to answer permission requests for destructive and outward tool calls with an automatic deny now returns no decision, so the normal permission dialog opens and a person answers. The hook never answers `allow`. With a permission-relay channel connected, the relay may now be told when that dialog opens; whether it is told has not been observed. Ignoring relay answers to destructive prompts is a queued task, not built. <!-- C-32; B-07 -->
 
-A Claude Code hook denies the documented ways an agent's Bash command or file edit would set it. <!-- C-07 -->
+A Claude Code hook denies the documented ways an agent's Bash command or file edit would set `proxy.bypass_all`. <!-- C-07 -->
 That hook guards common spellings. It is not a sandbox, and an agent with arbitrary shell access is not stopped by it. <!-- C-07 -->
 
 ## Compression levels
@@ -99,7 +99,7 @@ A hosted team portal can supply a `team` settings layer. In the normal band it r
 An invalid team value skips the whole team layer with a warning, and the proxy still starts. <!-- C-21 -->
 The portal identity keys and `proxy.bypass_all` cannot be set from a remote layer. <!-- C-06 -->
 
-Every settings reader loads through one function that applies the team layer: status, config, the TUI, hooks, the MCP server, the proxy and its hot reload. Hooks read the team layer from the local cache only, so a member's view is as fresh as the last `golem team sync`. A test fails when production code reads settings around that function. <!-- C-33 -->
+Every settings reader loads through one function that applies the team layer: status, config, the TUI, hooks, the MCP server, the proxy and its hot reload. Hooks read the team layer from the local cache only, so a member's view is as fresh as the last `golem team sync`. A test fails when production code reads settings around that function, outside a documented allow-list. <!-- C-33 -->
 A team may only tighten. The policy table is default-deny: every settings key has a class, and a key with none is denied. A team can force a risky boolean off but not on, force a protective boolean on but not off, and lower a numeric limit but not raise it. Anything that runs a command or sets a URL, endpoint, credential or path is denied. A refusal is per key, names the key and the rule, and never prints the value. <!-- C-34 -->
 This does not mean a member cannot get around a team: a member can still edit their own files or run another binary. <!-- B-01 -->
 A `default!` floor, which pins a key to its built-in default no matter who says otherwise, is built, and **no key is pinned today**: the list is empty, and choosing keys is a decision the project owner has not made. <!-- C-35; B-42 -->
