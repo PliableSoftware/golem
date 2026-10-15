@@ -105,6 +105,8 @@ export interface GolemMcpServerDeps {
    * Absent → `DEFAULT_CODER_PROMPT`.
    */
   readonly coderPrompt?: string;
+  /** DUST2.22 — `inference.team_prompt`, appended (labelled) to the coder framing. Absent → none. */
+  readonly teamPrompt?: string;
   /**
    * R13.12 — the model `inference.default_coder` names when it names a MODEL
    * rather than a registry target.

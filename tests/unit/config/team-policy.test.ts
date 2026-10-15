@@ -443,6 +443,15 @@ describe("a refusal never echoes a denied key's value", () => {
       enforced: true,
     },
     { key: "inference.coder_prompt", value: `use ${API_KEY}`, enforced: true },
+    // DUST2.22: the team prompt's NEIGHBOURS, and a REFUSED team prompt itself.
+    {
+      key: "inference.personas",
+      value: {
+        scribe: { prompt: `use ${API_KEY}`, prompt_file: `/etc/${API_KEY}`, tools: [API_KEY] },
+      },
+      enforced: false,
+    },
+    { key: "inference.team_prompt", value: `use ${API_KEY} at ${PASSWORD_URL}`, enforced: true },
     { key: "security.origination_roots", value: [`/tmp/${API_KEY}`, "relative"], enforced: true },
     { key: "ui.pet", value: false, enforced: true },
   ];
@@ -453,6 +462,13 @@ describe("a refusal never echoes a denied key's value", () => {
     const p = await project({ rows });
     const c = await load(p);
     expect(c.refused).toContain("proxy.upstream_base_url");
+    expect(c.refused).toEqual(
+      expect.arrayContaining([
+        "inference.personas",
+        "inference.coder_prompt",
+        "inference.team_prompt",
+      ]),
+    );
     expect(c.settings.ui.pet).toBe(false); // the legitimate row still applied
     expect(leaks(JSON.stringify([c.warnings, c.refused, c.team.applied, c.team.skipped]))).toBe(
       false,

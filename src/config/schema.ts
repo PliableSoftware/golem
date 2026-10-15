@@ -414,6 +414,21 @@ export const SETTINGS_LEAVES = {
      */
     coder_prompt: z.string().optional(),
     /**
+     * DUST2.22 — a team-wide guidance note, the ONE prompt-shaped leaf a team
+     * origin may set (see `team-policy.ts`, rule `bounded-text`).
+     *
+     * It is NOT a persona field and NOT `coder_prompt`: those stay denied to a
+     * team because a persona can carry `prompt_file` (a local read) and `tools`.
+     * This is plain text only. It is never the system prompt itself: the read
+     * side (`src/inference/team-prompt.ts`) APPENDS it, clearly labelled as
+     * team-supplied advisory text, after whatever prompt the persona or coder
+     * already has, and bounds it (length, control characters).
+     *
+     * An ordinary leaf, so the cascade is the ordinary one: a project or user
+     * value replaces the team's, and an empty string means "no team prompt".
+     */
+    team_prompt: z.string().optional(),
+    /**
      * OPT-IN (R8.7, default **false**): offer `coder`'s `edit` mode — the local
      * model rewrites one small file, Golem validates the result (syntax must
      * still parse, no definition may disappear) and only then writes it.

@@ -23,6 +23,11 @@
  *                send `[]` nor widen: every team root must sit inside one of the
  *                member's roots, and when the member has none any non-empty list
  *                is a narrowing.
+ * - `bounded-text` `inference.team_prompt` only: plain advisory text bound for the
+ *                model's context. Judged by {@link teamPromptProblem} (a string, at
+ *                most {@link TEAM_PROMPT_MAX_CHARS}, no control characters, no URL),
+ *                and only ever APPENDED as labelled team text on the read side. A
+ *                refusal is per key and never echoes the text.
  * - `denied`     anything that executes a command, sets a URL, endpoint,
  *                credential or path, selects a gateway, persona or prompt, loads
  *                a plugin, an LSP server, a vector DB or a Headroom config, or
@@ -43,6 +48,7 @@ export type TeamRule =
   | "true-only"
   | "lower-only"
   | "narrow-roots"
+  | "bounded-text"
   | "denied";
 
 type LeafKeys<S extends SectionName> = keyof (typeof SETTINGS_LEAVES)[S] & string;
@@ -57,6 +63,28 @@ const F: TeamRule = "false-only";
 const T: TeamRule = "true-only";
 const L: TeamRule = "lower-only";
 const D: TeamRule = "denied";
+
+/** The longest team prompt, in characters. Over it, the team's value is REFUSED, not truncated. */
+export const TEAM_PROMPT_MAX_CHARS = 2000;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: this IS the control-character test
+const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]/;
+/** Any `scheme://`: a team prompt may not point the model at something to fetch. */
+const URL_SCHEME = /[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * Why `value` may not be a team prompt, or undefined when it may. The reason
+ * never quotes the text.
+ */
+export function teamPromptProblem(value: unknown): string | undefined {
+  if (typeof value !== "string") return "a team prompt must be plain text";
+  if (value.length > TEAM_PROMPT_MAX_CHARS) {
+    return `a team prompt may be at most ${TEAM_PROMPT_MAX_CHARS} characters`;
+  }
+  if (CONTROL_CHARS.test(value)) return "a team prompt may not contain control characters";
+  if (URL_SCHEME.test(value)) return "a team prompt may not contain a URL";
+  return undefined;
+}
 
 export const TEAM_POLICY: Readonly<Record<LeafPath, TeamRule>> = {
   // proxy — where traffic goes and as whom is all denied; only timeouts are tuning.
@@ -83,6 +111,7 @@ export const TEAM_POLICY: Readonly<Record<LeafPath, TeamRule>> = {
   "inference.personas": D, // prompts, tools, prompt_file reads a local file
   "inference.model": D,
   "inference.coder_prompt": D,
+  "inference.team_prompt": "bounded-text", // DUST2.22: labelled, appended, bounded; see teamPromptProblem
   "inference.local_editor_enabled": F,
   "inference.providers": D,
 
@@ -224,6 +253,8 @@ export function staticRefusal(dotted: string, value: unknown): string | undefine
       // value and skips the layer (ADR-0008), identically in the dry run and the
       // real pass. The member-relative comparison happens after Zod.
       return undefined;
+    case "bounded-text":
+      return teamPromptProblem(value);
     case "narrow-roots":
       return Array.isArray(value) &&
         value.length > 0 &&
@@ -297,7 +328,7 @@ export function teamRefusal(dotted: string, value: unknown, current: unknown): s
  */
 export function teamValueForWarning(dotted: string, value: unknown): string | undefined {
   const rule = teamRule(dotted);
-  if (rule === "denied" || rule === "narrow-roots") return undefined;
+  if (rule === "denied" || rule === "narrow-roots" || rule === "bounded-text") return undefined;
   if (typeof value === "boolean") return String(value);
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (rank(dotted, value) !== undefined && typeof value === "string") return JSON.stringify(value);

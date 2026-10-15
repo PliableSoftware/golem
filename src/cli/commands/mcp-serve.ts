@@ -419,6 +419,9 @@ export default function register(program: Command): void {
             ...(settings.inference.coder_prompt === undefined
               ? {}
               : { coderPrompt: settings.inference.coder_prompt }),
+            ...(settings.inference.team_prompt === undefined
+              ? {}
+              : { teamPrompt: settings.inference.team_prompt }),
             ...(harnessCoderModel === undefined ? {} : { harnessCoderModel }),
             ...(settings.knowledge.repo_map_enabled ? { codeRoot: opts.dir } : {}),
             ...(lspBridge !== undefined ? { lsp: lspBridge } : {}),

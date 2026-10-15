@@ -38,6 +38,7 @@ import {
   type TargetDispatcher,
   type TargetDispatcherOptions,
 } from "../inference/target-dispatcher.js";
+import { withTeamPrompt } from "../inference/team-prompt.js";
 import { persistSnoozeNote } from "../mcp/snooze-note.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { perGatewayEnvVar, withDefaultTarget } from "../providers/index.js";
@@ -272,11 +273,14 @@ async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
     return { stopReason: "end_turn" };
   }
 
-  const promptText = await resolvePromptText(
-    input.personaId,
-    config,
-    input.projectDir,
-    settings.inference.coder_prompt,
+  const promptText = withTeamPrompt(
+    await resolvePromptText(
+      input.personaId,
+      config,
+      input.projectDir,
+      settings.inference.coder_prompt,
+    ),
+    settings.inference.team_prompt,
   );
   const turnLane: TurnLane = lane.kind;
 

@@ -2,9 +2,9 @@
 title: Team Layer
 type: concept
 tags: [portal, team, config, precedence, skills, oauth, golem.run]
-sources: [docs/plan/verification-notes.md#149, src/config/loader.ts, src/portal/team-layer.ts, src/portal/config.ts, src/cli/team-skills.ts, src/cli/managed-files.ts, docs/plan/tasks/project-team-binding.md, docs/plan/tasks/team-settings-layer.md, docs/plan/tasks/team-skills-sync.md, docs/plan/tasks/team-portal-auth.md]
+sources: [docs/plan/verification-notes.md#149, src/config/loader.ts, src/portal/team-layer.ts, src/inference/team-prompt.ts, src/portal/config.ts, src/cli/team-skills.ts, src/cli/managed-files.ts, docs/plan/tasks/project-team-binding.md, docs/plan/tasks/team-settings-layer.md, docs/plan/tasks/team-skills-sync.md, docs/plan/tasks/team-portal-auth.md]
 created: 2026-09-04
-updated: 2026-10-08
+updated: 2026-10-15
 ---
 
 # Team Layer
@@ -110,6 +110,7 @@ fails if the schema gains one) and anything not in the table is denied:
 | `true-only` | a protective boolean, ON only | `snooze.enforce`, `snooze.spawn_gate` |
 | `lower-only` | only LOWER than the member's own effective value (numbers, and `compression.level` over off < 1 < 2 < 3, because 2 and 3 are lossy); `knowledge.auto_index_max_files` may not go to 0 (no cap) | `security.unlock_window_minutes`, `idle_relock_minutes`, `step_up_max_age_minutes`, `device_cert_days`, `proxy.max_request_body_bytes`, `compression.level` |
 | `narrow-roots` | `security.origination_roots`: non-empty absolute paths, each EQUAL (after `path.resolve` and `resolveWorktreeRoot`) to one of the member's roots, because the consumer does exact membership | |
+| `bounded-text` | `inference.team_prompt` only: plain advisory text for the model. At most 2000 characters, no control characters, no URL; a value that breaks that is REFUSED (never truncated, never echoed). See [[#The team prompt]] | `inference.team_prompt` |
 | `denied` | commands, URLs, endpoints, credentials, paths, gateways, personas and prompts, plugins (`plugins.enabled` too: false would switch off org redaction plugins), LSP, vector DB, Headroom config, ports, every timeout (availability is the member's call), `brevity.level` (changes request bytes and the cached prefix), `proxy.bypass_all`, `portal.*` identity, `team.*` | `knowledge.lsp_servers`, `proxy.gateways`, `inference.model`, `inference.personas`, `knowledge.watch_paths` |
 
 **Totality guard.** The guarantee that no key is forgotten is the TYPE (`TEAM_POLICY` is a
@@ -151,6 +152,33 @@ Two of those groups are self-defence rather than policy. `portal.*` denied means
 a compromised portal cannot redirect a client to itself; `team.*` denied means a
 team layer cannot re-point the project at a different team, or switch its own
 `sync` back on after a person switched it off.
+
+## The team prompt
+
+DUST2.22. A team may contribute ONE prompt-shaped value, `inference.team_prompt`, and nothing
+else prompt-shaped. `inference.personas` (a persona can carry `prompt_file`, a local read, and
+`tools`) and `inference.coder_prompt` stay `denied`.
+
+- **Appended, never authoritative.** `src/inference/team-prompt.ts` adds the text AFTER the
+  persona's or coder's own prompt, under a fixed label saying it is team-supplied, advisory,
+  unable to change tools, permissions or redaction, and ranked below the user's instructions.
+  The three delivery points share it: the `coder` dispatch `system` field, the generated
+  `golem-<id>.md` subagent body ([[Persona Registry]]) and the ACP turn.
+- **Bounded.** Plain text, at most 2000 characters, no control characters, no `scheme://` URL.
+  The team policy refuses a violating value per key; the read side also strips and caps, because
+  a local file or env value never passed the team gate.
+- **Merged per field, project outranks team.** It is an ordinary leaf, so a project or user value
+  replaces the team's (an empty string turns it off), while a project's own persona prompts are
+  untouched: both apply. `team!` follows ADR-0008 like any key, so an enforced team prompt is the
+  one way a team outranks a project, and the member's `local!` still beats it.
+- **Redaction.** Nothing new is exempt: a `coder` dispatch is redacted at the target's trust
+  floor and a subagent's traffic crosses the proxy's redaction.
+- **Visible, with origin.** An accepted value shows in `config get/list`, status and the control
+  surface with layer `team`. A refused value is named by key only, never echoed, like its
+  neighbours `inference.personas` and `inference.coder_prompt`.
+
+Free text cannot be proven harmless mechanically; the label and the bound are the defence, and
+the class stays the only exception to default-deny for prompts.
 
 ## The fetch, and the per-org cache
 

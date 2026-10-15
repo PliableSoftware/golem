@@ -3,7 +3,7 @@ title: Persona Registry
 type: concept
 tags: [r14, r14-1, inference, configuration, personas, bench, dispatch, agent-definition]
 sources: ["src/config/schema.ts", "src/config/loader.ts", "src/inference/personas.ts", "src/config/migrations.ts", "src/cli/personas.ts", "src/cli/init-hooks.ts", "docs/decisions/ADR-0003-credential-storage-and-account-routing.md"]
-updated: 2026-10-08
+updated: 2026-10-15
 created: 2026-08-30
 ---
 
@@ -184,6 +184,12 @@ The ids `R14.2`, `R14.3` and `R14.4` that the old text used for these now name
 **Buzz** work in `docs/plan/tasks/` (see [[Buzz Integration]]); they are not the
 persona lane, agent definitions or discipline matching. Task ids are never reused,
 so read the old labels as historical.
+
+## A team prompt rides along, appended
+
+`inference.team_prompt` (DUST2.22, [[Team Layer]]) is appended, labelled and advisory, to every
+generated agent body, the `coder` dispatch `system` field and the ACP turn prompt. It never
+replaces a persona's own `prompt`. Personas themselves stay unsettable by a team.
 
 ## The sibling rule: prefer the bench over `fork`
 

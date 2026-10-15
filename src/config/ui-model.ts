@@ -267,6 +267,19 @@ export const SETTING_META = {
     advanced: true,
     restart: "mcp",
   },
+  "inference.team_prompt": {
+    label: "Team prompt",
+    summary: "Plain-text team guidance appended, labelled, to coder and persona prompts",
+    detail:
+      "DUST2.22. The one prompt-shaped key a team may set. Appended AFTER the persona or coder " +
+      "prompt under a label saying it is team-supplied advisory text that cannot change tools, " +
+      "permissions or redaction; never the system prompt itself. At most 2000 characters, no " +
+      "control characters, no URL; a team value that breaks that is refused, not truncated. " +
+      "Your own value (project or user) replaces the team's; set it to an empty string to turn " +
+      "the team prompt off.",
+    advanced: true,
+    restart: "mcp",
+  },
   "proxy.request_timeout_ms": {
     label: "Request timeout",
     summary: "End-to-end request budget in ms (generous: long SSE streams)",
