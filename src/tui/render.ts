@@ -43,19 +43,37 @@ export function renderPanel(state: PanelState, options: RenderOptions): readonly
   lines.push(renderTabs(state, theme, inner));
   lines.push(rule(theme, inner));
 
-  // Whatever is left after the chrome above and the footer below.
   // The detail block and the footer may wrap (a lock reason names the origin AND
   // the recourse, and clipping it would cut off the recourse), so they are built
-  // first and whatever they use beyond their usual 3 and 1 lines comes off the list.
-  const detail = renderDetail(state, theme, inner);
-  const footer = renderFooter(state, theme, inner);
-  const extra = Math.max(0, detail.length - 3) + Math.max(0, footer.length - 1);
-  const used = lines.length + 3; // + rule + footer + detail
-  const listHeight = Math.max(3, options.height - used - 3 - extra);
+  // first and the list gets what is left. On a short terminal the wrap caps come
+  // down one line at a time until the list keeps a usable height; a frame is never
+  // taller than the screen.
+  // Budget: chrome so far + the rule under the detail + one spare line.
+  const avail = options.height - lines.length - 2;
+  let lockCap = LOCK_LINES;
+  let statusCap = STATUS_LINES;
+  let detail = renderDetail(state, theme, inner, lockCap);
+  let footer = renderFooter(state, theme, inner, statusCap);
+  while (avail - detail.length - footer.length < MIN_LIST && (lockCap > 1 || statusCap > 1)) {
+    if (lockCap > 1) lockCap -= 1;
+    else statusCap -= 1;
+    detail = renderDetail(state, theme, inner, lockCap);
+    footer = renderFooter(state, theme, inner, statusCap);
+  }
+  const listHeight = Math.max(1, avail - detail.length - footer.length);
   lines.push(...renderList(state, theme, inner, listHeight));
   lines.push(...detail);
   lines.push(rule(theme, inner));
   lines.push(...footer);
+
+  // Last resort for a degenerate terminal: keep the top of the frame and the
+  // footer's first line rather than overrun the screen.
+  if (lines.length > options.height) {
+    const keep = Math.max(0, options.height - 1);
+    const last = footer[0] ?? "";
+    lines.splice(keep, lines.length - keep, last);
+    lines.length = Math.min(lines.length, Math.max(1, options.height));
+  }
 
   return lines.map((line) => `${GUTTER}${truncateTo(line, inner)}`);
 }
@@ -212,6 +230,8 @@ function valueColour(control: Control, theme: Theme): string | undefined {
 }
 
 const LOCK_LINES = 7;
+/** The list keeps at least this many lines before the wrap caps give ground. */
+const MIN_LIST = 3;
 const LOCK_PREFIX = "locked: ";
 const STATUS_LINES = 6;
 
@@ -240,7 +260,12 @@ function wrapText(text: string, width: number, maxLines: number): string[] {
 }
 
 /** The description, lock reason, or confirm prompt for the selected control. */
-function renderDetail(state: PanelState, theme: Theme, width: number): readonly string[] {
+function renderDetail(
+  state: PanelState,
+  theme: Theme,
+  width: number,
+  lockCap: number,
+): readonly string[] {
   if (state.mode.kind === "confirm") {
     const control = selectedControl(state);
     return [
@@ -259,7 +284,7 @@ function renderDetail(state: PanelState, theme: Theme, width: number): readonly 
   const out = ["", paint(control.summary, theme.dim, theme.level)];
   if (control.locked !== undefined) {
     // Wrapped, not clipped: the end of the reason is the recourse.
-    wrapText(control.locked, Math.max(10, width - LOCK_PREFIX.length), LOCK_LINES).forEach(
+    wrapText(control.locked, Math.max(10, width - LOCK_PREFIX.length), lockCap).forEach(
       (line, i) => {
         const prefix = i === 0 ? LOCK_PREFIX : " ".repeat(LOCK_PREFIX.length);
         out.push(paint(`${prefix}${line}`, theme.warn, theme.level));
@@ -272,7 +297,12 @@ function renderDetail(state: PanelState, theme: Theme, width: number): readonly 
 }
 
 /** The key-hint bar, the last status message, or the help card. */
-function renderFooter(state: PanelState, theme: Theme, width: number): readonly string[] {
+function renderFooter(
+  state: PanelState,
+  theme: Theme,
+  width: number,
+  statusCap: number,
+): readonly string[] {
   if (state.mode.kind === "help") {
     return [
       paint("Keys", theme.accent, theme.level, { bold: true }),
@@ -282,7 +312,7 @@ function renderFooter(state: PanelState, theme: Theme, width: number): readonly 
   }
   if (state.status !== null) {
     const colour = state.status.tone === "error" ? theme.error : theme.ok;
-    return wrapText(state.status.text, width, STATUS_LINES).map((line) =>
+    return wrapText(state.status.text, width, statusCap).map((line) =>
       paint(line, colour, theme.level),
     );
   }

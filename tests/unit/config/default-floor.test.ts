@@ -93,6 +93,19 @@ describe("default! in the resolver", () => {
     expect(line).not.toMatch(/\b(true|false)\b/);
   });
 
+  it("warns once for a team declaration the team policy already refused", async () => {
+    // true is a loosening of a false-only key, so the team policy REFUSES it first.
+    const config = await loadConfig({
+      projectDir,
+      userDir,
+      env: {},
+      teamLayer: { settings: { knowledge: { rerank_enabled: true } }, source: "acme" },
+      defaultImportant: new Set([KEY]),
+    });
+    expect(config.refused).toContain(KEY);
+    expect(config.warnings.filter((w) => w.startsWith("acme:") && w.includes(KEY))).toHaveLength(1);
+  });
+
   it("rejects a registry entry that would not be a floor", async () => {
     const bad = [
       "proxy.bypass_all", // CLI-only, denied

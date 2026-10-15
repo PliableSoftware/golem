@@ -138,7 +138,9 @@ describe("a write the cascade overrules says so (r011)", () => {
     await pinLevel();
     const out = renderConfigSet(await setConfig("local", "compression.level", "3", shared()));
     expect(out).toContain("!important");
-    expect(out).toContain("locked: set by the repo's `.golem/settings.json`");
+    expect(out).toContain(
+      "note: this write has no effect — set by the repo's `.golem/settings.json`",
+    );
     expect(out).toContain("~/.golem/settings.json");
   });
 });
@@ -222,5 +224,99 @@ describe("a team value for a denied key is never echoed", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("merge-per-key leaves blame the field's own layer (inference.personas)", () => {
+  const localFile = () => path.join(projectDir, ".golem", "settings.local.json");
+  // Built at runtime so no model id is spelled twice in the fixture.
+  const model = (n: string) => ["claude", n, "x"].join("-");
+
+  async function probe() {
+    await write(path.join(userDir, "settings.json"), {
+      inference: { personas: { scribe: { model: model("pinned") } } },
+      "!important": ["inference.personas"],
+    });
+    await write(localFile(), { inference: { personas: { coder: { model: model("local") } } } });
+    return setConfig(
+      "project",
+      "inference.personas",
+      JSON.stringify({ coder: { model: model("project") } }),
+      shared(),
+    );
+  }
+
+  it("names the ordinary local file, not the user! pin on a neighbouring entry", async () => {
+    const result = await probe();
+    expect(result.overriddenBy?.key).toBe("inference.personas.coder.model");
+    expect(result.overriddenBy?.layer).toBe("local");
+    expect(result.overriddenBy?.locked).toBeUndefined();
+    const out = renderConfigSet(result);
+    expect(out).toContain(
+      "a higher-precedence layer overrides it (inference.personas.coder.model)",
+    );
+    expect(out).not.toContain("!important");
+    expect(out).not.toContain("No origin can override it");
+  });
+
+  it("names the pin when the field that lost IS the pinned one", async () => {
+    await write(path.join(userDir, "settings.json"), {
+      inference: { personas: { coder: { model: model("pinned") } } },
+      "!important": ["inference.personas"],
+    });
+    const result = await setConfig(
+      "project",
+      "inference.personas",
+      JSON.stringify({ coder: { model: model("project") } }),
+      shared(),
+    );
+    expect(result.overriddenBy?.layer).toBe("user");
+    expect(result.overriddenBy?.important).toBe(true);
+    expect(renderConfigSet(result)).toContain(
+      "this write has no effect (inference.personas.coder.model)",
+    );
+  });
+
+  it("does not lock the whole map, only the pinned field (get / list / status)", async () => {
+    await probe();
+    const got = await getConfig("inference.personas", shared());
+    expect(got.important).toBeUndefined();
+    expect(got.locked).toBeUndefined();
+    expect(Object.keys(got.pinnedFields ?? {})).toEqual(["scribe.model"]);
+    const entry = (await listConfig(shared())).entries.find((e) => e.key === "inference.personas");
+    expect(entry?.locked).toBeUndefined();
+    expect(Object.keys(entry?.pinnedFields ?? {})).toEqual(["scribe.model"]);
+    const status = await collectStatus({ ...shared(), version: "t", probeTimeoutMs: 1 });
+    expect(status.config["inference.personas"]?.locked).toBeUndefined();
+    expect(status.config["inference.personas.scribe.model"]?.locked).toContain("!important");
+    expect(status.config["inference.personas.coder.model"]?.locked).toBeUndefined();
+    expect(status.config["inference.personas.scribe.model"]?.value).toBe(model("pinned"));
+  });
+
+  it("claims nothing for an empty write or one that is already in force", async () => {
+    await write(path.join(userDir, "settings.json"), {
+      inference: { personas: { scribe: { model: model("pinned") } } },
+      "!important": ["inference.personas"],
+    });
+    expect(
+      (await setConfig("project", "inference.personas", "{}", shared())).overriddenBy,
+    ).toBeUndefined();
+    const same = await setConfig(
+      "project",
+      "inference.personas",
+      JSON.stringify({ scribe: { model: model("pinned") } }),
+      shared(),
+    );
+    expect(same.overriddenBy).toBeUndefined();
+    expect(renderConfigSet(same)).not.toContain("note:");
+  });
+});
+
+describe("one explanation per overruled write", () => {
+  it("config set prints the pin once", async () => {
+    await pinLevel();
+    const out = renderConfigSet(await setConfig("local", "compression.level", "3", shared()));
+    expect(out.match(/beats every ordinary declaration/g)).toHaveLength(1);
+    expect(out).not.toContain("\nlocked:");
   });
 });

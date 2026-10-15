@@ -85,4 +85,24 @@ describe("TUI locked control", () => {
     });
     expect(flat(lines)).toContain("of its own.");
   });
+
+  for (const height of [12, 18, 24]) {
+    it(`never draws more than ${height} rows, even with a long lock reason and a status`, async () => {
+      const state = initialState(await pinnedSurface(), { version: "t", projectDir: "/tmp/x" });
+      const pressed = reducePanel(state, { kind: "key", key: { input: " " } } as never).state;
+      for (const s of [state, pressed]) {
+        const lines = renderPanel(s, {
+          theme: themeFor(
+            { pet: true, pet_color: "#a78bfa", color: "never", advanced: false },
+            {},
+            false,
+          ),
+          showPet: true,
+          width: 60,
+          height,
+        });
+        expect(lines.length).toBeLessThanOrEqual(height);
+      }
+    });
+  }
 });

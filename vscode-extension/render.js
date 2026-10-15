@@ -782,7 +782,7 @@ function controlRowHtml(control) {
   // A locked row says WHO pinned it and what can still change it, in the row
   // itself: a hover tooltip is not where anyone looks for the way out.
   return control.locked
-    ? `${row}<div class="why" data-for="${id}">${esc(control.locked)}</div>`
+    ? `${row}<div class="why${advanced}" data-for="${id}">${esc(control.locked)}</div>`
     : row;
 }
 

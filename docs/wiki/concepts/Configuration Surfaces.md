@@ -102,7 +102,13 @@ Two rules every front end inherits:
   VS Code extension relays the CLI's note as a warning instead of letting the row
   quietly snap back. A merge-per-key leaf (`inference.personas`) is judged by
   whether the written entries are contained in the effective value, so a lower
-  layer holding other personas is no longer reported as an override.
+  layer holding other personas is no longer reported as an override. When one
+  does lose, the blame follows the PER-FIELD provenance
+  (`inference.personas.<id>.<field>`), not the map's last-touched layer, and `config
+  get`/`list`/`status` never report the whole map locked — only the pinned fields
+  (`pinnedFields`). `config set` prints one explanation, not a note plus a repeat.
+  On a short terminal the TUI shrinks its wrap caps so a frame never exceeds the
+  rows; the VS Code panel hides a locked advanced control's reason with its row.
 - **A locked control is refused only for `env`.** `applySetting` throws solely when
   the effective layer is `env` (`control-surface-settings.ts:140-142`). An
   important-locked or opaque row is *rendered* locked (`:98-104`) but the API will

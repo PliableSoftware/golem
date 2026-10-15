@@ -331,6 +331,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Golem
     provenance,
     warnings,
     origins,
+    refused,
     envLayer.overrides,
     options.defaultImportant ?? DEFAULT_IMPORTANT_KEYS,
   );
@@ -356,6 +357,7 @@ function applyDefaultFloor(
   provenance: Record<string, ProvenanceEntry>,
   warnings: string[],
   origins: ReadonlyMap<LayerName, ObjectLayer>,
+  refused: readonly string[],
   envOverrides: readonly {
     readonly section: string;
     readonly key: string;
@@ -371,6 +373,9 @@ function applyDefaultFloor(
     const attempted = [
       ...[...origins.values()]
         .filter((o) => {
+          // A remote declaration the team policy already REFUSED has had its
+          // warning; a second one for the same declaration is noise.
+          if (o.remote && refused.includes(dotted)) return false;
           const sectionValue = o.raw[section];
           return isPlainObject(sectionValue) && sectionValue[key] !== undefined;
         })

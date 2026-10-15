@@ -929,3 +929,20 @@ test("overrideNote relays the CLI's own explanation of an overruled write", () =
   assert.equal(overrideNote('note: "a" was renamed to "b" in 1.0 — writing "b".\nk set to 1\n'), null);
   assert.equal(overrideNote(null), null);
 });
+
+test("a locked ADVANCED control hides its reason along with its row", () => {
+  const html = settingsHtml({
+    groups: [
+      {
+        id: "settings:x",
+        title: "X",
+        controls: [
+          { id: "setting:adv", label: "Adv", kind: "toggle", value: true, layer: "team", writableScopes: [], locked: "why", advanced: true },
+          { id: "setting:vis", label: "Vis", kind: "toggle", value: true, layer: "team", writableScopes: [], locked: "why2" },
+        ],
+      },
+    ],
+  });
+  assert.match(html, /<div class="why adv" data-for="setting:adv">why</);
+  assert.match(html, /<div class="why" data-for="setting:vis">why2</);
+});
