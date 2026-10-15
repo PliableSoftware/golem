@@ -2,6 +2,8 @@
 
 DRAFT record. Reviewer: a read-only `golem-reviewer` agent that did not write the drafts. Checked against the code at `a3f1d39` on 2026-10-08. Transcribed by the orchestrator, because the harness did not let the subagent write this file.
 
+**Refreshed 2026-10-15 against `c6bad35`: FACT-CHECKED ONCE on 2026-10-15 (verdict CONCERNS: no block, no false security claim, 12 text findings). All 12 were fixed by the orchestrator and the fixes were NOT re-checked. Rows C-07 to C-10, C-12 to C-14, C-17, C-18, C-20, C-22 to C-24 and C-26 were not re-read by the author and were not spot-checked by the reviewer.** The drafts and the ledger were refreshed to cover the merges after `a3f1d39` (PRs #270 to #314, ledger rows C-27 to C-53, banned items B-39 to B-49, and rows C-01 to C-06, C-11, C-15, C-16, C-19, C-21 and C-25 rewritten or re-stamped). Nothing below was re-run and nothing in the refresh has been fact-checked: the verdict history, counts and findings that follow describe the first pass at `a3f1d39` on 2026-10-08 and are left as recorded. Until a fact-check of the refresh runs, treat every refreshed sentence as unreviewed. The refresh did not edit `blog-dust-method.md`: its facts are the Dust-phase history and did not change.
+
 Documents checked: `feature-overview.md`, `changelog-v0.54.md`, `blog-dust-method.md`, against `CLAIMS.md` (claims C-01..C-26, banned list B-01..B-38).
 
 ## Counts
