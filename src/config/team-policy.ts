@@ -25,7 +25,8 @@
  *                is a narrowing.
  * - `bounded-text` `inference.team_prompt` only: plain advisory text bound for the
  *                model's context. Judged by {@link teamPromptProblem} (a string, at
- *                most {@link TEAM_PROMPT_MAX_CHARS}, no control characters, no URL),
+ *                most {@link TEAM_PROMPT_MAX_CHARS} code points, visible text only, no
+ *                fence markers, framing lines, tags or URL forms),
  *                and only ever APPENDED as labelled team text on the read side. A
  *                refusal is per key and never echoes the text.
  * - `denied`     anything that executes a command, sets a URL, endpoint,
@@ -41,6 +42,7 @@
 import path from "node:path";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
 import type { SETTINGS_LEAVES, SectionName } from "./schema.js";
+import { TEAM_PROMPT_MAX_CHARS, teamPromptViolation } from "./team-prompt-rules.js";
 
 export type TeamRule =
   | "settable"
@@ -66,32 +68,25 @@ const D: TeamRule = "denied";
 
 /**
  * Keys a REMOTE origin may set but may not ENFORCE (`!important`). The value
- * still applies as an ordinary team-layer value; a project or user value
- * replaces it. DUST2.22: the task says the project outranks the team for the
+ * still applies as an ordinary team-layer value; a project or local value, or
+ * a user value marked important (`user!`), replaces it. DUST2.22: the task says the project outranks the team for the
  * team prompt, and an enforced declaration would invert that.
  */
 export const REMOTE_NEVER_ENFORCED: ReadonlySet<string> = new Set(["inference.team_prompt"]);
 
-/** The longest team prompt, in characters. Over it, the team's value is REFUSED, not truncated. */
-export const TEAM_PROMPT_MAX_CHARS = 2000;
+/** A team row's importance as it is actually honoured. */
+export const effectivelyEnforced = (dotted: string, enforced: boolean): boolean =>
+  enforced && !REMOTE_NEVER_ENFORCED.has(dotted);
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: this IS the control-character test
-const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]/;
-/** Any `scheme://`: a team prompt may not point the model at something to fetch. */
-const URL_SCHEME = /[a-z][a-z0-9+.-]*:\/\//i;
+export { TEAM_PROMPT_MAX_CHARS };
 
 /**
  * Why `value` may not be a team prompt, or undefined when it may. The reason
- * never quotes the text.
+ * never quotes the text. The rules live in `team-prompt-rules.ts`.
  */
 export function teamPromptProblem(value: unknown): string | undefined {
   if (typeof value !== "string") return "a team prompt must be plain text";
-  if (value.length > TEAM_PROMPT_MAX_CHARS) {
-    return `a team prompt may be at most ${TEAM_PROMPT_MAX_CHARS} characters`;
-  }
-  if (CONTROL_CHARS.test(value)) return "a team prompt may not contain control characters";
-  if (URL_SCHEME.test(value)) return "a team prompt may not contain a URL";
-  return undefined;
+  return teamPromptViolation(value);
 }
 
 export const TEAM_POLICY: Readonly<Record<LeafPath, TeamRule>> = {

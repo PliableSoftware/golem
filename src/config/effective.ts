@@ -46,6 +46,7 @@ import type { TeamLayerResolution } from "../portal/team-layer.js";
 import { ConfigError } from "./errors.js";
 import { type GolemConfig, type LoadConfigOptions, loadConfig } from "./loader.js";
 import { defaultUserDir } from "./paths.js";
+import { REMOTE_NEVER_ENFORCED } from "./team-policy.js";
 
 export interface LoadEffectiveConfigOptions extends LoadConfigOptions {
   /** Clock for the cache-age wording; tests only. */
@@ -138,7 +139,9 @@ function reconcile(team: TeamLayerResolution, loaded: GolemConfig): TeamLayerRes
     } else if (winner !== "team") {
       note(key, `OVERRIDDEN by your ${winner} setting, so it is not in force`);
     } else {
-      applied.push(`${key}${label.includes(" (enforced)") ? " (enforced)" : ""}`);
+      applied.push(
+        `${key}${label.includes(" (enforced)") && !REMOTE_NEVER_ENFORCED.has(key) ? " (enforced)" : ""}`,
+      );
     }
   }
   for (const key of loaded.refused) {
@@ -159,14 +162,17 @@ function withoutRefusedValues(
   refused: readonly string[],
 ): TeamLayerResolution {
   const layer = team.teamLayer;
-  if (layer === undefined || refused.length === 0) return team;
+  if (layer === undefined) return team;
+  // Refused keys lose their value; a never-enforced key also loses its stale
+  // "!important" entry (the loader already ignored it).
   const drop = new Set(refused);
+  const unpinned = REMOTE_NEVER_ENFORCED;
   const settings: Record<string, unknown> = {};
   for (const [section, value] of Object.entries(layer.settings as Record<string, unknown>)) {
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
       settings[section] =
         section === "!important" && Array.isArray(value)
-          ? value.filter((k) => typeof k !== "string" || !drop.has(k))
+          ? value.filter((k) => typeof k !== "string" || !(drop.has(k) || unpinned.has(k)))
           : value;
       continue;
     }

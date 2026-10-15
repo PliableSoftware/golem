@@ -60,7 +60,7 @@ import path from "node:path";
 import { z } from "zod";
 import { replaceViaTemp } from "../config/file-io.js";
 import { SECTION_NAMES } from "../config/schema.js";
-import { isMemberRelative, staticRefusal } from "../config/team-policy.js";
+import { effectivelyEnforced, isMemberRelative, staticRefusal } from "../config/team-policy.js";
 import { isRenameRetryable } from "../shared/win-fs-retry.js";
 import { VERSION } from "../version.js";
 import {
@@ -235,6 +235,8 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
     bucket[leaf] = row.value;
 
     // `enforced` is the whole contract: the important band at `team` rank.
+    // The declaration is still passed on for a never-enforced key so the loader
+    // can warn once and drop it; it is not REPORTED or counted as enforced.
     if (row.enforced && !important.includes(key)) important.push(key);
 
     // The team policy (USER decision P4: tighten only). A refused row STILL goes
@@ -249,7 +251,7 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
     // `applied` means "passed the STATIC policy". The member-relative rules
     // (lower-only, narrow-roots) are judged at load against the member's own
     // value, so those rows are marked pending rather than claimed.
-    const label = `${key}${row.enforced ? " (enforced)" : ""}${isMemberRelative(key) ? PENDING_SUFFIX : ""}`;
+    const label = `${key}${effectivelyEnforced(key, row.enforced) ? " (enforced)" : ""}${isMemberRelative(key) ? PENDING_SUFFIX : ""}`;
     if (!applied.includes(label)) applied.push(label);
   }
 
@@ -429,7 +431,8 @@ export async function listTeamLayerCaches(
       age_minutes: dateable ? Math.max(0, Math.floor((nowMs - fetchedMs) / 60_000)) : null,
       age: dateable ? describeCacheAge(fetchedMs, nowMs) : null,
       settings_count: cache.settings.length,
-      enforced_count: cache.settings.filter((row) => row.enforced).length,
+      enforced_count: cache.settings.filter((row) => effectivelyEnforced(row.key, row.enforced))
+        .length,
       path: teamCachePath(userDir, orgId),
       ...(cache.denied === undefined ? {} : { denied: cache.denied }),
     });

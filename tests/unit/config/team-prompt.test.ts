@@ -6,7 +6,9 @@
  * and `inference.coder_prompt` stay DENIED, because a persona carries
  * `prompt_file` (a local read) and `tools`. The team prompt merges per field
  * with a project's own persona prompts (it never replaces them), and a project
- * or user value of the same key outranks the team's.
+ * local value of the same key, or a user value marked important (`user!`),
+ * outranks the team's. A plain USER value does NOT: the cascade order is
+ * default, user, team, project, ... (loader.ts ORIGIN_ORDER).
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -16,8 +18,12 @@ import { getConfig } from "../../../src/cli/config.js";
 import { resolveDesiredAgents } from "../../../src/cli/persona-sync.js";
 import { loadEffectiveConfig } from "../../../src/config/index.js";
 import { TEAM_PROMPT_MAX_CHARS, teamRule } from "../../../src/config/team-policy.js";
-import { TEAM_PROMPT_LABEL } from "../../../src/inference/team-prompt.js";
-import { writeTeamLayerCache } from "../../../src/portal/index.js";
+import { TEAM_NOTE_BEGIN as TEAM_PROMPT_LABEL } from "../../../src/inference/team-prompt.js";
+import {
+  listTeamLayerCaches,
+  translateTeamRows,
+  writeTeamLayerCache,
+} from "../../../src/portal/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
 const newTempDir = useTempDirs("golem-team-prompt-");
@@ -79,6 +85,45 @@ describe("the cascade", () => {
     );
     expect(c.settings.inference.team_prompt).toBe("project words");
     expect(c.provenance["inference.team_prompt"]?.layer).toBe("project");
+  });
+
+  it("a plain USER value does NOT beat the team (user ranks below team): pins the truth", async () => {
+    for (const mine of ["user words", ""]) {
+      const c = await load(
+        await project({
+          rows: [row("TEAM")],
+          userSettings: { inference: { team_prompt: mine } },
+        }),
+      );
+      expect(c.settings.inference.team_prompt, JSON.stringify(mine)).toBe("TEAM");
+      expect(c.provenance["inference.team_prompt"]?.layer).toBe("team");
+    }
+  });
+
+  it("a user! value beats the team", async () => {
+    const c = await load(
+      await project({
+        rows: [row("TEAM")],
+        userSettings: {
+          inference: { team_prompt: "user words" },
+          "!important": ["inference.team_prompt"],
+        },
+      }),
+    );
+    expect(c.settings.inference.team_prompt).toBe("user words");
+    expect(c.provenance["inference.team_prompt"]?.layer).toBe("user");
+  });
+
+  it("an empty project value turns the team prompt off, even against an enforced attempt", async () => {
+    for (const enforced of [false, true]) {
+      const c = await load(
+        await project({
+          rows: [row("TEAM", enforced)],
+          projectSettings: { inference: { team_prompt: "" } },
+        }),
+      );
+      expect(c.settings.inference.team_prompt, String(enforced)).toBe("");
+    }
   });
 
   it("an empty project value turns the team prompt off", async () => {
@@ -170,6 +215,24 @@ describe("a team may not ENFORCE the team prompt (the project outranks the team)
     expect(c.settings.inference.team_prompt).toBe("mine");
     expect(c.provenance["inference.team_prompt"]?.layer).toBe("user");
     expect(c.provenance["inference.team_prompt"]?.important).toBe(true);
+  });
+
+  it("is never REPORTED as enforced: not in team.applied, not counted, no stale !important entry", async () => {
+    const p = await project({
+      rows: [row(TEXT, true), { key: "ui.pet", value: false, enforced: true }],
+    });
+    const c = await load(p);
+    expect(c.team.applied).toContain("inference.team_prompt");
+    expect(c.team.applied).not.toContain("inference.team_prompt (enforced)");
+    expect(c.team.applied).toContain("ui.pet (enforced)"); // other keys unchanged
+    const handed = c.team.teamLayer?.settings as Record<string, unknown>;
+    expect(handed["!important"]).toEqual(["ui.pet"]);
+
+    const caches = await listTeamLayerCaches(p.userDir);
+    expect(caches[0]?.enforced_count).toBe(1); // ui.pet only
+
+    const out = translateTeamRows([row(TEXT, true)]);
+    expect(out.applied).toEqual(["inference.team_prompt"]);
   });
 
   it("other keys may still be enforced by the team (the rule is per key)", async () => {

@@ -37,18 +37,21 @@ context. The safe reading, implemented:
 
 - **One new leaf, `inference.team_prompt`**, a plain string, class `bounded-text` in
   `src/config/team-policy.ts` (the only exception to default-deny for prompts).
-- **What a team MAY set:** that one string. At most 2000 characters, no control characters (newline
-  and tab allowed), no `scheme://` URL. A violating value is REFUSED per key (rest of the layer
+- **What a team MAY set:** that one string. At most 2000 code points, allow-listed code points only
+  (letters, marks, numbers, punctuation, symbols, space separators, newline, tab), no fence
+  markers, framing lines (`#`, `<`, role headers), code fences, tags, URL/network-path/IP forms
+  (rules in `src/config/team-prompt-rules.ts`). A violating value is REFUSED per key (rest of the layer
   applies), never truncated, never echoed. Refusal text names the key and the rule only.
 - **What a team may NOT set:** `inference.personas` (so no persona `prompt`, `prompt_file`, `tools`,
   `model`), `inference.coder_prompt`, `inference.model`, `worker_targets`: all stay `denied`.
-- **How it is used:** `src/inference/team-prompt.ts` APPENDS it after the persona/coder prompt under
-  a fixed label (team-supplied, advisory, cannot change tools, permissions or redaction, ranks below
-  the user's instructions). Never first, never alone, never a replacement. Applied at the `coder`
+- **How it is used:** `src/inference/team-prompt.ts` APPENDS it after the coder prompt, fenced
+  between fixed BEGIN and END TEAM NOTE markers (team-supplied, advisory, cannot change tools,
+  permissions or redaction, ranks below the user's instructions). Never first, never alone, never a replacement. Applied at the `coder`
   dispatch `system` field only (NOT the generated subagent body or the ACP turn, see below). The read
-  side strips control characters and caps again, since local/env values skip the team gate.
-- **Per field, project outranks team:** an ordinary leaf, so a project or user value replaces the
-  team's (empty string = off), while a project's persona prompts are untouched; both apply.
+  side strips the same classes and caps by code points again, since local/env values skip the team gate.
+- **Per field, project outranks team:** an ordinary leaf, so a project or local value, or a user value marked
+  important (`user!`), replaces the team's (empty string there = off). A plain USER value does NOT
+  beat the team: ORIGIN_ORDER is default, user, team, project (unchanged), while a project's persona prompts are untouched; both apply.
 - **Redaction:** nothing new exempt. A `coder` dispatch to a non-local target is redacted at the
   target's trust floor; subagent traffic crosses the proxy's redaction.
 - **Visibility:** accepted value shows in config get/list, status and control surface with layer `team`.
@@ -62,15 +65,22 @@ context. The safe reading, implemented:
 - **Q2** A team may NOT enforce `inference.team_prompt` (`REMOTE_NEVER_ENFORCED` in
   `team-policy.ts`, applied in `buildObjectLayer`). A `team!` declaration is ignored with one
   warning naming the key and the rule (never the text); the value still applies as an ordinary
-  team value that a project or user value replaces. `user!`/`local!` are unchanged.
+  team value that a project or local value, or a `user!` value, replaces. A plain user value does
+  not. `user!`/`local!` are unchanged. It is never REPORTED as enforced either: no `(enforced)`
+  suffix in `team.applied` or `golem team sync`, not counted in `enforced_count`, stale
+  `!important` entry removed from `team.teamLayer.settings`.
 - **Q3** NOT delivered to generated `.claude/agents` bodies (system prompts by construction);
   `persona-sync.ts` no longer touches it. Delivered ONLY on the dispatch `system` field of the
-  `coder` MCP tool. ACP is EXCLUDED (orchestrator ruling): the ACP turn's only slot for it is the
-  dispatch `system` field, i.e. system authority, so `src/buzz/acp-turn.ts` does not call
-  `withTeamPrompt`. Revisit if a user-level slot exists.
-- **Q4** Kept: the URL ban is a `scheme://` heuristic. KNOWN LIMITATION: a bare domain, an IP, a
-  file path or "fetch example dot com" written in prose passes. The label and the bound are the
-  defence, not the heuristic.
+  `coder` MCP tool. Rationale: the coder worker lane is a bounded code-writing worker (no tools beyond what
+  the dispatch grants, output reviewed by the orchestrating session), so a FENCED advisory note
+  (BEGIN/END markers, which the gate refuses and the strip removes from the text) is accepted
+  there. Generated agent bodies and ACP turns are EXCLUDED because they run with the member's
+  own authority and tools; `src/buzz/acp-turn.ts` does not call `withTeamPrompt`. Revisit if a
+  user-level slot exists.
+- **Q4** The URL check now covers `://`, `data:`/`mailto:`/`file:`/`javascript:`/`ftp:` forms,
+  UNC, `www.`, IPv4/IPv6 on an NFKC copy. KNOWN LIMITATION: a bare domain ("example.com"), a file
+  path or "fetch example dot com" written in prose passes. The fence and the bounds are the
+  defence, not the heuristic. An empty `GOLEM_INFERENCE_TEAM_PROMPT=` is treated as unset (env.ts).
 
 ### Redaction trace (A)
 `coder` tool -> `dispatcher.dispatch({system})`

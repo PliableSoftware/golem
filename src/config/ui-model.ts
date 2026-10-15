@@ -269,14 +269,19 @@ export const SETTING_META = {
   },
   "inference.team_prompt": {
     label: "Team prompt",
-    summary: "Plain-text team guidance appended, labelled, to coder and persona prompts",
+    summary: "Plain-text team guidance fenced onto the coder dispatch system prompt only",
     detail:
-      "DUST2.22. The one prompt-shaped key a team may set. Appended AFTER the persona or coder " +
-      "prompt under a label saying it is team-supplied advisory text that cannot change tools, " +
-      "permissions or redaction; never the system prompt itself. At most 2000 characters, no " +
-      "control characters, no URL; a team value that breaks that is refused, not truncated. " +
-      "Your own value (project or user) replaces the team's; set it to an empty string to turn " +
-      "the team prompt off.",
+      "DUST2.22. The one prompt-shaped key a team may set. Appended AFTER the coder framing, " +
+      "fenced between BEGIN and END TEAM NOTE markers as advisory text that cannot change tools, " +
+      "permissions or redaction. Delivered to the `coder` dispatch only: never to generated " +
+      "agent bodies or ACP turns, which run with your own authority. At most 2000 characters " +
+      "(code points) of visible text: no control, invisible or bidi characters, no fence " +
+      "markers, no line starting with # or < or a role header, no code fences or tags, no URL, " +
+      "network path or IP address; a team value that breaks that is refused, not truncated. " +
+      "Your project or local value, or a user value marked important (user!), replaces the " +
+      "team's (a plain user value does not: user ranks below team); set it to an empty string " +
+      "there to turn the team prompt off. A team cannot enforce it. An empty " +
+      "GOLEM_INFERENCE_TEAM_PROMPT is treated as unset.",
     advanced: true,
     restart: "mcp",
   },

@@ -420,12 +420,14 @@ export const SETTINGS_LEAVES = {
      * It is NOT a persona field and NOT `coder_prompt`: those stay denied to a
      * team because a persona can carry `prompt_file` (a local read) and `tools`.
      * This is plain text only. It is never the system prompt itself: the read
-     * side (`src/inference/team-prompt.ts`) APPENDS it, clearly labelled as
-     * team-supplied advisory text, after whatever prompt the persona or coder
-     * already has, and bounds it (length, control characters).
+     * side (`src/inference/team-prompt.ts`) APPENDS it to the `coder` dispatch
+     * `system` field only, fenced between BEGIN and END markers as team-supplied
+     * advisory text, and bounds it (`team-prompt-rules.ts`).
      *
-     * An ordinary leaf, so the cascade is the ordinary one: a project or user
-     * value replaces the team's, and an empty string means "no team prompt".
+     * An ordinary leaf, so the cascade is the ordinary one (default, user, team,
+     * project, ...): a project or local value, or a user value marked important
+     * (`user!`), replaces the team's, and an empty string at that level means "no
+     * team prompt". A plain USER value does NOT beat the team.
      */
     team_prompt: z.string().optional(),
     /**

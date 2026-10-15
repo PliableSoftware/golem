@@ -187,10 +187,12 @@ so read the old labels as historical.
 
 ## A team prompt rides along on the worker lane
 
-`inference.team_prompt` (DUST2.22, [[Team Layer]]) is appended, labelled and advisory, to the
-`coder` dispatch `system` field only. It is deliberately NOT written into generated agent
-bodies or ACP turns (their only slot is system authority; revisit if a user-level slot exists), and it never replaces a persona's own
-`prompt`. Personas themselves stay unsettable by a team.
+`inference.team_prompt` (DUST2.22, [[Team Layer]]) is appended, fenced between BEGIN and END
+TEAM NOTE markers as advisory text, to the `coder` dispatch `system` field only: that worker lane
+is bounded (no tools beyond the dispatch's, output reviewed by the orchestrating session). It is
+deliberately NOT written into generated agent bodies or ACP turns, which run with the member's own
+authority and tools. It never replaces a persona's own `prompt`. Personas themselves stay
+unsettable by a team.
 
 ## The sibling rule: prefer the bench over `fork`
 

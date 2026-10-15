@@ -105,9 +105,10 @@ export async function resolveDesiredAgents(
         settings.inference.coder_prompt !== undefined
           ? resolveCoderPrompt(settings.inference.coder_prompt)
           : (await resolvePersonaPrompt(persona.id, config, projectDir)).text;
-      // DUST2.22: `inference.team_prompt` is deliberately NOT appended here. A
-      // generated agent body is a SYSTEM prompt by construction, and a team's
-      // text must never gain system authority (see src/inference/team-prompt.ts).
+      // DUST2.22: the team note is deliberately NOT appended here. A generated
+      // agent body runs with the member's own authority and tools, unlike the
+      // bounded `coder` worker lane that accepts a fenced advisory note (see
+      // src/inference/team-prompt.ts).
 
       desired.push({
         id: persona.id,

@@ -621,7 +621,8 @@ function buildObjectLayer(
           // The value still applies as an ordinary team value; only the pin is dropped.
           warnings.push(
             `${label}: "${dotted}" was declared "${IMPORTANT_KEY}" but a team may not enforce it ` +
-              "(your project and user settings outrank the team's); applied as an ordinary team value",
+              "(your project or local settings, or a user value marked important, outrank the team's); " +
+              "applied as an ordinary team value",
           );
           continue;
         }

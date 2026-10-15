@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { runAcpTurn } from "../../../src/buzz/acp-turn.js";
 import { resolveCoderPrompt } from "../../../src/inference/coder-prompt.js";
 import { createTargetDispatcher } from "../../../src/inference/target-dispatcher.js";
-import { TEAM_PROMPT_LABEL, withTeamPrompt } from "../../../src/inference/team-prompt.js";
+import { TEAM_NOTE_BEGIN, withTeamPrompt } from "../../../src/inference/team-prompt.js";
 import { writeTeamLayerCache } from "../../../src/portal/index.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
@@ -76,7 +76,7 @@ describe("coder dispatch to a non-local target", () => {
       targetId: "cheap",
     });
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toContain(TEAM_PROMPT_LABEL.slice(0, 20)); // delivered...
+    expect(sent[0]).toContain(TEAM_NOTE_BEGIN.slice(0, 20)); // delivered...
     expect(sent[0]).not.toContain(FAKE_KEY); // ...but redacted
     expect(sent[0]).not.toContain(FAKE_EMAIL);
     expect(sent[0]).toContain(PLACEHOLDER_PREFIX);
@@ -124,7 +124,7 @@ describe("golem acp turn", () => {
     const body = sent.join("\n");
     expect(body.length).toBeGreaterThan(0);
     expect(body).not.toContain("team-text-canary");
-    expect(body).not.toContain("advisory only");
+    expect(body).not.toContain("TEAM NOTE");
   });
 });
 
@@ -139,27 +139,37 @@ describe("the delivery list is closed", () => {
     return out;
   }
 
-  it("only the coder tool path reads the team prompt; the proxy, hooks and agent generator never do", async () => {
+  /** Source with block and line comments removed (good enough for identifier scans). */
+  const stripComments = (text: string): string =>
+    text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const IDENT = /team_prompt|teamPrompt|withTeamPrompt|sanitizeTeamPrompt|team-prompt/;
+
+  it("only the coder tool path and the exact config files that define the leaf read it", async () => {
     const src = path.resolve(__dirname, "../../../src");
     const readers: string[] = [];
     for (const file of await walk(src)) {
       const rel = path.relative(src, file).split(path.sep).join("/");
-      if (rel.startsWith("config/") || rel === "inference/team-prompt.ts") continue;
-      if (/team_prompt|teamPrompt|withTeamPrompt/.test(await readFile(file, "utf8")))
-        readers.push(rel);
+      if (IDENT.test(stripComments(await readFile(file, "utf8")))) readers.push(rel);
     }
     expect(readers.sort()).toEqual(
       [
         "cli/commands/mcp-serve.ts", // reads the setting, hands it to the coder tool
-        "buzz/acp-turn.ts", // a comment saying it is deliberately NOT used
-        "cli/persona-sync.ts", // a comment saying it is deliberately NOT used
+        "config/schema.ts", // defines the leaf
+        "config/team-policy.ts", // classifies it and gates the text
+        "config/team-prompt-rules.ts", // the gate/strip rules (matches the module name)
+        "config/ui-model.ts", // describes it
+        "inference/team-prompt.ts", // fences it
         "mcp/coder-tools.ts",
         "mcp/deps.ts",
         "mcp/server.ts",
       ].sort(),
     );
+  });
+
+  it("the agent generator and the ACP turn contain NO reference at all outside comments", async () => {
+    const src = path.resolve(__dirname, "../../../src");
     for (const f of ["cli/persona-sync.ts", "buzz/acp-turn.ts"]) {
-      expect(await readFile(path.join(src, f), "utf8")).not.toMatch(/withTeamPrompt/);
+      expect(stripComments(await readFile(path.join(src, f), "utf8")), f).not.toMatch(IDENT);
     }
   });
 });
