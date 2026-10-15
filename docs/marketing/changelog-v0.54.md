@@ -2,6 +2,8 @@
 
 **DRAFT. Not published. Not a source of truth.** See [`README.md`](README.md). Written 2026-10-08 on branch `dust5/changelog`. Facts come from [`CLAIMS.md`](CLAIMS.md) or from a named commit; each entry ends with an HTML comment naming its ledger id or sha. Nothing in this file is a release note, an advisory or an announcement. Whether to cut a release or publish an advisory is the user's decision (DUST5.8).
 
+**Refreshed 2026-10-15 against `c6bad35` (`origin/development`). UNREVIEWED: no fact-check has run on the refresh.** It adds the merges after `a3f1d39` (PRs #270 to #314). The first pass, its review and the entries it covers were not re-verified except where an entry below says it changed. Every cited sha was checked with `git cat-file -t` (a commit) and `git tag --contains` (no tag). The ledger rows for the new entries are C-27 to C-53.
+
 ## Read this first: what the tags say
 
 Run on 2026-10-08 in this worktree (`git tag --sort=-v:refname`, `git tag --contains <sha>`):
@@ -9,19 +11,19 @@ Run on 2026-10-08 in this worktree (`git tag --sort=-v:refname`, `git tag --cont
 - Tags in the v0.54 line: `v0.54.0` (`b949fd3`, PR #182, 2026-09-07) and `v0.54.3` (`1719982`, PR #200, 2026-09-23). `v0.54.3` is the newest tag. There is no `v0.54.1` or `v0.54.2` tag.
 - The release commits `54f089a` (`chore(release): v0.54.1`, 2026-09-16) and `43ac834` (`chore(release): v0.54.2`, 2026-09-20) exist and are both contained in `v0.54.3`.
 - `npm view @pliable/golem versions`, read-only on 2026-10-08, returned exactly one version: `0.54.2`. This read does not show `0.54.3` on the registry, and it does not show what was installed from any other channel. Whether `v0.54.3` was ever published is not established by this draft.
-- **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 commits). Every fix is on `development` only. <!-- B-29; git tag --contains over the fix shas -->
+- **`git tag --contains` returned no tag for any DUSTSEC fix commit** (every DUSTSEC fix commit cited in this file was checked, 30 shas including the three DUSTSEC.19 commits). Every fix is on `development` only. In the 2026-10-15 refresh the same check was run over every merge and code sha the new entries cite (about 70 shas, none in any tag). <!-- B-29; git tag --contains over the fix shas -->
 
 So: **every tagged build, `v0.54.0` and `v0.54.3` alike, lacks all of the DUSTSEC fixes.** The `0.54.2` build on npm was not checked directly: its source commit is unknown but is `2fc7cd2` or later and before `1b08402` (the v0.54.3 version bump, 2026-09-23), so before any DUSTSEC fix, and no tag contains any fix. Anyone running a build from this line should treat the weaknesses in the security section as present in it, with one caveat: for each item the section says which tagged builds were checked directly and which were not. No wording in this draft says that current releases are protected. <!-- B-29; git tag --contains over the fix shas; 1719982; b949fd3 -->
 
 ## Unreleased (on `development`, in no tag)
 
-### Security fixes: DUSTSEC.1-9 and 11-19 merged (all unreleased), DUSTSEC.10 open
+### Security fixes: DUSTSEC.1-9, 10 (changed by decision), 11-22 and 24 merged (all unreleased); DUSTSEC.25 open
 
 These came out of Dust Phase 1, a set of eleven read-only audits by project agents (the audit is `docs/plan/audit/dust-1/SUMMARY.md`; the choices are the USER decisions in `docs/plan/audit/dust-1/DECISIONS.md`). They were then reviewed twice by a separate reviewer agent in this project (the first review returned VERDICT: block, the second VERDICT: concerns with no High). That is not an outside audit, and it is not a certification. DUSTSEC.18 got no third review. <!-- B-27; B-28; debrief 2026-10-08-DUSTSEC-security-batch.md; merged PRs #213-#219, #221-#224, #227, #228 -->
 
 Severity below is the label the Phase 1 audit gave. "Reach" says what an attacker or accident needed. No step-by-step reproduction is given on purpose.
 
-**Why this is not "no known issues".** The bypass guard (DUSTSEC.3) is a guard on common spellings, not a sandbox. The reviews found follow-ups, which are DUSTSEC.17 and DUSTSEC.18. DUSTSEC.19 closed one gap and its review found others that are still open (below), and DUSTSEC.10 is not closed. <!-- C-07; B-28 -->
+**Why this is not "no known issues".** The bypass guard (DUSTSEC.3) is a guard on common spellings, not a sandbox. The reviews found follow-ups, which are DUSTSEC.17 and DUSTSEC.18. DUSTSEC.19 closed one gap and its review found others, which DUSTSEC.20 to DUSTSEC.22 and DUSTSEC.24 then addressed with accepted weaknesses that are listed below. DUSTSEC.10 was settled by restoring a human prompt, which leaves a gap (DUSTSEC.25) that is not built. Redaction is best-effort pattern matching, not a guarantee. <!-- C-01; C-07; B-28; B-39 -->
 
 #### The HIGH items
 
@@ -100,13 +102,42 @@ Severity below is the label the Phase 1 audit gave. "Reach" says what an attacke
 - Reach: a client sending such a request through the proxy.
 - Affected released builds: all of them, by the evidence of the tags (no tag contains the fix). This draft did not trace it tag by tag.
 - Status: fixed on `development` in PR #265 (code `109f32b`, task doc `d52dbf8`, test `96d9b81`). Every JSON object or array body on any route now gets the same redaction rules, in the same order, with plugin rules, and the fail-safe path covers the same routes. Level `off` still redacts; `bypass_all` is unchanged. No tag contains it.
-- What it does NOT cover, found by a review of the change by a separate reviewer agent in this project (not an outside audit) and tracked as separate work: a JSON body sent with a content encoding such as gzip, or one that begins with a byte-order mark, fails to parse and is forwarded unredacted; a body that is not JSON (multipart uploads, plain text) is forwarded unchanged and a test now pins that; the redaction walk is synchronous with no size cap on the request body.
-- A related defect that already existed on the main messages route, not introduced here: the redaction's long-token rule also rewrites some 33 and 34 character API ids (server tool and batch ids), which the API then rejects, and this change extends that behaviour to the token-count and batches routes. It is tracked as its own task. <!-- docs/plan/tasks/DUSTSEC.20.md -->
+- What it did NOT cover when it merged, found by a review of the change by a separate reviewer agent in this project (not an outside audit): a JSON body sent with a content encoding such as gzip, or one that begins with a byte-order mark, was forwarded unredacted; a body that is not JSON was forwarded unchanged; the redaction walk was synchronous with no size cap. DUSTSEC.21 (below) addressed the first two and added a size limit; the walk is still synchronous.
+- A related defect that already existed on the main messages route: the redaction's long-token rule also rewrote some 33 and 34 character API ids (server tool and batch ids), which the API then rejects, and this change extended that behaviour to the token-count and batches routes. DUSTSEC.20 (below) exempts two documented id shapes; `container_` ids are still rewritten. <!-- docs/plan/tasks/DUSTSEC.20.md -->
 <!-- C-01; 109f32b; d52dbf8; 96d9b81; 68580a4 -->
 
-#### Open
+#### Redaction hardening after DUSTSEC.19: DUSTSEC.20, 21, 22, 24. Merged, unreleased.
 
-**DUSTSEC.10: open, awaiting a USER decision.** The task stopped at its first verify step and is queued. Nothing is claimed here about what it will do. <!-- docs/plan/tasks/DUSTSEC.10.md; B-07; d0d973b -->
+Each of these was found while the claims ledger was built or by the review of the one before it. Each was reviewed by project agents (not an outside audit; B-27), and each lists weaknesses it accepts. None is in a tag. <!-- B-27; B-29 -->
+
+**DUSTSEC.21: encoded, text and non-object request bodies were not redacted** (PR #276, merge `ead363b7`; code `44dc5e63`, `b7a23714`, `9631511c`).
+- Was wrong: a gzip-encoded body, a body that began with a byte-order mark, a JSON array or scalar sent to the messages route, and any body that was not JSON went upstream as it arrived.
+- Fix: content-encoded bodies (gzip, x-gzip, deflate, brotli, stacked) are decoded and forwarded uncompressed; an unsupported encoding gets 415 and an undecodable body 400, with nothing forwarded. JSON is redacted whatever its content label says, including an array or scalar on the messages route. Text bodies, including form-urlencoded with percent-decoding, are redacted as text. A JSON body with a repeated object key is refused with 400, because a parser keeps the last value and a secret could sit in the shadowed one. A UTF-16 or UTF-32 body is refused with 502. The request-body limit defaults to 32 MiB (wire and decompressed) and an in-flight memory cap answers 503.
+- Accepted, by design: a non-JSON body under a known binary content label, or one that starts with a binary signature and looks binary, is forwarded unscanned, and the label is client-chosen. Object keys are not redacted. The walk is synchronous, so the limit bounds admission, not stall time.
+<!-- C-01; C-27; ead363b7; 44dc5e63; b7a23714; 9631511c -->
+
+**DUSTSEC.20: the long-token rule rewrote documented API object ids** (PR #271, merge `589d1e64`; code `227145af`, `9eea81e7`).
+- Was wrong: the high-entropy sweep rewrote 33-character `srvtoolu_` and `msgbatch_` ids, which the API then rejects. This already broke `POST /v1/messages` and DUSTSEC.19 extended it to two more routes.
+- Fix: a whole token matching `srvtoolu_01` or `msgbatch_01` plus 22 letters or digits is skipped by the sweep; a longer run, a different prefix or a secret glued to one is still redacted. The pattern rests on the documented example ids only. `container_` ids are not exempt and are still rewritten, which remains a defect.
+<!-- C-28; 589d1e64; 227145af; 9eea81e7 -->
+
+**DUSTSEC.22: a secret glued inside a run longer than 128 characters leaked whole** (PR #277, merge `8add7d01`; code `8c00cd2c`, `4b793ae2`, `f7b627ba`).
+- Was wrong: the sweep ignores runs over 128 characters (they look like base64 data), so a named-prefix key stuck to an API id with no separator went upstream raw.
+- Fix: the redaction now scans inside such runs for named prefixes and replaces only the matched span. Some prefixes match anywhere in a run, others only at a run's edge, because they match random data by chance. The scan repeats until nothing changes, at most 16 passes; reaching the bound throws, so the proxy answers 502 and forwards nothing.
+- Accepted and pinned as known residuals in tests: a long random run with no named prefix is not redacted; `sk-` shapes of other lengths glued in, a key with junk on both sides, and a key in the middle of a run for the edge-only families are not found.
+<!-- C-29; 8add7d01; 8c00cd2c; 4b793ae2; f7b627ba -->
+
+**DUSTSEC.24: named redaction rules overflowed the stack or went quadratic on pathological input** (PR #304, merge `0082fdc1`; code `340b982d`, `1a4aa000`, `101dc477`).
+- Was wrong: some named rules threw a stack-overflow error on a 10 MB single run (the proxy turns that into a 502) and the private-key and email rules could go quadratic; the card rule also rewrote Luhn-valid digit runs inside hex dumps.
+- Fix: open-ended repeats rewritten so the same inputs match without a stack entry per character; the private-key scan bounded to the last complete END line; email and connection-password anchored on their delimiter; a separator-free digit run glued onto a hex-only token is left alone. Rule ids and order are unchanged. During review a placeholder exemption caused a confirmed leak and was removed.
+- Accepted weakenings, listed in the PR and the task doc: the card rule no longer redacts a separator-free Luhn-valid run glued onto a hex-only token (`a<card>`, `<card>f`); only the last 128 characters of an email local part before the `@` are redacted; a second redaction pass can over-redact a glued scheme with a placeholder in the password position (nothing leaks). Not fixed: a card preceded by digits and a space is missed, before and after.
+<!-- C-30; 0082fdc1; 340b982d; 1a4aa000; 101dc477 -->
+
+**DUST2.23: a pipeline policy could say "redaction off"** (PR #311, merge `8b0cea5a`; code `0b444898`). The `redaction` field of the stage policy is now the literal type `true`, a runtime check throws on anything else, and the proxy then falls back to redaction alone. `proxy.bypass_all` is unchanged and is still the one way off. Over-redaction of path-like tokens with `=` or `+` was deliberately left as it is. <!-- C-31; 8b0cea5a; 0b444898 -->
+
+#### DUSTSEC.10: the human is asked again at PermissionRequest. Merged, unreleased; a gap is open.
+
+USER decision, 2026-10-09, taken against the recommendation to keep the deny. The PermissionRequest hook used to deny destructive and outward tool calls outright, so no permission dialog opened and a person at the terminal was never asked. It now returns no decision, so the normal dialog opens and the person answers; it never answers `allow`. The cost, recorded in ADR-0002: with a permission-relay channel connected, the relay may now be notified when the dialog opens. Whether it is, is R12.13 and has not been observed. DUSTSEC.25, which would ignore a relayed answer to a destructive or outward prompt until the Decision 61 setting and re-authentication exist, is a queued task and is not built. Status: PR #285 (merge `a35e1107`, code `3937580d`). In no tag. <!-- C-32; B-07; a35e1107; 3937580d -->
 
 ### Other security-relevant fixes found in Dust Phase 3 (on `development`, in no tag)
 
@@ -117,12 +148,47 @@ Phase 3 re-checked the Phase 1 findings against current code (52 did not reprodu
 - Gateway ids that map to the same credential variable (S16) are rejected, and the Gemini key is sent as a header rather than in the route path (S21). The review also found that with no Gemini key stored the client's Anthropic credential was forwarded to Google; the Gemini route now always strips it (`d03ec9b`). Fixed in PR #252 (merge `8a39976`). <!-- 860aaf8; fabe0db; d03ec9b; 8a39976 -->
 - Wiki draft slugs and an explicit `rel_path` were stored without redaction in a committed tree, and `promote` applied only built-in rules (S13). Fixed in PR #255 (`6ecadc9`, `25864d4`; merge `aeec9a7`). <!-- 6ecadc9; 25864d4; aeec9a7 -->
 
+### Team layer, settings and plugins (on `development`, in no tag; added in the refresh)
+
+**BREAKING: the `slider` MCP prompt is removed** (USER decision M2, PR #282, merge `52bc8d6c`, code `69bd1c06`). Anything that lists MCP prompts or calls `slider` by name no longer finds it: `getPrompt("slider")` fails with an unknown-prompt error. The prompt set is seven. The control is `golem compression`. <!-- C-50; 52bc8d6c; 69bd1c06 -->
+
+**The team layer applies on every settings reader, under a default-deny, tighten-only policy table** (USER decisions G3 and P4, PR #287, merge `061420be`; code `33fccce4`, `8b500003`, `afa0067e`, `ba1be1b4`). Status, config, the TUI, hooks, the MCP server, the proxy and its hot reload, and the persona watcher now load through one function, and a test fails when production code reads settings around it. Hooks read the team layer from the local cache only. Every settings key has a class; a key with none is denied; a team can force a risky boolean off but not on, a protective boolean on but not off, and lower a numeric limit but not raise it; anything that runs a command or sets a URL, endpoint, credential or path is denied. Refusals are per key and never print the value. Not done, and filed: a raise-only class for numbers where higher is stricter. This does not stop a member editing their own files or running another binary. <!-- C-33; C-34; B-01; 061420be; 8b500003 -->
+
+**Locked controls and a `default!` floor, with an empty registry** (DUST2.16, PR #314, merge `c6bad356`; code `29253004`, `a488534d`). A `default!` floor exists, which pins a key to its built-in default whatever any origin says. **No key is pinned today**: the registry is empty and every install resolves as before; which keys to pin is a decision the project owner has not made. A control pinned by `!important` or `default!` shows as locked with its origin and who can still override it, on the config CLI, status, the TUI and the VS Code panel, and a write that a higher origin overrules says it has no effect (the file is still written). `default!` can pin booleans only. <!-- C-35; C-36; B-42; c6bad356; 29253004; a488534d -->
+
+**Plugin diagnostics and bounded stages** (DUST2.11, PR #313, merge `4361e535`; code `2e2f3809`, `dadbc604`, `d4aa7ff0`). `golem plugin` counts and lists every problem and exits 0 by default (`--check` exits 1 on errors, `--strict` on any problem). It warns on backtracking-prone regular expressions, without catching every shape. A plugin stage that throws, runs past 5 seconds, or edits in place and then throws is skipped and the body from before it is kept; three timeouts in a row skip it for 60 seconds. `setup()` has a 10 second limit. A stage that blocks the event loop synchronously cannot be interrupted. <!-- C-37; B-47; 4361e535; 2e2f3809; dadbc604; d4aa7ff0 -->
+
+**Web cache freshness, and uncacheable pages are not stored** (DUST2.13, PR #312, merge `7140ba7a`; code `b327ce78`, `e7a12f65`). `max-age` and `Expires` are honoured. A response marked `no-store`, `private` or `no-cache`, or that sets a cookie, is served but not cached or ingested, and an earlier copy is deleted. Limitation: when Claude Code's own `WebFetch` ran instead, or `knowledge.webcache_fetch_raw` is off, the hooks cannot see the headers and may store the output regardless. `Vary` and `Pragma: no-cache` are not handled. <!-- C-38; B-43; 7140ba7a; b327ce78; e7a12f65 -->
+
+**Knowledge: aliases and `fetch`** (DUST2.15, PR #309, merge `086ec880`; code `4c99f2ae`, `4df850c7`). Lookup matches frontmatter `aliases`; `fetch` returns the full text of any hit `search` returned. The frozen `WikiFrontmatter` contract gained an optional `aliases` field. <!-- C-39; 086ec880; 4c99f2ae; 4df850c7 -->
+
+**A durable selection log** (DUST2.17, PR #308, merge `65b4e892`; code `eff01d82`). Every proxied request appends gateway, provider, target and reason to `.golem/state/selection-log.jsonl`, with no URL, header, environment value or body. <!-- C-40; 65b4e892; eff01d82 -->
+
+**Dashboard usage tiles** (DUST2.18, PR #307, merge `545136c1`; code `aaec14b1`, `120cde23`). Cache hit rate, billed input tokens, a cost tile (billed tokens times catalog prices, not an invoice) and "Avoided upstream in / out (est.)". Before this the dashboard showed none of the first three. <!-- C-41; B-18; 545136c1; aaec14b1 -->
+
 ### Other work on `development` (not security)
 
 - Phase 2 rebaseline of the spec, wiki and ADRs against the shipped code, and the hard-rule wording change from the retired wording to "lossless and prefix-stable at level <= 1" (PR #225, `32f3b64`, merge `6a1f0d9`; Phase 2 is PRs #225 and #230-#240). Redaction and dedup rewrite the body, so the older wording was dropped. <!-- C-11; B-20; 32f3b64; 6a1f0d9 -->
 - Phase 3 refactor: PRs #242-#256, 12 safe dead-code deletions and 63 confirmed bugs. Tests went from 4296 to 4464 per the Phase 3 debrief. 25 dead-code proposals were left for the user. <!-- 2026-10-08-DUST3-refactor.md; a857765; 9cf5432 -->
 - Drafts under `docs/marketing/` are excluded from local answers (PR #259, `49bd546`, merge `51e6681`). <!-- C-15; 49bd546; 51e6681 -->
 - The claims ledger (PR #262, merge `f866023`). <!-- f866023 -->
+
+Added in the refresh (merges after `a3f1d39`):
+
+- Release lockstep: `release.mjs` validates all four version files in memory, writes temps, renames them into place and restores on failure; the release workflow's required-asset check lists `SHA256SUMS` and the npm tarball (DUST2.21, PR #306, merge `0f6cd7b0`, code `dc5f31a4`). The renames are sequential, and the assertion has not been run: a real release will be its first test. <!-- C-42; B-44; 0f6cd7b0; dc5f31a4 -->
+- Symlink fix: the release scripts silently did nothing, with exit 0, when started through a symlinked path; a regression of the line above, caught by the advisory macOS job (PR #310, merge `ed35fa59`, code `efe9a7ac`). <!-- C-43; ed35fa59; efe9a7ac -->
+- A Golem skill you delete stays deleted; `golem init --restore-skill` opts back in (PR #299, merge `b15f04d2`, code `b7968e4c`). <!-- C-44; b15f04d2; b7968e4c -->
+- Credential backends return a secret as written, minus one trailing newline; gateway key ingestion trims and refuses control characters, a byte-order mark and characters above U+00FF (R8.29, PR #300, merge `4f1a32fc`, code `f607bc01`). <!-- C-45; 4f1a32fc; f607bc01 -->
+- The vector store's lock is fenced against a stalled writer, and a file watched outside the project is keyed by its absolute path so it no longer deletes the project's chunks (PR #305, merge `2726dabf`, code `a7361b82`, `070c56e0`, `b4d1c469`). Two residuals are documented; nothing here has run on real Windows. <!-- C-46; C-47; 2726dabf; a7361b82; 070c56e0; b4d1c469 -->
+- Hosted sessions: a backpressure-dropped frame carries no `seq`, the bus has an `epoch`, and the host log rotates past 5 MiB keeping 3 (PR #286, merge `a5c856fa`, code `7c5ac69c`, `28374c4e`). <!-- C-48; a5c856fa; 7c5ac69c; 28374c4e -->
+- `golem task resume --spawn` reports a failed launch, and the session report says `unknown` rather than inventing a compression level (PR #301, merge `f7ff3f6f`, code `3790f81f`). <!-- C-49; f7ff3f6f; 3790f81f -->
+- README says savings figures are estimates and only the cache report uses billed usage (PR #283, merge `02709f43`, code `975fd23c`). `blocked` is metadata on a queued task, not a state (PR #284, merge `3f452acb`, code `d37ad6ad`). <!-- C-51; C-52; 02709f43; 975fd23c; 3f452acb; d37ad6ad -->
+- Windows: EPERM, EACCES and EBUSY are retried as contention on win32 in atomic writes and locks (PRs #272 and #275, merges `97350b30`, `0cacd44b`, code `c713b6e0`). The Windows CI leg is the only evidence that this helps. <!-- C-53; 97350b30; 0cacd44b; c713b6e0 -->
+- Housekeeping with no claim made about it here: dead-code deletions and test-pacing fixes (PRs #289 to #295), task and roadmap tooling (PRs #296, #302), wiki checks (PRs #297, #298), CI action versions (PR #279), plan docs (PRs #273, #274, #278, #280, #281, #288). <!-- 2f9cefd6; 3f452acb; 997c0d29 -->
+
+### Not shipped
+
+Three pieces of work exist only on unmerged branches and are not in `development`: an asynchronous redaction walk (DUSTSEC.23), a team prompt (DUST2.22) and a wiki watcher (DUST2.14). They are not part of anything above, and no date is promised. <!-- B-40; B-41 -->
 
 ## v0.54.3 (tag `v0.54.3`, `1719982`, 2026-09-23)
 
@@ -153,5 +219,7 @@ PR #182. Everything after it up to `v0.54.3` is the list above plus these, all c
 
 - Whether `v0.54.3` was published to npm is not established (the registry read lists `0.54.2` only).
 - Per-tag presence of defects was checked directly only for DUSTSEC.2 (endpoint and header at `v0.53.0`, `v0.54.0`, `v0.54.3`), DUSTSEC.16 (name at `v0.54.0` and `v0.54.3`) and DUSTSEC.6 (code at `v0.54.3`, absent at `v0.54.0`). For the rest, the audit baseline is the only evidence.
-- DUSTSEC.19 is merged but unreleased, and its follow-up gaps are open. DUSTSEC.10 is open.
+- DUSTSEC.19 to DUSTSEC.22 and DUSTSEC.24 are merged but unreleased, each with the accepted weaknesses listed above. DUSTSEC.10 is merged but unreleased, and DUSTSEC.25 (the relay gap) is queued and not built. R12.13 (relay behaviour) is unobserved.
+- The refresh's entries were read from the code at `c6bad35`, not from the PR text, but no one else has checked them. Windows behaviour is claimed only where CI shows it.
+- The task docs for DUSTSEC.24 and several DUST2 items still say `queued` although their PRs merged; this draft relies on the merges, not on the task state.
 - This draft changes no source and edits no roadmap, shipped log or task state.
