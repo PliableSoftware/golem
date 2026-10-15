@@ -29,6 +29,7 @@ import {
   BodyBudget,
   type BodyHold,
   normalizeRequestBody,
+  RedactionAborted,
   RequestBodyRefusal,
   readBody,
 } from "./request-body.js";
@@ -368,8 +369,18 @@ export class GolemProxy {
     if (this.#pipelineEnabled) {
       const original = forward;
       try {
-        forward = await this.config.pipeline.process(original);
+        forward = await this.config.pipeline.process(original, { signal: abort.signal });
       } catch (err) {
+        // DUSTSEC.23: the walk stopped because the client hung up. Nothing is
+        // forwarded and there is nobody to answer, so skip the redact-only re-walk.
+        // ONLY that error counts: a real pipeline error is still reported to
+        // `onPipelineError` even if the client also left. The in-flight reservation
+        // is released by the response's close, as on every path.
+        if (err instanceof RedactionAborted) {
+          res.destroy();
+          report("client_gone", { detail: "the client hung up while the pipeline was running" });
+          return;
+        }
         if (err instanceof RequestBodyRefusal) {
           // The pipeline refused the BODY itself (e.g. duplicate JSON keys): a
           // client error, answered directly. Nothing is forwarded.
@@ -378,10 +389,24 @@ export class GolemProxy {
         }
         this.config.onPipelineError?.(err, original);
         try {
-          const redactOnly = this.config.pipeline.redactOnly;
-          if (redactOnly === undefined) throw new Error("pipeline has no redaction-only fallback");
-          forward = redactOnly.call(this.config.pipeline, original);
+          const { redactOnly, redactOnlyAsync } = this.config.pipeline;
+          if (redactOnly === undefined && redactOnlyAsync === undefined) {
+            throw new Error("pipeline has no redaction-only fallback");
+          }
+          // DUSTSEC.23: prefer the sliced walk, so the fail-safe re-walk does not
+          // freeze the loop. A pipeline with only the sync one still gets it.
+          forward =
+            redactOnlyAsync !== undefined
+              ? await redactOnlyAsync.call(this.config.pipeline, original, {
+                  signal: abort.signal,
+                })
+              : (redactOnly as NonNullable<typeof redactOnly>).call(this.config.pipeline, original);
         } catch (redactErr) {
+          if (redactErr instanceof RedactionAborted) {
+            res.destroy();
+            report("client_gone", { detail: "the client hung up during the redaction fallback" });
+            return;
+          }
           if (redactErr instanceof RequestBodyRefusal) {
             failProxy(redactErr.status, redactErr.message);
             return;

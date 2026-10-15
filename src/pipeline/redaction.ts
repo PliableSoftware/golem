@@ -28,6 +28,7 @@
 
 import { estimateTokens } from "../compression/index.js";
 import type { TokenDelta } from "../interfaces/compression.js";
+import { RedactionAborted } from "../proxy/request-body.js";
 import { isRecord } from "../shared/json.js";
 import {
   activeRedactionRules,
@@ -383,6 +384,11 @@ export function redactReversibleTexts(texts: readonly string[]): ReversibleRedac
  * table across the whole request so the same secret gets the same placeholder
  * everywhere it appears. Object key order is preserved (spread keeps existing
  * keys in place) so re-serialization stays byte-stable.
+ *
+ * DUSTSEC.23: this recursive walk is the SYNC reference and is deliberately left
+ * as it always was (stack depth, speed). The proxy request path uses
+ * {@link redactRequestBodyAsync}, an iterative, time-sliced walk that a
+ * differential test holds to the same bytes.
  */
 function redactValue(value: unknown, table: PlaceholderTable, stats: { count: number }): unknown {
   if (typeof value === "string") {
@@ -419,6 +425,13 @@ export interface RedactBodyResult {
   readonly count: number;
   /** Token estimate before/after redaction (for telemetry attribution). */
   readonly delta: TokenDelta;
+  /**
+   * `JSON.stringify(value)`, set only by {@link redactRequestBodyAsync} and only when
+   * something was redacted: the walk already serialised the result for the token
+   * estimate, and a caller that needs the bytes reuses it instead of paying a second
+   * identical `JSON.stringify` (DUSTSEC.23).
+   */
+  readonly json?: string;
 }
 
 /**
@@ -427,6 +440,9 @@ export interface RedactBodyResult {
  * definitions, tool_result content). Object keys are not redacted (S9 is
  * open). A secret anywhere must be stripped before it leaves the machine
  * or is handed to compression's CCR store.
+ *
+ * Synchronous: it holds the event loop for the whole walk. Anything on the
+ * proxy's request path uses {@link redactRequestBodyAsync} (DUSTSEC.23).
  */
 export function redactRequestBody(body: unknown): RedactBodyResult {
   const table = new PlaceholderTable();
@@ -436,4 +452,228 @@ export function redactRequestBody(body: unknown): RedactBodyResult {
   const tokensAfter =
     stats.count === 0 ? tokensBefore : estimateTokens(JSON.stringify(value) ?? "");
   return { value, count: stats.count, delta: { tokensBefore, tokensAfter } };
+}
+
+/** The slice budget of the async walk: wall time between two yields to the event loop. */
+export const REDACTION_SLICE_MS = 20;
+
+export { RedactionAborted };
+
+export interface RedactBodyAsyncOptions {
+  /** Aborts the walk between slices; the walk then rejects with {@link RedactionAborted}. */
+  readonly signal?: AbortSignal;
+  /** Shared by the steps of one request so the yields account for all its work; default: a new one. */
+  readonly pacer?: RedactionPacer;
+  /** TEST ONLY: slice budget in ms (default {@link REDACTION_SLICE_MS}). */
+  readonly sliceMs?: number;
+}
+
+/** Hand the event loop one turn: I/O (poll) callbacks run before a setImmediate callback. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+/** Work done since the last turn handed to the event loop beyond which the next step yields first. */
+const PAUSE_AFTER_MS = 5;
+
+/**
+ * Paces one request's redaction between its unsliceable steps (a parse, a duplicate-key
+ * scan, a stringify) and its sliced walk. `pause()` hands the event loop a turn only if
+ * at least {@link PAUSE_AFTER_MS} of work ran since the last one, so a small body never
+ * yields at all (no timer machinery in the common case) and a large one yields between
+ * its big steps instead of running them back to back. Both kinds of pause stop with
+ * {@link RedactionAborted} once the request was cancelled.
+ */
+export class RedactionPacer {
+  #last = performance.now();
+  readonly #signal: AbortSignal | undefined;
+
+  constructor(signal?: AbortSignal) {
+    this.#signal = signal;
+  }
+
+  throwIfAborted(): void {
+    if (this.#signal?.aborted === true) throw new RedactionAborted();
+  }
+
+  /** Yield only if enough work ran since the last turn given away. */
+  async pause(): Promise<void> {
+    this.throwIfAborted();
+    if (performance.now() - this.#last < PAUSE_AFTER_MS) return;
+    await this.yieldNow();
+  }
+
+  /** Yield unconditionally (a spent slice). */
+  async yieldNow(): Promise<void> {
+    await yieldToEventLoop();
+    this.#last = performance.now();
+    this.throwIfAborted();
+  }
+}
+
+type WalkFrame =
+  | {
+      readonly arr: true;
+      readonly src: readonly unknown[];
+      out: unknown[];
+      i: number;
+      changed: boolean;
+    }
+  | {
+      readonly arr: false;
+      readonly src: Record<string, unknown>;
+      readonly entries: [string, unknown][];
+      out: Record<string, unknown>;
+      i: number;
+      changed: boolean;
+    };
+
+/** Cost units between two clock reads: 1 per value, plus 1 per 32 characters of a string. */
+const CLOCK_EVERY = 256;
+
+/**
+ * The same walk as {@link redactValue}, iterative: an explicit stack instead of
+ * recursion, so it can never overflow the call stack (its depth is bounded only by
+ * the `JSON.stringify` the caller already ran over the body) and costs no
+ * allocation per primitive. `run` works until the slice is spent and returns
+ * whether the walk finished. Output, identity and mutation behaviour (none) are
+ * those of the recursive walk; a differential test holds it to that.
+ */
+class SlicedWalk {
+  count = 0;
+  value: unknown;
+  readonly #table: PlaceholderTable;
+  // A one-slot frame holds the root, so the root is committed like any child.
+  readonly #stack: WalkFrame[];
+
+  constructor(root: unknown, table: PlaceholderTable) {
+    this.#table = table;
+    this.#stack = [{ arr: true, src: [root], out: new Array<unknown>(1), i: 0, changed: false }];
+  }
+
+  run(sliceMs: number): boolean {
+    const deadline = performance.now() + sliceMs;
+    const stack = this.#stack;
+    let cost = 0;
+    for (;;) {
+      // Every iteration counts: pushing and finishing a container cost a unit too, so
+      // a body made mostly of containers cannot run as one slice. All state lives in
+      // the frames, so stopping at the top of the loop is always safe.
+      if (cost >= CLOCK_EVERY) {
+        cost = 0;
+        if (performance.now() >= deadline) return false;
+      }
+      const top = stack[stack.length - 1] as WalkFrame;
+      let child: unknown;
+      if (top.arr) {
+        // Holes stay holes, as with `Array.prototype.map`.
+        while (top.i < top.src.length && !(top.i in top.src)) top.i += 1;
+        if (top.i >= top.src.length) {
+          if (stack.length === 1) {
+            this.value = top.out[0];
+            return true;
+          }
+          this.#finish(stack);
+          cost += 1;
+          continue;
+        }
+        child = top.src[top.i];
+      } else {
+        if (top.i >= top.entries.length) {
+          this.#finish(stack);
+          cost += 1;
+          continue;
+        }
+        child = (top.entries[top.i] as [string, unknown])[1];
+      }
+      let next: unknown = child;
+      if (typeof child === "string") {
+        const result = redactText(child, this.#table);
+        this.count += result.count;
+        if (result.count !== 0) next = result.text;
+        cost += child.length >> 5;
+      } else if (typeof child === "object" && child !== null) {
+        if (Array.isArray(child)) {
+          stack.push({
+            arr: true,
+            src: child,
+            out: new Array<unknown>(child.length),
+            i: 0,
+            changed: false,
+          });
+          cost += 1;
+          continue;
+        }
+        if (isRecord(child)) {
+          stack.push({
+            arr: false,
+            src: child,
+            entries: Object.entries(child),
+            out: {},
+            i: 0,
+            changed: false,
+          });
+          cost += 1;
+          continue;
+        }
+      }
+      commit(top, next, child);
+      cost += 1;
+    }
+  }
+
+  /** Pop a finished container and commit its result (or itself, if unchanged) into its parent. */
+  #finish(stack: WalkFrame[]): void {
+    const done = stack.pop() as WalkFrame;
+    const parent = stack[stack.length - 1] as WalkFrame;
+    commit(parent, done.changed ? done.out : done.src, done.src);
+  }
+}
+
+function commit(frame: WalkFrame, next: unknown, original: unknown): void {
+  if (next !== original) frame.changed = true;
+  if (frame.arr) frame.out[frame.i] = next;
+  else frame.out[(frame.entries[frame.i] as [string, unknown])[0]] = next;
+  frame.i += 1;
+}
+
+/**
+ * DUSTSEC.23 — {@link redactRequestBody} that gives the event loop back every
+ * {@link REDACTION_SLICE_MS} ms, so a 32 MiB body of many small strings no longer
+ * freezes every other session's streams for tens of seconds. Same rules, same
+ * order, same placeholder table: the result is byte-identical to the sync one (a
+ * differential test holds it to that). Fail closed: a throw inside any slice
+ * rejects the promise, and an abort rejects with {@link RedactionAborted}; neither
+ * ever returns unredacted content.
+ *
+ * The unsliceable steps (a `JSON.stringify` of the body for the token estimate
+ * before the walk and of the result after it, and one single very long string) are
+ * separated by yields so they never run back to back.
+ */
+export async function redactRequestBodyAsync(
+  body: unknown,
+  options: RedactBodyAsyncOptions = {},
+): Promise<RedactBodyResult> {
+  const { signal } = options;
+  const sliceMs = options.sliceMs ?? REDACTION_SLICE_MS;
+  const pacer = options.pacer ?? new RedactionPacer(signal);
+  pacer.throwIfAborted();
+  await pacer.pause();
+  const tokensBefore = estimateTokens(JSON.stringify(body) ?? "");
+  await pacer.pause();
+  const walk = new SlicedWalk(body, new PlaceholderTable());
+  while (!walk.run(sliceMs)) await pacer.yieldNow();
+  if (walk.count === 0) {
+    return { value: walk.value, count: 0, delta: { tokensBefore, tokensAfter: tokensBefore } };
+  }
+  await pacer.pause();
+  const json = JSON.stringify(walk.value);
+  return {
+    value: walk.value,
+    count: walk.count,
+    delta: { tokensBefore, tokensAfter: estimateTokens(json ?? "") },
+    ...(json !== undefined ? { json } : {}),
+  };
 }

@@ -26,7 +26,14 @@
 
 import { RequestBodyRefusal } from "../proxy/request-body.js";
 import type { ProxyRequest } from "../proxy/types.js";
-import { redactRequestBody, redactStandaloneText } from "./redaction.js";
+import {
+  type RedactBodyAsyncOptions,
+  type RedactBodyResult,
+  RedactionPacer,
+  redactRequestBody,
+  redactRequestBodyAsync,
+  redactStandaloneText,
+} from "./redaction.js";
 
 const BINARY_LABEL =
   /^(?:multipart\/|image\/|audio\/|video\/|font\/|application\/(?:octet-stream|pdf|zip|gzip|x-gzip|x-tar|x-7z-compressed|x-bzip2|vnd\.rar|wasm|protobuf|x-protobuf|grpc))/;
@@ -296,30 +303,69 @@ function redactFormPairs(text: string): string {
  * Redact one request body of any shape. Returns the same request object (original
  * bytes, byte-order mark included) when nothing was found. Throws only to REFUSE a
  * body that cannot be scanned.
+ *
+ * Synchronous (the whole walk holds the event loop): for callers that cannot await.
+ * The proxy request path uses {@link redactAnyBodyAsync}.
  */
 export function redactAnyBody(input: ProxyRequest): ProxyRequest {
   const body = input.body;
   if (body === null || body.length === 0) return input;
+  const parsed = tryParseJson(body);
+  if (parsed.isJson) {
+    refuseDuplicateKeys(body);
+    return withRedactedJson(input, redactRequestBody(parsed.value));
+  }
+  return redactNonJsonBody(input, body);
+}
 
+/**
+ * DUSTSEC.23 — {@link redactAnyBody} whose JSON walk yields to the event loop between
+ * time slices (see `redactRequestBodyAsync`). The same classification, refusals and
+ * output bytes; only the pacing differs. A throw or an abort rejects: nothing raw
+ * is ever returned.
+ */
+export async function redactAnyBodyAsync(
+  input: ProxyRequest,
+  options: RedactBodyAsyncOptions = {},
+): Promise<ProxyRequest> {
+  const body = input.body;
+  if (body === null || body.length === 0) return input;
+  const pacer = options.pacer ?? new RedactionPacer(options.signal);
+  const walkOptions = { ...options, pacer };
+  await pacer.pause();
+  const parsed = tryParseJson(body);
+  if (parsed.isJson) {
+    // Parse, duplicate-key scan, walk and serialise are each unsliceable or sliced
+    // on their own; a yield between them keeps them from running back to back.
+    await pacer.pause();
+    refuseDuplicateKeys(body);
+    const redacted = await redactRequestBodyAsync(parsed.value, walkOptions);
+    await pacer.pause();
+    return withRedactedJson(input, redacted);
+  }
+  return redactNonJsonBody(input, body);
+}
+
+// JSON first, whatever the label says (a client may send JSON as text/plain, or
+// under a binary label): only a body that does NOT parse as JSON reaches the
+// opaque rules in `redactNonJsonBody`.
+function tryParseJson(body: Buffer): { isJson: true; value: unknown } | { isJson: false } {
+  try {
+    return { isJson: true, value: parseJsonBody(body) };
+  } catch {
+    return { isJson: false };
+  }
+}
+
+function withRedactedJson(input: ProxyRequest, redacted: RedactBodyResult): ProxyRequest {
+  if (redacted.count === 0) return input;
+  // The async walk hands over the serialisation it already made for the token estimate.
+  return { ...input, body: Buffer.from(redacted.json ?? JSON.stringify(redacted.value), "utf8") };
+}
+
+function redactNonJsonBody(input: ProxyRequest, body: Buffer): ProxyRequest {
   const contentType = headerOf(input, "content-type");
   const mime = contentType.split(";")[0]?.trim() ?? "";
-
-  // JSON first, whatever the label says (a client may send JSON as text/plain, or
-  // under a binary label): only a body that does NOT parse as JSON reaches the
-  // opaque rules below.
-  let parsed: unknown;
-  let isJson = true;
-  try {
-    parsed = parseJsonBody(body);
-  } catch {
-    isJson = false;
-  }
-  if (isJson) {
-    refuseDuplicateKeys(body);
-    const redacted = redactRequestBody(parsed);
-    if (redacted.count === 0) return input;
-    return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
-  }
 
   // (a) a known-binary label, or (b) a magic signature under no/unknown/text label.
   if (BINARY_LABEL.test(mime)) return input;
