@@ -335,77 +335,96 @@ export default function register(program: Command): void {
             process.stderr.write(`golem: ${message}
 `),
         });
+        // The client going away (stdin EOF, transport close) or a termination signal
+        // must END the process: it cannot wait for `exit`, which does not fire while
+        // anything still holds the event loop. Idempotent; the hard exit is a
+        // backstop so a wedged close cannot keep an orphan alive.
+        let shuttingDown = false;
+        const shutdown = (code: number): void => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          closeKnowledgeWatchers(knowledge);
+          const backstop = setTimeout(() => process.exit(code), 3000);
+          backstop.unref();
+          void (indexWatch?.close() ?? Promise.resolve()).finally(() => process.exit(code));
+        };
         process.once("exit", () => {
           void indexWatch?.close();
           closeKnowledgeWatchers(knowledge);
         });
-        await serveStdio({
-          compression: mcpCompressionService(opts.dir, telemetry),
-          ...(plugins.mcpTools.length > 0 ? { pluginTools: plugins.mcpTools } : {}),
-          telemetry,
-          // R11.1: read-only. The `level` tool is gone with the slider
-          // (ADR-0004), so nothing on the MCP surface can change how much of the
-          // pipeline runs — `stats` only reports it.
-          compressionLevel: () => coerceCompressionLevel(settings.compression.level),
-          compressionGate: (level) => {
-            const up = resolveUpstreamDisplay(settings.proxy);
-            const assumeCaching = upstreamAssumesCaching(up.provider);
-            return resolveEffectiveCompression({
-              level,
-              upstreamBaseUrl: up.baseUrl,
-              ...(assumeCaching !== undefined && { assumeCachingUpstream: assumeCaching }),
-              headroomSidecar: settings.compression.headroom_sidecar,
-              forceSemanticOnCaching: settings.compression.force_semantic_on_caching,
-            });
+        for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+          process.once(sig, () => shutdown(0));
+        }
+        await serveStdio(
+          {
+            compression: mcpCompressionService(opts.dir, telemetry),
+            ...(plugins.mcpTools.length > 0 ? { pluginTools: plugins.mcpTools } : {}),
+            telemetry,
+            // R11.1: read-only. The `level` tool is gone with the slider
+            // (ADR-0004), so nothing on the MCP surface can change how much of the
+            // pipeline runs — `stats` only reports it.
+            compressionLevel: () => coerceCompressionLevel(settings.compression.level),
+            compressionGate: (level) => {
+              const up = resolveUpstreamDisplay(settings.proxy);
+              const assumeCaching = upstreamAssumesCaching(up.provider);
+              return resolveEffectiveCompression({
+                level,
+                upstreamBaseUrl: up.baseUrl,
+                ...(assumeCaching !== undefined && { assumeCachingUpstream: assumeCaching }),
+                headroomSidecar: settings.compression.headroom_sidecar,
+                forceSemanticOnCaching: settings.compression.force_semantic_on_caching,
+              });
+            },
+            projectRootDir: opts.dir,
+            localEndpoint: settings.inference.ollama_base_url,
+            ...knowledgeServerDeps(opts.dir, settings, knowledge),
+            ...(inference !== undefined ? { inference } : {}),
+            ...(inference !== undefined ? { coder: inference } : {}),
+            // R9.3: `coder` may draft on any declared target.
+            //
+            // R10.8: wired whenever there is a local service to fall back to at
+            // all, not only when several targets exist. The old
+            // `listTargets(...).length > 1` guard was sound while the dispatcher's
+            // only job was to offer a CHOICE — with one target there was nothing
+            // to choose. Now the dispatcher also decides *where an unrouted draft
+            // goes*, and skipping it in the single-target case would restore
+            // exactly the implicit-local behaviour this task removes, for the one
+            // configuration (a fresh project) where it is most surprising. The
+            // §110 schema cost is still avoided: `coder` only grows the `target`
+            // parameter when there is more than one selectable target, and that
+            // decision now lives in `registerCoderTool` where the schema is built.
+            ...(inference !== undefined
+              ? { targetDispatcher: createCoderDispatcher(settings, inference, opts.dir) }
+              : {}),
+            ...(settings.inference.local_editor_enabled ? { localEditor: true } : {}),
+            // R13.12 — the coder framing, and the harness-subagent model when
+            // `default_coder` names a model rather than a registry target. A
+            // malformed `default_coder` must not stop the MCP server from starting:
+            // every other tool still works, and `golem init`/`golem status` are
+            // where a config error belongs. Warn on stderr and carry on.
+            ...(settings.inference.coder_prompt === undefined
+              ? {}
+              : { coderPrompt: settings.inference.coder_prompt }),
+            ...(harnessCoderModel === undefined ? {} : { harnessCoderModel }),
+            ...(settings.knowledge.repo_map_enabled ? { codeRoot: opts.dir } : {}),
+            ...(lspBridge !== undefined ? { lsp: lspBridge } : {}),
+            ...(inference !== undefined && settings.knowledge.rerank_enabled
+              ? { rerank: inference }
+              : {}),
+            ...(wiki !== undefined
+              ? {
+                  wiki,
+                  wikiSearch: settings.knowledge.user_wiki_enabled
+                    ? new FederatedWikiReader(
+                        wiki,
+                        new FileWikiStore({ wikiDir: defaultUserWikiDir() }),
+                      )
+                    : wiki,
+                }
+              : {}),
           },
-          projectRootDir: opts.dir,
-          localEndpoint: settings.inference.ollama_base_url,
-          ...knowledgeServerDeps(opts.dir, settings, knowledge),
-          ...(inference !== undefined ? { inference } : {}),
-          ...(inference !== undefined ? { coder: inference } : {}),
-          // R9.3: `coder` may draft on any declared target.
-          //
-          // R10.8: wired whenever there is a local service to fall back to at
-          // all, not only when several targets exist. The old
-          // `listTargets(...).length > 1` guard was sound while the dispatcher's
-          // only job was to offer a CHOICE — with one target there was nothing
-          // to choose. Now the dispatcher also decides *where an unrouted draft
-          // goes*, and skipping it in the single-target case would restore
-          // exactly the implicit-local behaviour this task removes, for the one
-          // configuration (a fresh project) where it is most surprising. The
-          // §110 schema cost is still avoided: `coder` only grows the `target`
-          // parameter when there is more than one selectable target, and that
-          // decision now lives in `registerCoderTool` where the schema is built.
-          ...(inference !== undefined
-            ? { targetDispatcher: createCoderDispatcher(settings, inference, opts.dir) }
-            : {}),
-          ...(settings.inference.local_editor_enabled ? { localEditor: true } : {}),
-          // R13.12 — the coder framing, and the harness-subagent model when
-          // `default_coder` names a model rather than a registry target. A
-          // malformed `default_coder` must not stop the MCP server from starting:
-          // every other tool still works, and `golem init`/`golem status` are
-          // where a config error belongs. Warn on stderr and carry on.
-          ...(settings.inference.coder_prompt === undefined
-            ? {}
-            : { coderPrompt: settings.inference.coder_prompt }),
-          ...(harnessCoderModel === undefined ? {} : { harnessCoderModel }),
-          ...(settings.knowledge.repo_map_enabled ? { codeRoot: opts.dir } : {}),
-          ...(lspBridge !== undefined ? { lsp: lspBridge } : {}),
-          ...(inference !== undefined && settings.knowledge.rerank_enabled
-            ? { rerank: inference }
-            : {}),
-          ...(wiki !== undefined
-            ? {
-                wiki,
-                wikiSearch: settings.knowledge.user_wiki_enabled
-                  ? new FederatedWikiReader(
-                      wiki,
-                      new FileWikiStore({ wikiDir: defaultUserWikiDir() }),
-                    )
-                  : wiki,
-              }
-            : {}),
-        });
+          () => shutdown(0),
+        );
       } catch (err) {
         _fail(err);
       }

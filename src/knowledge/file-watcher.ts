@@ -175,6 +175,7 @@ export async function watchPath(
     pending.add(absPath);
     if (debounceTimer !== null) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => void flush().catch(swallow), debounceMs);
+    debounceTimer.unref?.(); // a pending flush must never keep the host process alive
   };
 
   // Baseline snapshot: only changes AFTER watch start are reported.
@@ -219,9 +220,13 @@ export async function watchPath(
     // before the next timer is armed only because a stopped watcher must not
     // appear to still be cycling.
     cycles += 1;
-    if (!stopped) pollTimer = setTimeout(() => void loop(), pollMs);
+    if (!stopped) {
+      pollTimer = setTimeout(() => void loop(), pollMs);
+      pollTimer.unref?.(); // the poll loop is background upkeep, not a reason to stay alive
+    }
   };
   pollTimer = setTimeout(() => void loop(), pollMs);
+  pollTimer.unref?.();
 
   return {
     get cycles(): number {
