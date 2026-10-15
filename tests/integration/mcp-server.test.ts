@@ -736,6 +736,37 @@ describe("coder tool", () => {
     expect(sent).toContain("function foo() { return 1; }");
   });
 
+  it("DUST2.22: appends the fenced team prompt AFTER the coder framing in the dispatch system field", async () => {
+    const fake = new FakeInferenceService(async () => {
+      throw new Error("must dispatch through the target dispatcher");
+    });
+    const systems: Array<string | undefined> = [];
+    const client = await connectInMemory({
+      ...depsWithInference(fake),
+      coderPrompt: "Return only a diff.",
+      teamPrompt: "Team: cite the ticket id.",
+      targetDispatcher: {
+        selectableTargets: () => [],
+        dispatch: async (req) => {
+          systems.push(req.system);
+          return {
+            text: "d",
+            model: "m1",
+            targetId: "a",
+            trust: "third-party",
+            route: "explicit",
+            redactedCount: 0,
+          };
+        },
+      },
+    });
+    await client.callTool({ name: "coder", arguments: { task: "write a function" } });
+    expect(systems).toHaveLength(1);
+    expect(systems[0]?.startsWith("Return only a diff.\n\n")).toBe(true);
+    expect(systems[0]).toContain("--- BEGIN TEAM NOTE (advisory");
+    expect(systems[0]?.endsWith("\nTeam: cite the ticket id.\n--- END TEAM NOTE ---")).toBe(true);
+  });
+
   it("surfaces a friendly isError result when the inference endpoint is unreachable", async () => {
     const fake = new FakeInferenceService(async () => {
       throw new InferenceEndpointError("connect ECONNREFUSED 127.0.0.1:11434");

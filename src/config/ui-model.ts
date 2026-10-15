@@ -267,6 +267,24 @@ export const SETTING_META = {
     advanced: true,
     restart: "mcp",
   },
+  "inference.team_prompt": {
+    label: "Team prompt",
+    summary: "Plain-text team guidance fenced onto the coder dispatch system prompt only",
+    detail:
+      "DUST2.22. The one prompt-shaped key a team may set. Appended AFTER the coder framing, " +
+      "fenced between BEGIN and END TEAM NOTE markers as advisory text that cannot change tools, " +
+      "permissions or redaction. Delivered to the `coder` dispatch only: never to generated " +
+      "agent bodies or ACP turns, which run with your own authority. At most 2000 characters " +
+      "(code points) of visible text: no control, invisible, bidi or variation characters, no " +
+      "fence markers (in any spelling or lookalike), no line starting with # or < or a role " +
+      "header, no code fences or tags, no URL, network path or IP address; a team value that breaks that is refused, not truncated. " +
+      "Your project or local value, or a user value marked important (user!), replaces the " +
+      "team's (a plain user value does not: user ranks below team); set it to an empty string " +
+      "there to turn the team prompt off. A team cannot enforce it. An empty " +
+      "GOLEM_INFERENCE_TEAM_PROMPT is treated as unset.",
+    advanced: true,
+    restart: "mcp",
+  },
   "proxy.request_timeout_ms": {
     label: "Request timeout",
     summary: "End-to-end request budget in ms (generous: long SSE streams)",

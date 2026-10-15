@@ -272,6 +272,9 @@ async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
     return { stopReason: "end_turn" };
   }
 
+  // DUST2.22: the team note is deliberately NOT appended here. An ACP turn runs
+  // with the member's own authority and tools, unlike the bounded `coder` worker
+  // lane that accepts a fenced advisory note. See src/inference/team-prompt.ts.
   const promptText = await resolvePromptText(
     input.personaId,
     config,

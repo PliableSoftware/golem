@@ -267,6 +267,7 @@ function registerTools(server: McpServer, deps: import("./deps.js").GolemMcpServ
         // R13.12 — one prompt for both mechanisms, and the model the harness
         // subagent is meant to run on (when `default_coder` names a model).
         ...(deps.coderPrompt === undefined ? {} : { coderPrompt: deps.coderPrompt }),
+        ...(deps.teamPrompt === undefined ? {} : { teamPrompt: deps.teamPrompt }),
         ...(deps.harnessCoderModel === undefined
           ? {}
           : { harnessCoderModel: deps.harnessCoderModel }),

@@ -11,6 +11,7 @@ import {
   NoDrafterConfiguredError,
   type TargetDispatcher,
 } from "../inference/target-dispatcher.js";
+import { withTeamPrompt } from "../inference/team-prompt.js";
 import type { InferenceService, KnowledgeBase, WikiReader } from "../interfaces/index.js";
 import { type RefineOutcome, refineDraft } from "./coder-refine.js";
 import { backendUnavailableMessage, gatherGrounding } from "./search.js";
@@ -34,6 +35,8 @@ interface CoderGroundingDeps {
   readonly editEnabled?: boolean | undefined;
   /** R13.12 — `inference.coder_prompt`; undefined uses Golem's default. */
   readonly coderPrompt?: string | undefined;
+  /** DUST2.22 — `inference.team_prompt`, appended (labelled) to the coder framing. */
+  readonly teamPrompt?: string | undefined;
   /**
    * R13.12 — the model `inference.default_coder` names, when it names a MODEL.
    * Present means every task here belongs to the `golem-coder` subagent, which
@@ -128,9 +131,13 @@ export function registerCoderTool(
    */
   const taskCounts = new Map<string, number>();
   // R13.12 — resolved once here, not per call: it cannot change without the
-  // server restarting, and both the dispatch `system` field and the generated
-  // subagent body must read the same setting.
-  const coderPromptText = resolveCoderPrompt(grounding.coderPrompt);
+  // server restarting. The generated subagent body reads `coder_prompt` too (via
+  // `coder-prompt.ts`) but deliberately NOT the team prompt, which only this
+  // dispatch `system` field carries (DUST2.22, src/inference/team-prompt.ts).
+  const coderPromptText = withTeamPrompt(
+    resolveCoderPrompt(grounding.coderPrompt),
+    grounding.teamPrompt,
+  );
   // R9.3: the conversation may pick a target, bounded to what config declares
   // AND marks agent-selectable. An enum (rather than a free string) is what
   // makes "can never reach anything undeclared" visible in the schema itself —
