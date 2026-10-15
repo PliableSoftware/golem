@@ -26,18 +26,23 @@
  *     rewrites mtimes wholesale, so a huge changed-set is routine, not rare.
  */
 
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
+import { replaceViaTemp } from "../config/file-io.js";
 import { embedDimFor, embedModelFor } from "../inference/index.js";
 import type { HardwareTier } from "../interfaces/inference.js";
 import type { KnowledgeBase } from "../interfaces/knowledge.js";
 import {
   collectionDir,
   type FileState,
+  type IndexWatchDaemon,
   knowledgeDir,
   projectBaseDir,
   readCollectionDim,
   scanFiles,
+  sourcePathFor,
+  startIndexWatchDaemon,
   supportsIncremental,
 } from "../knowledge/index.js";
 import type { EmbedMode } from "./build-knowledge.js";
@@ -64,7 +69,15 @@ interface PersistedEmbedderRecord {
   readonly dim: number | null;
 }
 
+/**
+ * The on-disk manifest format version (DUST2.14). A manifest with no `version` is
+ * the pre-versioned shape and reads as version 1 (the fields never changed); one
+ * with a HIGHER version was written by a newer Golem and is not trusted.
+ */
+export const MANIFEST_VERSION = 1;
+
 interface IndexManifest {
+  readonly version?: number;
   readonly signature: string;
   readonly ts?: string;
   readonly paths?: readonly string[];
@@ -117,12 +130,54 @@ export function resolveIndexPaths(projectDir: string, watchPaths: readonly strin
   return watchPaths.map((p) => (path.isAbsolute(p) ? p : path.join(projectDir, p)));
 }
 
-async function readManifest(dir: string): Promise<IndexManifest | null> {
+const manifestSchema = z
+  .object({
+    version: z.number().int().min(1).optional(),
+    signature: z.string(),
+    ts: z.string().optional(),
+    paths: z.array(z.string()).optional(),
+    files: z.record(z.string(), z.object({ m: z.number(), s: z.number() })).optional(),
+    embedder: z.unknown().optional(),
+  })
+  .passthrough();
+
+/**
+ * Read a collection's manifest, telling "no manifest" (a fresh index) apart from
+ * "a manifest that cannot be trusted" (`corrupt` names why). An untrusted manifest
+ * is never half-used: it reads as absent, so the caller rebuilds from the files.
+ */
+async function inspectManifest(
+  dir: string,
+): Promise<{ manifest: IndexManifest | null; corrupt?: string }> {
+  let raw: string;
   try {
-    return JSON.parse(await readFile(path.join(dir, "manifest.json"), "utf8")) as IndexManifest;
-  } catch {
-    return null;
+    raw = await readFile(path.join(dir, "manifest.json"), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { manifest: null };
+    return { manifest: null, corrupt: `unreadable (${(err as Error).message})` };
   }
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return { manifest: null, corrupt: "not valid JSON (truncated by a crash?)" };
+  }
+  const parsed = manifestSchema.safeParse(json);
+  if (!parsed.success) return { manifest: null, corrupt: "unexpected shape" };
+  if ((parsed.data.version ?? 1) > MANIFEST_VERSION) {
+    return { manifest: null, corrupt: `written by a newer format (v${parsed.data.version})` };
+  }
+  return { manifest: parsed.data as IndexManifest };
+}
+
+async function readManifest(dir: string): Promise<IndexManifest | null> {
+  return (await inspectManifest(dir)).manifest;
+}
+
+/** Atomic manifest write: a crash mid-write leaves the previous manifest, never a truncated one. */
+async function writeManifestFile(dir: string, manifest: IndexManifest): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await replaceViaTemp(path.join(dir, "manifest.json"), `${JSON.stringify(manifest)}\n`);
 }
 
 /**
@@ -515,13 +570,61 @@ export async function writeManifest(
             (parsed.model === null ? null : embedDimFor(parsed.model)),
         };
   const manifest: IndexManifest = {
+    version: MANIFEST_VERSION,
     signature,
     ts: now,
     paths,
     files,
     ...(embedder !== undefined ? { embedder } : {}),
   };
-  await writeFile(path.join(dir, "manifest.json"), `${JSON.stringify(manifest)}\n`, "utf8");
+  await writeManifestFile(dir, manifest);
+}
+
+/** What a watch daemon reports it applied (structurally {@link AppliedChange}). */
+export interface AppliedIndexChange {
+  readonly baseDir: string;
+  readonly changed: readonly {
+    readonly abs: string;
+    readonly mtimeMs: number;
+    readonly size: number;
+  }[];
+  readonly removedSourcePaths: readonly string[];
+}
+
+/**
+ * A recorder that folds a watch daemon's applied changes into the manifest, so a
+ * file the watcher already indexed is not re-embedded at the next session start.
+ *
+ * Only files under `syncRoots` are recorded: the manifest's file map is exactly
+ * what a sync scan of those roots produces, and a key from anywhere else (an
+ * extra watched wiki dir) would read as "deleted" at the next sync and erase it.
+ * It never creates a manifest (the signature belongs to a full/incremental run)
+ * and never trusts a corrupt one. Call it serially; the daemon does.
+ */
+export function createManifestRecorder(
+  projectDir: string,
+  projectId: string,
+  syncRoots: readonly string[],
+): (change: AppliedIndexChange) => Promise<void> {
+  const dir = collectionDir(knowledgeDir(projectDir), projectId);
+  const roots = syncRoots.map((r) => path.resolve(r));
+  const inRoots = (abs: string): boolean =>
+    roots.some((r) => {
+      const rel = path.relative(r, abs);
+      return (
+        rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
+      );
+    });
+  return async (change) => {
+    const { manifest } = await inspectManifest(dir);
+    if (manifest === null) return;
+    const files: Record<string, PersistedFileState> = { ...(manifest.files ?? {}) };
+    for (const f of change.changed) {
+      if (inRoots(f.abs)) files[sourcePathFor(change.baseDir, f.abs)] = { m: f.mtimeMs, s: f.size };
+    }
+    for (const sp of change.removedSourcePaths) delete files[sp];
+    await writeManifestFile(dir, { ...manifest, version: MANIFEST_VERSION, files });
+  };
 }
 
 export interface EnsureIndexedOptions {
@@ -613,11 +716,20 @@ export async function ensureProjectIndexed(
     opts.embedModel === undefined
       ? embedderSignature(opts.embedMode, opts.tier)
       : embedderSignatureForModel(opts.embedMode, opts.embedModel);
-  const manifest = await readManifest(dir);
+  const { manifest, corrupt } = await inspectManifest(dir);
   const roots = resolveIndexPaths(opts.projectDir, opts.watchPaths);
   const log = opts.log ?? (() => {});
 
+  // An untrusted manifest is discarded, loudly, and the collection with it: its
+  // file map is the only record of which chunks belong to which file state, so
+  // keeping the vectors would leave deleted/edited files' chunks behind for good.
+  if (corrupt !== undefined) {
+    log(`index manifest discarded (${corrupt}) — rebuilding the index from the files`);
+    await rm(dir, { recursive: true, force: true });
+  }
+
   // First run or embedder change → full (re)build.
+  let fresh = false;
   if (manifest?.signature !== signature) {
     if (manifest !== null) {
       // R10.6: name what changed and what it costs. This is the one branch that
@@ -630,14 +742,28 @@ export async function ensureProjectIndexed(
     } else {
       log(`indexing project for search (${signature})`);
     }
-    const { chunks, files } = await fullIndex(opts, roots, signature);
-    log(`indexed ${chunks} chunks from ${files} file(s)`);
-    return { action: manifest !== null ? "reindexed" : "indexed", chunks, files };
+    // DUST2.14: when the checkpointed path below can run, the build IS that path
+    // starting from an empty manifest — so a build killed halfway keeps every
+    // batch it finished instead of starting over. Otherwise the one-shot build.
+    const singleRoot = roots.length === 1 ? roots[0] : undefined;
+    const canResume =
+      singleRoot !== undefined &&
+      supportsIncremental(opts.knowledge) &&
+      (await stat(singleRoot).catch(() => null))?.isDirectory() === true;
+    if (!canResume) {
+      const { chunks, files } = await fullIndex(opts, roots, signature);
+      log(`indexed ${chunks} chunks from ${files} file(s)`);
+      return { action: manifest !== null ? "reindexed" : "indexed", chunks, files };
+    }
+    await writeManifest(opts.projectDir, opts.projectId, signature, roots, opts.now, {});
+    fresh = true;
   }
+  const built = fresh ? await readManifest(dir) : manifest;
+  if (built === null) throw new Error("index manifest vanished during the build");
 
   // Signature matches → incremental sync of changed/new/deleted files.
   const current = await scanAll(roots, opts.projectId);
-  const prev = manifest.files ?? {};
+  const prev = built.files ?? {};
   const changed: string[] = [];
   for (const [sp, f] of current) {
     const p = prev[sp];
@@ -645,13 +771,14 @@ export async function ensureProjectIndexed(
   }
   const deleted = Object.keys(prev).filter((sp) => !current.has(sp));
   if (changed.length === 0 && deleted.length === 0) {
+    if (fresh) return { action: manifest !== null ? "reindexed" : "indexed", chunks: 0, files: 0 };
     return { action: "skipped", chunks: 0, files: 0 };
   }
 
   // R11.2: the cap is checked BEFORE the incremental/rebuild fork — the fallback
   // path is a full rebuild, which is the most expensive outcome of all, and an
   // automatic caller must never reach it by surprise.
-  const cap = opts.maxAutoFiles ?? 0;
+  const cap = fresh ? 0 : (opts.maxAutoFiles ?? 0); // a first build is never capped (see maxAutoFiles)
   if (cap > 0 && changed.length + deleted.length > cap) {
     log(
       `${changed.length} changed, ${deleted.length} removed — more than the auto-index cap ` +
@@ -721,6 +848,14 @@ export async function ensureProjectIndexed(
     opts.now,
     toPersisted(current),
   );
+  if (fresh) {
+    log(`indexed ${chunks} chunks from ${current.size} file(s)`);
+    return {
+      action: manifest !== null ? "reindexed" : "indexed",
+      chunks,
+      files: current.size,
+    };
+  }
   log(`synced: ${changed.length} changed, ${deleted.length} removed`);
   return {
     action: "synced",
@@ -729,4 +864,58 @@ export async function ensureProjectIndexed(
     updated: changed.length,
     removed,
   };
+}
+
+export interface StartKnowledgeWatchOptions {
+  readonly projectDir: string;
+  readonly projectId: string;
+  readonly knowledge: KnowledgeBase;
+  readonly watchPaths: readonly string[];
+  /** The resolved project wiki dir: watched even when `watchPaths` does not cover it. */
+  readonly wikiDir: string;
+  readonly log?: (msg: string) => void;
+  /** Defaults to `process.env`; `GOLEM_KB_WATCH=0|false|off` turns the daemon off. */
+  readonly env?: NodeJS.ProcessEnv;
+  /** Test seams, passed through to the daemon. */
+  readonly pollMs?: number;
+  readonly debounceMs?: number;
+  readonly maxFiles?: number;
+}
+
+/**
+ * DUST2.14 — keep the vector index fresh while this process lives: watch the
+ * index roots (`watch_paths`, else the project) AND the project wiki dir, so a
+ * `wiki_upsert` (or an editor save) reaches the index with no manual ingest.
+ *
+ * Returns undefined when disabled, when the KB cannot re-index incrementally, or
+ * on any startup failure: a watcher is an optimisation, never a reason for the
+ * server not to come up. The caller closes the daemon at shutdown.
+ */
+export async function startKnowledgeWatch(
+  opts: StartKnowledgeWatchOptions,
+): Promise<IndexWatchDaemon | undefined> {
+  const log = opts.log ?? (() => {});
+  const flag = (opts.env ?? process.env).GOLEM_KB_WATCH?.trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "off") return undefined;
+  if (!supportsIncremental(opts.knowledge)) return undefined;
+  try {
+    const syncRoots = resolveIndexPaths(opts.projectDir, opts.watchPaths);
+    const daemon = await startIndexWatchDaemon({
+      knowledge: opts.knowledge,
+      projectId: opts.projectId,
+      roots: [...syncRoots, opts.wikiDir],
+      log,
+      onApplied: createManifestRecorder(opts.projectDir, opts.projectId, syncRoots),
+      ...(opts.pollMs !== undefined ? { pollMs: opts.pollMs } : {}),
+      ...(opts.debounceMs !== undefined ? { debounceMs: opts.debounceMs } : {}),
+      ...(opts.maxFiles !== undefined ? { maxFiles: opts.maxFiles } : {}),
+    });
+    const { watched, skipped } = daemon.stats;
+    if (watched.length > 0) log(`watching ${watched.length} root(s) for index freshness`);
+    for (const s of skipped) log(`not watching ${s.root}: ${s.reason}`);
+    return daemon;
+  } catch (err) {
+    log(`file watching unavailable (${err instanceof Error ? err.message : String(err)})`);
+    return undefined;
+  }
 }

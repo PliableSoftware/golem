@@ -25,6 +25,7 @@ import {
   type InferenceService,
   type KnowledgeBase,
 } from "../../interfaces/index.js";
+import type { IndexWatchDaemon } from "../../knowledge/index.js";
 import { initPlugins } from "../../plugins/index.js";
 import {
   perGatewayEnvVar,
@@ -36,7 +37,7 @@ import { readServedModel } from "../../proxy/served-model.js";
 import { openTelemetryStore } from "../../telemetry/index.js";
 import { VERSION } from "../../version.js";
 import { FederatedWikiReader, FileWikiStore } from "../../wiki/index.js";
-import { ensureProjectIndexed } from "../auto-index.js";
+import { ensureProjectIndexed, startKnowledgeWatch } from "../auto-index.js";
 import { buildKnowledgeStack } from "../build-knowledge.js";
 import { credentialEnvForProxy } from "../gateways.js";
 import { InitError } from "../init.js";
@@ -195,6 +196,7 @@ export default function register(program: Command): void {
           process.stderr.write(`golem: ${w}\n`),
         );
         let knowledge: KnowledgeBase | undefined;
+        let indexWatch: IndexWatchDaemon | undefined;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled
           ? new FileWikiStore({
@@ -214,6 +216,19 @@ export default function register(program: Command): void {
             // decision it makes on the user's behalf has to be stated, not
             // inferred from a rebuild that just happens to take a long time.
             if (stack.notice !== undefined) process.stderr.write(`golem kb: ${stack.notice}\n`);
+            // DUST2.14: keep the index fresh while this server lives (wiki + watch_paths).
+            void startKnowledgeWatch({
+              projectDir: opts.dir,
+              projectId: opts.dir,
+              knowledge: stack.knowledge,
+              watchPaths: settings.knowledge.watch_paths,
+              wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir),
+              log: (m) => process.stderr.write(`golem kb: ${m}\n`),
+            })
+              .then((d) => {
+                indexWatch = d;
+              })
+              .catch(() => {});
             void ensureProjectIndexed({
               projectDir: opts.dir,
               projectId: opts.dir,
@@ -320,7 +335,10 @@ export default function register(program: Command): void {
             process.stderr.write(`golem: ${message}
 `),
         });
-        process.once("exit", () => closeKnowledgeWatchers(knowledge));
+        process.once("exit", () => {
+          void indexWatch?.close();
+          closeKnowledgeWatchers(knowledge);
+        });
         await serveStdio({
           compression: mcpCompressionService(opts.dir, telemetry),
           ...(plugins.mcpTools.length > 0 ? { pluginTools: plugins.mcpTools } : {}),

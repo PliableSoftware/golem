@@ -43,6 +43,31 @@ export interface FileWatcherOptions {
   readonly debounceMs?: number;
   /** Poll interval in ms — how often the tree is re-scanned for changes. Default 1000. */
   readonly pollMs?: number;
+  /**
+   * Most chunkable files this watcher will track (unset = no cap). A baseline over the
+   * cap rejects with {@link WatchCapExceededError}; a tree that GROWS past it later
+   * pauses reporting (the scan result is dropped, `onError` fires once per excursion)
+   * until it shrinks back, so a runaway directory cannot turn a poll into unbounded work.
+   */
+  readonly maxFiles?: number;
+  /**
+   * Called for a failure the watcher swallowed (a throwing `onBatch`, a failed scan
+   * that is not a transient miss). It never throws into the host: this is
+   * observability, and a throw from it is itself swallowed.
+   */
+  readonly onError?: (err: unknown) => void;
+}
+
+/** The tree under a watched root holds more chunkable files than `maxFiles` allows. */
+export class WatchCapExceededError extends Error {
+  constructor(
+    readonly root: string,
+    readonly files: number,
+    readonly maxFiles: number,
+  ) {
+    super(`${files} files under ${root} exceed the watch cap of ${maxFiles}`);
+    this.name = "WatchCapExceededError";
+  }
 }
 
 export interface FileWatcher {
@@ -66,6 +91,8 @@ export interface FileWatcher {
    * Nothing about polling, debouncing or batching depends on this value.
    */
   readonly cycles: number;
+  /** Failures swallowed so far (see {@link FileWatcherOptions.onError}). */
+  readonly errors: number;
 }
 
 function isIgnoredSegment(name: string): boolean {
@@ -103,12 +130,23 @@ export async function watchPath(
 ): Promise<FileWatcher> {
   const debounceMs = options.debounceMs ?? 500;
   const pollMs = options.pollMs ?? 1000;
+  const maxFiles = options.maxFiles ?? Number.POSITIVE_INFINITY;
   const pending = new Set<string>();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  let errors = 0;
+  const swallow = (err: unknown): void => {
+    errors += 1;
+    try {
+      options.onError?.(err);
+    } catch {
+      // observability must never throw into the host
+    }
+  };
 
   const flush = async (): Promise<void> => {
     debounceTimer = null;
-    if (pending.size === 0) return;
+    if (stopped || pending.size === 0) return;
     const paths = [...pending];
     pending.clear();
     const changed: string[] = [];
@@ -122,18 +160,27 @@ export async function watchPath(
         removed.push(p);
       }
     }
-    if (changed.length > 0 || removed.length > 0) onBatch({ changed, removed });
+    if (stopped) return;
+    if (changed.length > 0 || removed.length > 0) {
+      try {
+        onBatch({ changed, removed });
+      } catch (err) {
+        swallow(err); // a sync throw from the consumer must not become an unhandled rejection
+      }
+    }
   };
 
   const onEvent = (absPath: string): void => {
+    if (stopped) return;
     pending.add(absPath);
     if (debounceTimer !== null) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => void flush(), debounceMs);
+    debounceTimer = setTimeout(() => void flush().catch(swallow), debounceMs);
   };
 
   // Baseline snapshot: only changes AFTER watch start are reported.
   let prev = await snapshot(root);
-  let stopped = false;
+  if (prev.size > maxFiles) throw new WatchCapExceededError(root, prev.size, maxFiles);
+  let overCap = false;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
   const poll = async (): Promise<void> => {
@@ -143,6 +190,12 @@ export async function watchPath(
     } catch {
       return; // root briefly unreadable (mid-rename, etc.) — try again next tick
     }
+    if (cur.size > maxFiles) {
+      if (!overCap) swallow(new WatchCapExceededError(root, cur.size, maxFiles));
+      overCap = true;
+      return; // paused: keep the last in-cap snapshot, report nothing until it shrinks
+    }
+    overCap = false;
     for (const [abs, sig] of cur) {
       if (prev.get(abs) !== sig) onEvent(abs); // created or modified
     }
@@ -156,7 +209,11 @@ export async function watchPath(
   let cycles = 0;
   const loop = async (): Promise<void> => {
     if (stopped) return;
-    await poll();
+    try {
+      await poll();
+    } catch (err) {
+      swallow(err); // never let one bad cycle end the loop or reject unhandled
+    }
     // Counted AFTER the scan resolves and its events have armed the debounce, so
     // a reader that sees this advance knows the cycle's fs work is done. Counted
     // before the next timer is armed only because a stopped watcher must not
@@ -170,10 +227,16 @@ export async function watchPath(
     get cycles(): number {
       return cycles;
     },
+    get errors(): number {
+      return errors;
+    },
     close(): void {
       stopped = true;
+      pending.clear();
       if (pollTimer !== null) clearTimeout(pollTimer);
       if (debounceTimer !== null) clearTimeout(debounceTimer);
+      pollTimer = null;
+      debounceTimer = null;
     },
   };
 }
