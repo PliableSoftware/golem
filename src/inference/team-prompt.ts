@@ -28,6 +28,7 @@ import {
   codePointLength,
   stripTeamPrompt,
   TEAM_PROMPT_MAX_CHARS,
+  teamPromptViolation,
 } from "../config/team-prompt-rules.js";
 
 /** The opening fence. Part of the contract: tests pin it, the model reads it. */
@@ -38,15 +39,21 @@ export const TEAM_NOTE_END = "--- END TEAM NOTE ---";
 /** Kept for callers that only need "the label". */
 export const TEAM_PROMPT_LABEL = TEAM_NOTE_BEGIN;
 
-/** The usable team prompt: stripped, trimmed, capped by CODE POINTS. Empty means none. */
+/**
+ * The usable team prompt: stripped to a fixed point, trimmed, capped by CODE
+ * POINTS, and then required to pass the SAME gate a team value passes. Text that
+ * cannot be made to pass (a URL, a lookalike marker in another script, ...) is
+ * dropped whole: an empty string means "no team prompt".
+ */
 export function sanitizeTeamPrompt(raw: string | undefined): string {
   if (raw === undefined) return "";
   const clean = stripTeamPrompt(raw).trim();
-  const capped =
+  const capped = (
     codePointLength(clean) > TEAM_PROMPT_MAX_CHARS
       ? Array.from(clean).slice(0, TEAM_PROMPT_MAX_CHARS).join("")
-      : clean;
-  return capped.trim();
+      : clean
+  ).trim();
+  return teamPromptViolation(capped) === undefined ? capped : "";
 }
 
 /** `base` with the fenced team text appended; `base` untouched when there is none. */

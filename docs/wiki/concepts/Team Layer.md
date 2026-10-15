@@ -170,16 +170,30 @@ else prompt-shaped. `inference.personas` (a persona can carry `prompt_file`, a l
   ([[Persona Registry]]) and ACP turns are EXCLUDED because they run with the member's own
   authority and tools. Revisit if a user-level slot ever exists. Delivery goes through the
   target dispatcher, which redacts every message, system included, before a non-local send.
-- **Bounded (allow-list).** At most 2000 CODE POINTS. Only letters, marks, numbers, punctuation,
-  symbols and space separators, plus newline and tab: zero-width, BOM, bidi overrides and
-  isolates, tag characters U+E0000-E007F, private use, unassigned, lone surrogates, other control
-  characters and U+2028/2029 are refused. On an NFKC-normalised copy it also refuses the fence
-  markers, a line starting with `#`, `<` or a role header (`system:`, `human:`, `assistant:`,
-  `user:`), triple backticks, tags, `://`, `data:`/`mailto:`/`file:`/`javascript:`/`ftp:` forms,
-  UNC `\\`, `www.`, and IPv4/IPv6 literals. The policy refuses a violating value per key; the
-  read side strips the same classes and caps by code points (never a lone surrogate), because a
-  local file or env value never passed the team gate. KNOWN LIMITATION: a bare domain in prose
-  (`example.com`) passes.
+- **Bounded (allow-list).** At most 2000 CODE POINTS. Only letters, marks, numbers, punctuation
+  and symbols, plus ordinary space, tab and newline. Refused: every other separator (U+00A0,
+  U+1680, U+2000-200A, U+202F, U+205F, U+3000, U+2028/2029), every Default_Ignorable code point
+  (zero-width, BOM, bidi overrides and isolates, variation selectors incl. U+FE00-FE0F, U+034F,
+  U+17B4/17B5, Hangul fillers), braille blank U+2800, tag characters, private use, unassigned,
+  lone surrogates, other controls, more than 3 stacked combining marks, and any word mixing Latin
+  with Cyrillic or Greek letters.
+- **Skeleton rules.** Marker, framing, fence, tag and URL rules run on a skeleton: NFKD, marks and
+  invisibles removed, an explicit table of Cyrillic, Greek and small-capital lookalikes folded to
+  Latin, `∶`/`〈`/`⟨`-style colon and angle lookalikes folded to `:`/`<`/`>`, lowercased. Refused:
+  the fence markers with ANY separators or none (`END-TEAM-NOTE`, `END_TEAM_NOTE`, `ENDTEAMNOTE`,
+  `END OF TEAM NOTE`, lookalike letters); a line starting with `#`, `<` or a role header
+  (`system:`, `human:`, `assistant:`, `user:`) even behind a quote or list prefix (`>`, `|`, `-`,
+  `*`, bullet, `1.`) or an invisible; triple backticks and `~~~`; tags; `://`, `scheme:` forms
+  (`data:`, `mailto:`, `file:`, `javascript:`, `ftp:`), scheme-relative `//host`, UNC `\\`, `www.`,
+  IPv4 (incl. octal-looking), hex (`0x7f000001`), 9-10 digit decimal (`2130706433`) and IPv6
+  literals. KNOWN LIMITATIONS: a bare domain in prose (`example.com`) passes; the confusable
+  table is explicit, not the full Unicode set; decimal IPs shorter than 9 digits are not caught
+  (they collide with dates and ids). VS16 emoji presentation is refused with the other variation
+  selectors.
+- **Read side.** The strip (for local-file and env values) removes disallowed characters, markers,
+  fences, tags and framing lines, repeating until the text stops changing, then caps by code
+  points, collapses more than two blank lines, and requires the result to pass the SAME gate; text
+  that still fails (a URL, a lookalike marker in another script) is dropped whole.
 - **Merged per field; project outranks team.** An ordinary leaf, so a project or local setting, or
   a user value marked important (`user!`), replaces the team's (an empty string there turns it
   off), while a project's own persona prompts are untouched: both apply. **A plain user value does

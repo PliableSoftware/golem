@@ -131,8 +131,9 @@ export function registerCoderTool(
    */
   const taskCounts = new Map<string, number>();
   // R13.12 — resolved once here, not per call: it cannot change without the
-  // server restarting, and both the dispatch `system` field and the generated
-  // subagent body must read the same setting.
+  // server restarting. The generated subagent body reads `coder_prompt` too (via
+  // `coder-prompt.ts`) but deliberately NOT the team prompt, which only this
+  // dispatch `system` field carries (DUST2.22, src/inference/team-prompt.ts).
   const coderPromptText = withTeamPrompt(
     resolveCoderPrompt(grounding.coderPrompt),
     grounding.teamPrompt,

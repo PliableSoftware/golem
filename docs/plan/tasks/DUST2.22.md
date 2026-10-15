@@ -102,3 +102,18 @@ in `effective.ts`). FOLLOW-UP: the structural risk remains for values that are A
 sensitive-shaped (none today: every accepted team class is a boolean, a number, a level, a root list or
 the bounded team prompt). A cleaner fix is to stop carrying the raw payload on the resolution at all
 and hand `loadConfig` the layer by a separate channel.
+
+## Round 3 hardening (2026-10-15, ships in 0.55.0)
+
+The gate and the strip in `src/config/team-prompt-rules.ts` now work on a SKELETON (NFKD, marks and
+default-ignorables removed, explicit Cyrillic/Greek/small-capital/colon/angle lookalike table,
+lowercase): fence markers match with any separators or none; framing lines match behind a quote
+or list prefix or an invisible; `~~~` fences, scheme-relative `//host`, `∶`/`：` colons, hex and
+9-10 digit decimal IPs are refused. The allow-list admits only U+0020 among separators and refuses
+every Default_Ignorable, variation selector, U+034F, U+17B4/17B5, Hangul filler and U+2800; more
+than 3 stacked marks and Latin+Cyrillic/Greek mixed words are refused. The strip iterates to a
+fixed point (markers, fences and tags first, then framing lines), collapses more than two blank
+lines, and drops the whole value when it still fails the gate. Residual risk: bare domains in
+prose, the table is not the full Unicode confusables set, decimal IPs under 9 digits, and free
+text can still say something persuasive: the fence and the coder lane's bounded authority are the
+defence, not the filters.
