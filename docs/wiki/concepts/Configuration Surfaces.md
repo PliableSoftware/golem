@@ -4,7 +4,7 @@ type: concept
 tags: [config, settings, tui, vscode, control-surface, toggle, ui]
 sources: [src/config/ui-model.ts, src/config/control-surface.ts, src/config/control-surface-runtime.ts, src/config/control-surface-settings.ts, src/config/schema.ts, src/cli/panel-args.ts, src/cli/main.ts, src/tui/, vscode-extension/render.js, docs/plan/audit/dust-1/DECISIONS.md]
 created: 2026-07-30
-updated: 2026-10-08
+updated: 2026-10-14
 ---
 
 # Configuration Surfaces
@@ -85,6 +85,30 @@ Two rules every front end inherits:
   every file layer", which has been untrue since ADR-0008: a file's `!important`
   declaration beats `env`, see [[Settings Cascade]]. The lock itself is right for the
   normal band, which is the only band env can declare in.)
+- **A pinned control says who pinned it and how to change it, on every surface**
+  (DUST2.16 / r010). The reason is `IMPORTANT_LOCKED` — origin, source, and which
+  origins can still override it. The panel's compression and gateway controls
+  follow the same rule as ordinary settings (they used to check `env` only). `golem
+  config get`/`list --json` and `golem status --json` carry `important` plus the
+  same text as `locked`; `config get` and `config set` print it. The TUI **wraps**
+  the reason instead of clipping it, because the recourse is the end of the
+  sentence; the VS Code panel prints it in the row, not only in a tooltip. A
+  `default!` pin reads "set by Golem itself … No origin can override it." (see
+  [[Settings Cascade]]).
+- **A write the cascade overrules says so** (r011). `ApplyResult.overridden` is set
+  by the settings and runtime controls alike — including the dial, which now
+  names the `!important` pin and the value that stays — and `golem config set`
+  prints the pin and the recourse. The TUI appends it to the applied message; the
+  VS Code extension relays the CLI's note as a warning instead of letting the row
+  quietly snap back. A merge-per-key leaf (`inference.personas`) is judged by
+  whether the written entries are contained in the effective value, so a lower
+  layer holding other personas is no longer reported as an override. When one
+  does lose, the blame follows the PER-FIELD provenance
+  (`inference.personas.<id>.<field>`), not the map's last-touched layer, and `config
+  get`/`list`/`status` never report the whole map locked — only the pinned fields
+  (`pinnedFields`). `config set` prints one explanation, not a note plus a repeat.
+  On a short terminal the TUI shrinks its wrap caps so a frame never exceeds the
+  rows; the VS Code panel hides a locked advanced control's reason with its row.
 - **A locked control is refused only for `env`.** `applySetting` throws solely when
   the effective layer is `env` (`control-surface-settings.ts:140-142`). An
   important-locked or opaque row is *rendered* locked (`:98-104`) but the API will

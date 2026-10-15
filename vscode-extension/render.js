@@ -774,12 +774,30 @@ function controlRowHtml(control) {
 
   const danger = control.danger ? ` data-danger="${esc(control.danger)}"` : "";
   const advanced = control.advanced ? " adv" : "";
-  return (
+  const row =
     `<div class="crow${advanced}"${danger} title="${title}">` +
     `<span class="clabel">${label}</span>` +
     `<span class="cval">${input}${scopeSelect}<span class="lay">${layer}</span></span>` +
-    "</div>"
-  );
+    "</div>";
+  // A locked row says WHO pinned it and what can still change it, in the row
+  // itself: a hover tooltip is not where anyone looks for the way out.
+  return control.locked
+    ? `${row}<div class="why${advanced}" data-for="${id}">${esc(control.locked)}</div>`
+    : row;
+}
+
+/**
+ * The note a `golem config set` printed when the cascade overrules the write
+ * (`note: ...` plus an optional `locked: ...` line), or null when the write took
+ * effect. The CLI is the one author of that wording; the extension only relays it.
+ */
+function overrideNote(output) {
+  if (typeof output !== "string") return null;
+  const lines = output
+    .split(/\r?\n/)
+    .filter((l) => (l.startsWith("note: ") && !l.includes(" was renamed to ")) || l.startsWith("locked: "))
+    .map((l) => l.replace(/^(note|locked): /, ""));
+  return lines.length === 0 ? null : lines.join(" ");
 }
 
 /** A control's value as display text. `fallback` is used for unset values. */
@@ -843,6 +861,7 @@ function renderHtml(model, nonce) {
   .crow:hover{background:var(--vscode-list-hoverBackground)}
   .clabel{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cval{flex:0 0 auto;display:flex;align-items:center;gap:6px}
+  .why{font-size:11px;opacity:.7;padding:0 0 4px 2px}
   .lay{font-size:10px;opacity:.55;min-width:46px;text-align:right}
   .ctl.txt{width:110px}
   .ctl,.scope{background:var(--vscode-input-background);color:var(--vscode-input-foreground);
@@ -966,6 +985,7 @@ ${blockedHtml(model)}
 }
 
 module.exports = {
+  overrideNote,
   COMPRESSION_LEVELS,
   STATUS_FIELDS_READ,
   gatewayRows,

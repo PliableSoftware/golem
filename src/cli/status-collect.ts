@@ -16,7 +16,9 @@ import http from "node:http";
 import path from "node:path";
 import { resolveEffectiveCompression } from "../compression/effective-level.js";
 import { unreachableHeadroomConfigKeys } from "../compression/headroom-adapter.js";
+import { IMPORTANT_LOCKED } from "../config/control-surface-types.js";
 import { loadEffectiveConfig } from "../config/effective.js";
+import { MERGE_PER_KEY_LEAVES } from "../config/loader.js";
 import { defaultUserDir } from "../config/paths.js";
 // Narrow specifiers, not the `../hooks/index.js` barrel (~446ms — it pulls every
 // hook handler) for two small file reads.
@@ -329,12 +331,29 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
 
   const config: Record<string, ConfigKeyStatus> = {};
   for (const [dotted, entry] of Object.entries(provenance)) {
-    const [section, key] = dotted.split(".", 2) as [string, string];
+    const [section, ...rest] = dotted.split(".") as [string, ...string[]];
     const sectionValues = (settings as unknown as Record<string, Record<string, unknown>>)[section];
+    // A per-field entry of a merge-per-key leaf (`inference.personas.<id>.<field>`)
+    // reads its own value; the leaf's entry names only the last layer to touch the
+    // map, so it is never reported locked (the pin is on the field).
+    const value = rest
+      .slice(1)
+      .reduce<unknown>(
+        (node, part) =>
+          typeof node === "object" && node !== null
+            ? (node as Record<string, unknown>)[part]
+            : undefined,
+        sectionValues?.[rest[0] ?? ""],
+      );
     config[dotted] = {
-      value: sectionValues?.[key],
+      value,
       layer: entry.layer,
       ...(entry.source !== undefined && { source: entry.source }),
+      ...(entry.important === true &&
+        !MERGE_PER_KEY_LEAVES.has(dotted) && {
+          important: true as const,
+          locked: IMPORTANT_LOCKED(entry.layer, entry.source),
+        }),
     };
   }
 

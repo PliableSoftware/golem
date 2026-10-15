@@ -9,8 +9,10 @@
 
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
+import { IMPORTANT_LOCKED } from "../config/control-surface-types.js";
 import { ConfigError } from "../config/errors.js";
 import { loadEffectiveConfig, type SettingsScope, writeSetting } from "../config/index.js";
+import { MERGE_PER_KEY_LEAVES } from "../config/loader.js";
 import { migrationFrom, type SettingMigration } from "../config/migrations.js";
 import { allLeafPaths, leafSchema } from "../config/schema.js";
 import { unwrapSchema } from "../config/ui-model.js";
@@ -29,6 +31,13 @@ export interface ConfigEntry {
   readonly source?: string;
   /** ADR-0008: the winning declaration was `!important` at {@link layer}. */
   readonly important?: true;
+  /** Who pinned it and what can still override it (present exactly when {@link important} is). */
+  readonly locked?: string;
+  /**
+   * Per-field pins inside a merge-per-key leaf (`inference.personas`), keyed
+   * `<id>.<field>` → locked text. The whole map is not locked when one entry is.
+   */
+  readonly pinnedFields?: Readonly<Record<string, string>>;
 }
 
 export interface ConfigListReport {
@@ -44,6 +53,10 @@ export interface ConfigGetReport {
   readonly source?: string;
   /** ADR-0008: the winning declaration was `!important` at {@link layer}. */
   readonly important?: true;
+  /** Who pinned it and what can still override it (present exactly when {@link important} is). */
+  readonly locked?: string;
+  /** See {@link ConfigEntry.pinnedFields}. */
+  readonly pinnedFields?: Readonly<Record<string, string>>;
   /** Load warnings, including why a linked team's layer is not applied. */
   readonly warnings?: readonly string[];
 }
@@ -57,6 +70,30 @@ export interface ConfigWriteResult {
   /** R9.6: set when the caller typed a retired key and it was redirected. */
   readonly renamedFrom?: SettingMigration;
   readonly overriddenBy?: ConfigGetReport;
+}
+
+type ProvenanceMap = Readonly<Record<string, { layer: string; source?: string; important?: true }>>;
+
+/**
+ * The pin fields of a report for `key`. A merge-per-key leaf's own provenance
+ * names only the LAST layer to touch the map, so it says nothing about which
+ * entry is pinned: its pins are read per `<id>.<field>` instead, and the map as
+ * a whole is never reported locked.
+ */
+function pinFields(key: string, provenance: ProvenanceMap) {
+  if (MERGE_PER_KEY_LEAVES.has(key)) {
+    const pinned: Record<string, string> = {};
+    for (const [dotted, entry] of Object.entries(provenance)) {
+      if (dotted.startsWith(`${key}.`) && entry.important === true) {
+        pinned[dotted.slice(key.length + 1)] = IMPORTANT_LOCKED(entry.layer, entry.source);
+      }
+    }
+    return Object.keys(pinned).length > 0 ? { pinnedFields: pinned } : {};
+  }
+  const entry = provenance[key];
+  return entry?.important === true
+    ? { important: true as const, locked: IMPORTANT_LOCKED(entry.layer, entry.source) }
+    : {};
 }
 
 /** List every known setting with its effective value and provenance. */
@@ -77,7 +114,7 @@ export async function listConfig(options: ConfigReadOptions): Promise<ConfigList
       value: sectionValues[section]?.[key],
       layer: entry?.layer ?? "default",
       ...(entry?.source !== undefined && { source: entry.source }),
-      ...(entry?.important === true && { important: true as const }),
+      ...pinFields(path, provenance),
     });
   }
   return { entries, warnings };
@@ -103,7 +140,7 @@ export async function getConfig(
     value: sectionValues[section]?.[leafKey],
     layer: entry?.layer ?? "default",
     ...(entry?.source !== undefined && { source: entry.source }),
-    ...(entry?.important === true && { important: true as const }),
+    ...pinFields(key, provenance),
     warnings,
   };
 }
@@ -269,6 +306,25 @@ function sameValue(a: unknown, b: unknown): boolean {
   );
 }
 
+/** True when every key (recursively) of `part` is present in `whole` with the same value. */
+function containsValue(whole: unknown, part: unknown): boolean {
+  if (
+    typeof part !== "object" ||
+    part === null ||
+    Array.isArray(part) ||
+    typeof whole !== "object" ||
+    whole === null ||
+    Array.isArray(whole)
+  ) {
+    return sameValue(whole, part);
+  }
+  return Object.entries(part as Record<string, unknown>).every(
+    ([k, v]) =>
+      Object.hasOwn(whole as Record<string, unknown>, k) &&
+      containsValue((whole as Record<string, unknown>)[k], v),
+  );
+}
+
 function jsonShapeOf(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
@@ -302,10 +358,25 @@ export async function setConfig(
     });
   }
   const effective = await getConfig(key, options);
+  const merged = MERGE_PER_KEY_LEAVES.has(key);
   // Structural, not reference, comparison: an object- or array-valued leaf read
   // back through the loader is a different object every time, so `!==` reported
   // every such write as overridden by a layer that had not overridden anything.
-  const overridden = effective.layer !== scope || !sameValue(effective.value, value);
+  // A per-key-merging leaf (`inference.personas`) is the exception: its effective
+  // value legitimately holds other layers' entries and its provenance names the
+  // LAST layer to touch it, so neither comparison above means anything. Written
+  // entries must be contained in the effective value, field for field.
+  const overridden = merged
+    ? !containsValue(effective.value, value)
+    : effective.layer !== scope || !sameValue(effective.value, value);
+  // For a merge-per-key leaf the leaf-level entry names the last layer to touch
+  // the map, which is not the layer that changed the field the write lost: blame
+  // the layer behind the first written field that did not stick.
+  const overriddenBy = !overridden
+    ? undefined
+    : merged
+      ? await fieldCulprit(key, value, effective, options)
+      : effective;
   return {
     key,
     value,
@@ -313,8 +384,51 @@ export async function setConfig(
     file,
     effective,
     ...(renamedFrom !== undefined && { renamedFrom }),
-    ...(overridden && { overriddenBy: effective }),
+    ...(overriddenBy !== undefined && { overriddenBy }),
   };
+}
+
+/** The report for the first `<id>.<field>` of `written` that the cascade did not keep. */
+async function fieldCulprit(
+  key: string,
+  written: unknown,
+  effective: ConfigGetReport,
+  options: ConfigReadOptions,
+): Promise<ConfigGetReport> {
+  if (!isRecord(written) || !isRecord(effective.value)) return effective;
+  const { provenance } = await loadEffectiveConfig({
+    projectDir: options.projectDir,
+    ...(options.userDir !== undefined && { userDir: options.userDir }),
+    ...(options.env !== undefined && { env: options.env }),
+  });
+  for (const [id, entry] of Object.entries(written)) {
+    const have = effective.value[id];
+    if (!isRecord(entry) || !isRecord(have)) {
+      if (!sameValue(have, entry)) return effective;
+      continue;
+    }
+    for (const [field, want] of Object.entries(entry)) {
+      if (sameValue(have[field], want)) continue;
+      const dotted = `${key}.${id}.${field}`;
+      const p = provenance[dotted];
+      if (p === undefined) return effective;
+      return {
+        key: dotted,
+        value: have[field],
+        layer: p.layer,
+        ...(p.source !== undefined && { source: p.source }),
+        ...(p.important === true && {
+          important: true as const,
+          locked: IMPORTANT_LOCKED(p.layer, p.source),
+        }),
+      };
+    }
+  }
+  return effective;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Remove `key` from `scope`, returning the effective value after deletion. */
@@ -349,7 +463,8 @@ export function renderConfigList(report: ConfigListReport): string {
 export function renderConfigGet(report: ConfigGetReport): string {
   const source = report.source !== undefined ? ` (${report.source})` : "";
   const band = report.important === true ? " !important" : "";
-  return `${report.key} = ${JSON.stringify(report.value)} — ${report.layer}${band}${source}\n`;
+  const why = report.locked !== undefined ? `locked: ${report.locked}\n` : "";
+  return `${report.key} = ${JSON.stringify(report.value)} — ${report.layer}${band}${source}\n${why}`;
 }
 
 /** Human rendering of `config set`. */
@@ -370,13 +485,15 @@ export function renderConfigSet(result: ConfigWriteResult): string {
   if (result.overriddenBy !== undefined) {
     const o = result.overriddenBy;
     const oSource = o.source !== undefined ? ` (${o.source})` : "";
-    // ADR-0008: say WHICH band won. "a higher-precedence layer" stops being true
-    // once importance exists — user! outranks local without being higher.
-    const why =
-      o.important === true
-        ? `${o.layer} declares it !important, which beats every ordinary declaration`
-        : `a higher-precedence layer overrides it — effective value is from ${o.layer}`;
-    lines.push(`note: ${why}${oSource}`);
+    // One explanation, not two: for a pin the locked text already says who set it,
+    // that it beats every ordinary declaration, and what can still override it.
+    // For a merge-per-key leaf `o.key` names the field that lost.
+    const field = o.key !== result.key ? ` (${o.key})` : "";
+    lines.push(
+      o.locked !== undefined
+        ? `note: this write has no effect${field} — ${o.locked}`
+        : `note: a higher-precedence layer overrides it${field} — effective value is from ${o.layer}${oSource}`,
+    );
   }
   return `${lines.join("\n")}\n`;
 }
