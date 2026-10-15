@@ -1,14 +1,16 @@
 ---
 task: DUST2.12
-title: "Plan-task tooling: never drop an unparseable doc silently, `golem task resume` for plan tasks, worktree capture"
-state: queued
+title: Plan-task tooling: never drop an unparseable doc silently, `golem task resume` for plan tasks, worktree capture
+state: done
 owner: agent
 size: M
 discipline: code
-design: "wiki Plan Tasks; spec Decisions 38, 55; SUMMARY.md Gaps 1.7/r025 (P), r027 (P), r029 (N); hygiene :760-762"
-gate: "`golem task list`/`index` report every doc they cannot parse (path + reason) instead of skipping it; `golem task resume <plan-id>` works for plan-scope tasks; a parked task records its git worktree; tests for each. golem verify green by exit code."
+design: wiki Plan Tasks; spec Decisions 38, 55; SUMMARY.md Gaps 1.7/r025 (P), r027 (P), r029 (N); hygiene :760-762
+gate: `golem task list`/`index` report every doc they cannot parse (path + reason) instead of skipping it; `golem task resume <plan-id>` works for plan-scope tasks; a parked task records its git worktree; tests for each. golem verify green by exit code.
+depends_on: []
 touches: [src/tasks, src/cli/commands, tests]
 created: 2026-10-08
+updated: 2026-10-15T06:12:36.693Z
 ---
 
 ## What this is
@@ -41,3 +43,7 @@ Decisions taken on the safe reading; revisit any of them freely.
   Schema gained optional `branch`. `resume --spawn` launches with `cwd` = the recorded
   worktree when it still exists.
 - Not done: capturing the worktree in other park paths (none found besides these two).
+
+## Outcome
+
+shipped in #302

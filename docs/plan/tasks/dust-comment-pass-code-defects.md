@@ -1,15 +1,16 @@
 ---
 task: dust-comment-pass-code-defects
-title: "Two behaviour defects the Dust comment pass found but left alone: session-report invents compression level 1, and spawn-failure detection is unreachable"
-state: queued
+title: Two behaviour defects the Dust comment pass found but left alone: session-report invents compression level 1, and spawn-failure detection is unreachable
+state: done
 owner: agent
 size: M
 discipline: code
-design: "Found by DUST2.10 (2026-10-08), which was strings-and-comments only. H5 (audit row 1.9/r066): src/cli/session-report.ts:176 does `golem?.compression ?? 1`, so when state collection fails the report states compression level 1 as if it were real, a made-up value in an honest-observability surface. r030 (audit row 1.7/r030, spawnResume failure detection): the failed check in spawnResume is unreachable, so a failed spawn is not detected; only its comment was corrected."
-gate: "Each defect has a regression test that fails on the current code and passes after: when state collection fails the report says the level is unknown rather than 1, and a failed spawnResume is detected and surfaced; golem verify exit 0."
+design: Found by DUST2.10 (2026-10-08), which was strings-and-comments only. H5 (audit row 1.9/r066): src/cli/session-report.ts:176 does `golem?.compression ?? 1`, so when state collection fails the report states compression level 1 as if it were real, a made-up value in an honest-observability surface. r030 (audit row 1.7/r030, spawnResume failure detection): the failed check in spawnResume is unreachable, so a failed spawn is not detected; only its comment was corrected.
+gate: Each defect has a regression test that fails on the current code and passes after: when state collection fails the report says the level is unknown rather than 1, and a failed spawnResume is detected and surfaced; golem verify exit 0.
 depends_on: []
 touches: [src/cli/session-report.ts, src/session, tests]
 created: 2026-10-08
+updated: 2026-10-15T06:12:35.421Z
 ---
 
 ## What this is
@@ -48,3 +49,7 @@ Searched `src`, `src/dashboard`, `vscode-extension/src`, `scripts`, `docs`, `con
 - `config-schema.json` and docs: the `off|1|2|3` enum belongs to the `compression.level` setting, a different thing from the report field; no schema describes the report.
 - Remaining `compression.level` hits in tests are the setting, not the report.
 No consumer parsed the level as a number or switched on `0|1|2|3`.
+
+## Outcome
+
+shipped in #301
