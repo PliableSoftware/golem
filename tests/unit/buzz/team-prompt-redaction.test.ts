@@ -19,6 +19,8 @@ import { useTempDirs } from "../../helpers/tmp.js";
 const newTempDir = useTempDirs("golem-team-prompt-redact-");
 const FAKE_KEY = ["sk", "ant", "api03", "B".repeat(95)].join("-");
 const FAKE_EMAIL = ["oncall", "example.com"].join("@");
+// Assembled at runtime so no placeholder-shaped text sits in the repo.
+const PLACEHOLDER_PREFIX = ["[RED", "ACTED:"].join("");
 const TEAM_TEXT = `Escalate to ${FAKE_EMAIL}; staging key is ${FAKE_KEY}.`;
 
 const captured = () => {
@@ -77,7 +79,7 @@ describe("coder dispatch to a non-local target", () => {
     expect(sent[0]).toContain(TEAM_PROMPT_LABEL.slice(0, 20)); // delivered...
     expect(sent[0]).not.toContain(FAKE_KEY); // ...but redacted
     expect(sent[0]).not.toContain(FAKE_EMAIL);
-    expect(sent[0]).toContain("[REDACTED:");
+    expect(sent[0]).toContain(PLACEHOLDER_PREFIX);
     expect(result.redactedCount).toBeGreaterThan(0);
   });
 });
