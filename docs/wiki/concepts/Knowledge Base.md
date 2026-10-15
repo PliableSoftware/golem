@@ -2,9 +2,9 @@
 title: Knowledge Base
 type: concept
 tags: [rag, vector, search, knowledge, embeddings]
-sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/search.ts, src/cli/auto-index.ts, src/knowledge/driver.ts, src/wiki/frontmatter.ts, docs/golem-spec.md#3.1]
+sources: [src/knowledge/knowledge-base.ts, src/knowledge/file-driver.ts, src/knowledge/chunker.ts, src/mcp/search.ts, src/cli/auto-index.ts, src/knowledge/watch-daemon.ts, src/knowledge/file-watcher.ts, src/knowledge/driver.ts, src/wiki/frontmatter.ts, docs/golem-spec.md#3.1]
 created: 2026-07-25
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 # Knowledge Base
@@ -44,6 +44,39 @@ flowchart LR
   WATCH["File watcher (opt)"] -.->|"on change"| RE["reindex changed / remove deleted"]
   RE --> UP
 ```
+
+## Index freshness: the watch daemon and resumable builds (DUST2.14)
+
+While `golem mcp serve` is up, `startKnowledgeWatch` (`src/cli/auto-index.ts`) runs one
+**watch daemon** (`src/knowledge/watch-daemon.ts`) over the index roots (`knowledge.watch_paths`,
+else the project) **and the wiki dir**, so a `wiki_upsert` or an editor save reaches the vector
+index without a manual `ingest`. A wiki dir inside a root is covered once; one outside (an absolute
+`knowledge.wiki_dir`) gets its own watcher and `external:` keys. Set `GOLEM_KB_WATCH=off` to disable.
+The wiki stays the truth: the daemon only reads pages and writes the derived index.
+
+- **Polling, bounded.** Same polling watcher on every OS (no native dependency; the pages it
+  watches are the [[Wiki-First Knowledge|wiki]]). One watcher per distinct root, a cap of
+  5000 chunkable files per root (a larger tree is not watched, with a log line; a tree that grows past
+  it pauses reporting until it shrinks), 2s poll, debounce, `node_modules`/`.git`/`dist`/`.golem`
+  and dot-dirs pruned. Pending work is keyed by path, so an event storm or a rename-over-existing
+  settles on the final state; one apply runs at a time, deletions first, in slices of 20 files.
+- **Never throws into the host.** Every failure is counted (`daemon.stats.errors`), logged, and
+  swallowed; a failed batch leaves the manifest behind the index, so the next session's sync
+  redoes it. Shutdown closes watchers, clears timers, drops queued work and waits for the apply in
+  flight.
+- **Never reads outside a root.** Each changed path is re-resolved with `realpath.native` and
+  dropped unless still inside its root's real path (a symlink swapped in after the scan, `..`).
+- **Checkpoints.** The manifest (`manifest.json` beside each collection) is **versioned**
+  (`version: 1`; an absent field reads as 1, a higher one is not trusted), written atomically
+  (`replaceViaTemp`), and validated on read: a corrupt, truncated or newer-format manifest is
+  discarded with a warning and the collection is rebuilt from the files, never half-believed.
+  The first build is no longer one shot: it starts from an empty manifest and runs the same
+  checkpointed sync (deletions first, then a checkpoint every 20 files), so a build killed halfway
+  keeps every finished batch and the rerun continues without duplicating or losing chunks. The
+  daemon folds what it indexed back into the manifest (stat taken before the read, so the record can
+  lag the content, never lead it); files outside the sync roots are never recorded.
+
+See [[Auto-Index Cost]] for what the session-start sync spends.
 
 ## Search path (read) — graph-first, then vector
 

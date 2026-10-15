@@ -25,3 +25,24 @@ daemons and checkpointing are partial (rows 8, 70).
 ## Out of scope
 
 - Qdrant server / shared collection (spec register).
+
+## Open questions for the user (DUST2.14 implementation, 2026-10-15)
+
+Safe readings implemented; none blocks the gate.
+
+1. **Redaction of indexed file text.** The vector index stores file chunks as read; redaction
+   runs at the proxy/hook boundary and at `wiki_upsert`/distill writes, not inside
+   `reindexFiles`. The daemon routes through the same single store path (`#embedAndStore`) as a
+   full ingest, so it neither adds nor removes any redaction. Should chunks be redacted before
+   embedding (cost: the high-entropy sweep false-positives on code, and chunk text no longer
+   matches the file)? Left as-is; S13 stays a Phase 3 item per the hard rules.
+2. **Wiki dir outside the index roots** (absolute `knowledge.wiki_dir`, or `watch_paths` that
+   excludes `docs/wiki`) is watched for writes made while a server runs, but has no session-start
+   catch-up: the manifest tracks only the sync roots (a foreign key would read as "deleted" and
+   erase it). Add a separate manifest section for extra roots, or widen the sync to multi-root?
+3. **Always-on poller.** The daemon starts with every `golem mcp serve` (opt-out env
+   `GOLEM_KB_WATCH=off`; 5000-file cap, 2s poll are constants). Promote to
+   `knowledge.watch_enabled` / `knowledge.watch_max_files` config keys (touches team-policy and
+   the UI model)?
+4. **Multi-root and file-root builds** still use the one-shot full index (no mid-build
+   checkpoint); only the single-directory-root build resumes.
