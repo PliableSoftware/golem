@@ -13,6 +13,7 @@ import { createGolemPipeline } from "../../../src/pipeline/index.js";
 import {
   REDACTION_SLICE_MS,
   RedactionAborted,
+  RedactionPacer,
   redactRequestBody,
   redactRequestBodyAsync,
 } from "../../../src/pipeline/redaction.js";
@@ -178,6 +179,25 @@ describe("DUSTSEC.23 differential: async walk === sync walk", () => {
     expect(n).toBeGreaterThan(20);
   });
 
+  it("primitive-heavy bodies (numbers, booleans, null) are untouched and identical", async () => {
+    const big = Array.from({ length: 200_000 }, (_, i) =>
+      i % 3 === 0 ? i : i % 3 === 1 ? i % 2 === 0 : null,
+    );
+    big.push(`tail ${SECRETS[1]?.(rng(4))}` as never);
+    await expectSame({ n: big });
+    await expectSame(big, 0);
+  });
+
+  it("the async walk never mutates its input", async () => {
+    const r = rng(31);
+    for (let i = 0; i < 40; i += 1) {
+      const body = genValue(r, 4);
+      const before = serial(body);
+      await redactRequestBodyAsync(body, { sliceMs: 0 });
+      expect(serial(body)).toBe(before);
+    }
+  });
+
   it("is idempotent: redacting the async output again changes nothing", async () => {
     const r = rng(77);
     for (let i = 0; i < 60; i += 1) {
@@ -244,6 +264,54 @@ describe("DUSTSEC.23 differential: async walk === sync walk", () => {
       expect(async_.body?.toString("utf8")).toBe(sync.body?.toString("utf8"));
       expect(async_ === request).toBe(sync === request);
     }
+  });
+});
+
+// ---- deep nesting ----------------------------------------------------------------
+
+/** A value nested `depth` containers deep with a secret at the bottom, built without recursion. */
+function nested(depth: number, shape: "object" | "array" | "mixed", leaf: string): unknown {
+  let v: unknown = leaf;
+  for (let i = 0; i < depth; i += 1) {
+    const asArray = shape === "array" || (shape === "mixed" && i % 2 === 0);
+    v = asArray ? [v] : { a: v };
+  }
+  return v;
+}
+
+type Outcome = { ok: true; json: string; count: number } | { ok: false };
+async function outcome(run: () => unknown): Promise<Outcome> {
+  try {
+    const r = (await run()) as { value: unknown; count: number };
+    return { ok: true, json: JSON.stringify(r.value), count: r.count };
+  } catch {
+    return { ok: false };
+  }
+}
+
+describe("DUSTSEC.23 deep nesting: the async walk never loses depth the sync walk has", () => {
+  const leaf = `deep ${SECRETS[1]?.(rng(8))}`;
+  for (const shape of ["object", "array", "mixed"] as const) {
+    for (const depth of [1000, 2000, 2500, 3500, 4400]) {
+      it(`${shape}, depth ${depth}: both succeed identically, or only the async one does`, async () => {
+        const body = nested(depth, shape, leaf);
+        const sync = await outcome(() => redactRequestBody(body));
+        const async_ = await outcome(() => redactRequestBodyAsync(body, { sliceMs: 0 }));
+        if (sync.ok) {
+          expect(async_).toEqual(sync);
+          expect(sync.count).toBeGreaterThan(0);
+        }
+        if (depth <= 2000) expect(sync.ok).toBe(true);
+        // The iterative walk has no call-stack limit of its own: only the whole-body
+        // JSON.stringify (about 4471 levels) bounds it.
+        if (depth <= 4400 && shape !== "array") expect(async_.ok).toBe(true);
+      });
+    }
+  }
+
+  it("the async walk redacts a nesting far past any stack limit, or refuses; it never forwards raw", async () => {
+    const body = nested(20_000, "object", leaf);
+    await expect(redactRequestBodyAsync(body)).rejects.toBeInstanceOf(RangeError);
   });
 });
 
@@ -324,6 +392,36 @@ describe("DUSTSEC.23 fail closed, cancellation, cleanup", () => {
     ]).catch(() => undefined);
     await new Promise((resolve) => setImmediate(resolve));
     expect(active().length).toBeLessThanOrEqual(before);
+  });
+});
+
+describe("DUSTSEC.23 pacer", () => {
+  const spin = (ms: number): void => {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      /* busy: an unsliceable step */
+    }
+  };
+
+  it("does not yield after cheap work, and does after a step of 5 ms or more", async () => {
+    const pacer = new RedactionPacer();
+    let turned = false;
+    setImmediate(() => {
+      turned = true;
+    });
+    await pacer.pause();
+    expect(turned).toBe(false); // cheap: no turn given away
+    spin(10);
+    await pacer.pause();
+    expect(turned).toBe(true); // the 10 ms step was followed by a turn for the loop
+  });
+
+  it("stops with RedactionAborted once the signal aborts, yield or not", async () => {
+    const ac = new AbortController();
+    const pacer = new RedactionPacer(ac.signal);
+    ac.abort();
+    await expect(pacer.pause()).rejects.toBeInstanceOf(RedactionAborted);
+    await expect(pacer.yieldNow()).rejects.toBeInstanceOf(RedactionAborted);
   });
 });
 

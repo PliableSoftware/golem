@@ -59,7 +59,7 @@ import { applyBrevity } from "./brevity.js";
 import { applyJoinMessages, canInject } from "./join-injection.js";
 import { eligibleLocalAnswerText, synthesizeLocalAnswerResponse } from "./local-answer-response.js";
 import { assertRedactionOn } from "./policy-guard.js";
-import { redactRequestBody, redactRequestBodyAsync } from "./redaction.js";
+import { RedactionPacer, redactRequestBody, redactRequestBodyAsync } from "./redaction.js";
 
 /**
  * Whether an upstream is known to do Anthropic-style prompt caching (byte-
@@ -416,9 +416,14 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
       input: ProxyRequest,
       runOptions: PipelineRunOptions = {},
     ): Promise<ProxyRequest> {
-      const walkOptions = runOptions.signal === undefined ? {} : { signal: runOptions.signal };
+      const pacer = new RedactionPacer(runOptions.signal);
+      const walkOptions = {
+        pacer,
+        ...(runOptions.signal === undefined ? {} : { signal: runOptions.signal }),
+      };
       if (input.body === null) return input;
       if (!isMessagesRequest(input)) return redactAnyBodyAsync(input, walkOptions);
+      await pacer.pause();
       let parsed: unknown;
       try {
         parsed = parseJsonBody(input.body);
@@ -426,15 +431,24 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         return redactAnyBodyAsync(input, walkOptions);
       }
       if (!isRecord(parsed)) return redactAnyBodyAsync(input, walkOptions);
+      await pacer.pause();
       refuseDuplicateKeys(input.body);
       const redacted = await redactRequestBodyAsync(parsed, walkOptions);
       if (redacted.count === 0 || !isRecord(redacted.value)) return input;
-      return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
+      await pacer.pause();
+      return {
+        ...input,
+        body: Buffer.from(redacted.json ?? JSON.stringify(redacted.value), "utf8"),
+      };
     },
     async process(input: ProxyRequest, runOptions: PipelineRunOptions = {}): Promise<ProxyRequest> {
       // DUSTSEC.23: every redaction walk below yields to the event loop between slices
       // and stops when the client goes away.
-      const walkOptions = runOptions.signal === undefined ? {} : { signal: runOptions.signal };
+      const pacer = new RedactionPacer(runOptions.signal);
+      const walkOptions = {
+        pacer,
+        ...(runOptions.signal === undefined ? {} : { signal: runOptions.signal }),
+      };
       // R10.23 — every stage below runs BEFORE the request is forwarded, so
       // whatever they cost, the user is watching the client say "waiting for
       // API" for exactly that long, with nothing in the log to say Golem is the
@@ -462,7 +476,9 @@ export function createGolemPipeline(options: GolemPipelineOptions): RequestPipel
         return redactAnyBodyAsync(input, walkOptions);
       }
       // DUSTSEC.21: a body with duplicate keys may hide a secret in a shadowed
-      // value the parse dropped: refuse it (400, nothing forwarded).
+      // value the parse dropped: refuse it (400, nothing forwarded). DUSTSEC.23: a
+      // yield after the parse, so the parse and the scan do not run back to back.
+      await pacer.pause();
       refuseDuplicateKeys(input.body);
       const request = input;
 

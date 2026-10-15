@@ -29,6 +29,7 @@ import type { ProxyRequest } from "../proxy/types.js";
 import {
   type RedactBodyAsyncOptions,
   type RedactBodyResult,
+  RedactionPacer,
   redactRequestBody,
   redactRequestBodyAsync,
   redactStandaloneText,
@@ -329,10 +330,18 @@ export async function redactAnyBodyAsync(
 ): Promise<ProxyRequest> {
   const body = input.body;
   if (body === null || body.length === 0) return input;
+  const pacer = options.pacer ?? new RedactionPacer(options.signal);
+  const walkOptions = { ...options, pacer };
+  await pacer.pause();
   const parsed = tryParseJson(body);
   if (parsed.isJson) {
+    // Parse, duplicate-key scan, walk and serialise are each unsliceable or sliced
+    // on their own; a yield between them keeps them from running back to back.
+    await pacer.pause();
     refuseDuplicateKeys(body);
-    return withRedactedJson(input, await redactRequestBodyAsync(parsed.value, options));
+    const redacted = await redactRequestBodyAsync(parsed.value, walkOptions);
+    await pacer.pause();
+    return withRedactedJson(input, redacted);
   }
   return redactNonJsonBody(input, body);
 }
@@ -350,7 +359,8 @@ function tryParseJson(body: Buffer): { isJson: true; value: unknown } | { isJson
 
 function withRedactedJson(input: ProxyRequest, redacted: RedactBodyResult): ProxyRequest {
   if (redacted.count === 0) return input;
-  return { ...input, body: Buffer.from(JSON.stringify(redacted.value), "utf8") };
+  // The async walk hands over the serialisation it already made for the token estimate.
+  return { ...input, body: Buffer.from(redacted.json ?? JSON.stringify(redacted.value), "utf8") };
 }
 
 function redactNonJsonBody(input: ProxyRequest, body: Buffer): ProxyRequest {

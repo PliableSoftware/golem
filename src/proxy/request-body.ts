@@ -28,6 +28,19 @@ export class RequestBodyRefusal extends Error {
 }
 
 /**
+ * The redaction walk stopped because the request was cancelled (the client hung up).
+ * Nothing is returned and nothing is forwarded. Lives here, beside
+ * {@link RequestBodyRefusal}, so the proxy can tell it from a real pipeline error
+ * without importing the pipeline. DUSTSEC.23.
+ */
+export class RedactionAborted extends Error {
+  constructor() {
+    super("redaction walk aborted (the request was cancelled); nothing was forwarded");
+    this.name = "RedactionAborted";
+  }
+}
+
+/**
  * Default request body limit: 32 MiB (the Messages API's own request limit), on
  * the wire and after decompression.
  */

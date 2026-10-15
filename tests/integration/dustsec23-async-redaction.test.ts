@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { NativeLosslessCompression } from "../../src/compression/index.js";
 import { policyFor } from "../../src/interfaces/policy.js";
 import { createGolemPipeline } from "../../src/pipeline/index.js";
+import { redactRequestBody } from "../../src/pipeline/redaction.js";
 import type {
   PipelineRunOptions,
   ProxyRequest,
@@ -45,6 +46,23 @@ async function realPipeline(): Promise<RequestPipeline> {
   });
 }
 
+/** The longest gap between ticks of a 5 ms timer while `work` runs synchronously. */
+async function longestStall(work: () => unknown): Promise<number> {
+  let last = performance.now();
+  let max = 0;
+  const timer = setInterval(() => {
+    const now = performance.now();
+    max = Math.max(max, now - last);
+    last = now;
+  }, 5);
+  await new Promise((resolve) => setImmediate(resolve));
+  last = performance.now();
+  work();
+  max = Math.max(max, performance.now() - last);
+  clearInterval(timer);
+  return max;
+}
+
 function upstreamRecorder() {
   const seen = { hits: 0, bodies: [] as string[] };
   const handler = (_req: unknown, res: import("node:http").ServerResponse, body: Buffer): void => {
@@ -66,6 +84,9 @@ describe("DUSTSEC.23 through the proxy", () => {
     });
     try {
       const body = bigBody(6 * 1024 * 1024);
+      // The yardstick is the sync walk of the SAME body on this machine, so a slow or
+      // loaded runner moves both numbers together instead of tripping a fixed bound.
+      const syncStall = await longestStall(() => redactRequestBody(JSON.parse(body)));
       let last = performance.now();
       let max = 0;
       let observed = 0;
@@ -88,7 +109,8 @@ describe("DUSTSEC.23 through the proxy", () => {
       // Many ticks landed while the walk ran, and none was starved for long: the
       // sync walk of this body held the loop for about two seconds.
       expect(observed).toBeGreaterThan(20);
-      expect(max).toBeLessThan(500);
+      expect(max).toBeLessThan(syncStall * 0.25);
+      expect(max).toBeLessThan(1_500);
       await vi.waitFor(() => expect(proxy.proxy.bodyBytesInFlight).toBe(0), { timeout: 2_000 });
     } finally {
       await proxy.close();
@@ -251,4 +273,77 @@ describe("DUSTSEC.23 through the proxy", () => {
       await upstream.close();
     }
   });
+  it("a body nested 2400 levels deep (past the old sync walk's comfortable range) is forwarded redacted", async () => {
+    const up = upstreamRecorder();
+    const upstream = await startUpstream(up.handler);
+    const proxy = await startProxy({
+      upstreamBaseUrl: upstream.origin,
+      pipeline: await realPipeline(),
+    });
+    try {
+      const depth = 2400;
+      const nested = `${'{"a":'.repeat(depth)}${JSON.stringify(`k ${SECRET}`)}${"}".repeat(depth)}`;
+      const body = `{"model":"m","messages":[{"role":"user","content":"hi"}],"meta":${nested}}`;
+      const res = await rawRequest(proxy.origin, "/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      expect(res.status).toBe(200);
+      expect(up.seen.bodies[0]).not.toContain(SECRET);
+      expect(up.seen.bodies[0]).toContain(PLACEHOLDER);
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  }, 60_000);
+
+  it("a real pipeline error is reported to onPipelineError even when the client also hung up", async () => {
+    const up = upstreamRecorder();
+    const upstream = await startUpstream(up.handler);
+    const real = await realPipeline();
+    const errors: unknown[] = [];
+    let entered: () => void = () => {};
+    const inProcess = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const pipeline: RequestPipeline = {
+      name: "erroring",
+      // Waits for the hang-up, then fails with a REAL error (not an abort).
+      process: (_request, options) =>
+        new Promise((_resolve, reject) => {
+          entered();
+          options?.signal?.addEventListener("abort", () =>
+            reject(new Error("real pipeline failure")),
+          );
+        }),
+      redactOnlyAsync: (request, options) =>
+        (real.redactOnlyAsync as NonNullable<typeof real.redactOnlyAsync>)(request, options),
+    };
+    const proxy = await startProxy({
+      upstreamBaseUrl: upstream.origin,
+      pipeline,
+      onPipelineError: (e) => errors.push(e),
+    });
+    try {
+      const body = Buffer.from(
+        `{"model":"m","messages":[{"role":"user","content":"k ${SECRET}"}]}`,
+      );
+      const sock = connect(Number(new URL(proxy.origin).port), "127.0.0.1");
+      sock.on("error", () => {});
+      sock.write(
+        `POST /v1/messages HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: ${body.length}\r\n\r\n`,
+      );
+      sock.write(body);
+      await inProcess;
+      sock.destroy();
+      await vi.waitFor(() => expect(errors).toHaveLength(1), { timeout: 3_000 });
+      expect((errors[0] as Error).message).toBe("real pipeline failure");
+      expect(up.seen.hits).toBe(0);
+      await vi.waitFor(() => expect(proxy.proxy.bodyBytesInFlight).toBe(0), { timeout: 2_000 });
+    } finally {
+      await proxy.close();
+      await upstream.close();
+    }
+  }, 30_000);
 });

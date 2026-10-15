@@ -29,6 +29,7 @@ import {
   BodyBudget,
   type BodyHold,
   normalizeRequestBody,
+  RedactionAborted,
   RequestBodyRefusal,
   readBody,
 } from "./request-body.js";
@@ -370,11 +371,12 @@ export class GolemProxy {
       try {
         forward = await this.config.pipeline.process(original, { signal: abort.signal });
       } catch (err) {
-        // DUSTSEC.23: the client hung up while the pipeline was working. Nothing
-        // is forwarded and there is nobody to answer, so skip the redact-only
-        // re-walk (it is work for a response no one will read). The in-flight
-        // reservation is released by the response's close, as on every path.
-        if (abort.signal.aborted) {
+        // DUSTSEC.23: the walk stopped because the client hung up. Nothing is
+        // forwarded and there is nobody to answer, so skip the redact-only re-walk.
+        // ONLY that error counts: a real pipeline error is still reported to
+        // `onPipelineError` even if the client also left. The in-flight reservation
+        // is released by the response's close, as on every path.
+        if (err instanceof RedactionAborted) {
           res.destroy();
           report("client_gone", { detail: "the client hung up while the pipeline was running" });
           return;
@@ -400,7 +402,7 @@ export class GolemProxy {
                 })
               : (redactOnly as NonNullable<typeof redactOnly>).call(this.config.pipeline, original);
         } catch (redactErr) {
-          if (abort.signal.aborted) {
+          if (redactErr instanceof RedactionAborted) {
             res.destroy();
             report("client_gone", { detail: "the client hung up during the redaction fallback" });
             return;
