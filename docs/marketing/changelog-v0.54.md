@@ -113,7 +113,7 @@ Each of these was found while the claims ledger was built or by the review of th
 **DUSTSEC.21: encoded, text and non-object request bodies were not redacted** (PR #276, merge `ead363b7`; code `44dc5e63`, `b7a23714`, `9631511c`).
 - Was wrong: a gzip-encoded body, a body that began with a byte-order mark, a JSON array or scalar sent to the messages route, and any body that was not JSON went upstream as it arrived.
 - Fix: content-encoded bodies (gzip, x-gzip, deflate, brotli, stacked) are decoded and forwarded uncompressed; an unsupported encoding gets 415 and an undecodable body 400, with nothing forwarded. JSON is redacted whatever its content label says, including an array or scalar on the messages route. Text bodies, including form-urlencoded with percent-decoding, are redacted as text. A JSON body with a repeated object key is refused with 400, because a parser keeps the last value and a secret could sit in the shadowed one. A UTF-16 or UTF-32 body is refused with 502. The request-body limit defaults to 32 MiB (wire and decompressed) and an in-flight memory cap answers 503.
-- Accepted, by design: a non-JSON body under a known binary content label, or one that starts with a binary signature and looks binary, is forwarded unscanned, and the label is client-chosen. Object keys are not redacted. The walk is synchronous, so the limit bounds admission, not stall time.
+- Accepted, by design: a non-JSON body under a known binary content label, or one that starts with a binary signature and looks binary, is forwarded unscanned, and the label is client-chosen. Object keys are not redacted. The limit bounds admission; stall time is not claimed here (see the note on work merged after this refresh).
 <!-- C-01; C-27; ead363b7; 44dc5e63; b7a23714; 9631511c -->
 
 **DUSTSEC.20: the long-token rule rewrote documented API object ids** (PR #271, merge `589d1e64`; code `227145af`, `9eea81e7`).
@@ -188,7 +188,7 @@ Added in the refresh (merges after `a3f1d39`):
 
 ### Not shipped
 
-Three pieces of work exist only on unmerged branches and are not in `development`: an asynchronous redaction walk (DUSTSEC.23), a team prompt (DUST2.22) and a wiki watcher (DUST2.14). They are not part of anything above, and no date is promised. <!-- B-40; B-41 -->
+Three pieces of work merged to `development` on 2026-10-15, after this refresh: a time-sliced redaction walk (DUSTSEC.23, #315), a wiki and watch-path index watcher (DUST2.14, #317) and a bounded team note for the coder worker lane (DUST2.22, #318). They are not described above, have no ledger rows yet, and any claim about them needs a ledger row and a fact-check first. They are not in any release tag until a release is cut, and no date is promised. <!-- B-40; B-41 -->
 
 ## v0.54.3 (tag `v0.54.3`, `1719982`, 2026-09-23)
 
