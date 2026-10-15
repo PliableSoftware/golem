@@ -1,14 +1,16 @@
 ---
 task: DUST2.15
-title: "KB lookup completeness: graph-first alias matching and full-text `fetch` for any hit"
-state: queued
+title: KB lookup completeness: graph-first alias matching and full-text `fetch` for any hit
+state: done
 owner: agent
 size: S
 discipline: code
-design: "spec Decision 28; wiki Wiki-First Knowledge; SUMMARY.md Gaps 1.4/r018 (P), r039 (P)"
-gate: "A query naming a page alias surfaces that page via graph-first lookup; `fetch` returns full text for every hit kind `search` can return (getChunk); tests for each. golem verify green by exit code."
+design: spec Decision 28; wiki Wiki-First Knowledge; SUMMARY.md Gaps 1.4/r018 (P), r039 (P)
+gate: A query naming a page alias surfaces that page via graph-first lookup; `fetch` returns full text for every hit kind `search` can return (getChunk); tests for each. golem verify green by exit code.
+depends_on: []
 touches: [src/knowledge, src/mcp, tests]
 created: 2026-10-08
+updated: 2026-10-15T06:12:45.295Z
 ---
 
 ## What this is
@@ -48,3 +50,7 @@ Consumers of `WikiFrontmatter` (grep of `src`, `vscode-extension`, `docs`, `scri
 | `src/mcp/search.ts` | reads `aliases` for graph-first lookup | updated (new reader) |
 | `vscode-extension`, `scripts` | no `WikiFrontmatter` use | unaffected |
 | `docs/wiki/debriefs/2026-07-12-R3.5.md` | prose mention | unaffected |
+
+## Outcome
+
+shipped in #309

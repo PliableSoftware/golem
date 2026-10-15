@@ -1,15 +1,16 @@
 ---
 task: skill-opt-out-sticks
-title: "Deleting a Golem skill does not stick: the next `golem init` re-seeds it, because skills have no already-offered record"
-state: queued
+title: Deleting a Golem skill does not stick: the next `golem init` re-seeds it, because skills have no already-offered record
+state: done
 owner: agent
 size: M
 discipline: code
-design: "Guidance rules solved the same problem with the offered record in `.golem/state/guidance.json` (`seededByDefault` in `src/hooks/guidance.ts`). The provenance rule stays: a skill the user edited is `owned` and kept. Decide whether the record is per skill or a user-facing `golem skills disable <cmd>`; a design call, not assumed here."
-gate: "Integration test: init, delete `.claude/skills/golem-<cmd>/`, init again — the skill is NOT recreated and the report says it was declined; an explicit opt-back-in recreates it. Applies to every `P0_SKILLS` entry, not one. Replaces the pin in `tests/integration/cli-init-dust-skill-lifecycle.test.ts` (`re-seeds a deleted skill`). golem verify exit 0."
+design: Guidance rules solved the same problem with the offered record in `.golem/state/guidance.json` (`seededByDefault` in `src/hooks/guidance.ts`). The provenance rule stays: a skill the user edited is `owned` and kept. Decide whether the record is per skill or a user-facing `golem skills disable <cmd>`; a design call, not assumed here.
+gate: Integration test: init, delete `.claude/skills/golem-<cmd>/`, init again — the skill is NOT recreated and the report says it was declined; an explicit opt-back-in recreates it. Applies to every `P0_SKILLS` entry, not one. Replaces the pin in `tests/integration/cli-init-dust-skill-lifecycle.test.ts` (`re-seeds a deleted skill`). golem verify exit 0.
 depends_on: [DUST4.2]
 touches: [src/cli/init-skills.ts, src/cli/managed-files.ts, tests/integration]
 created: 2026-10-08
+updated: 2026-10-15T06:12:32.952Z
 ---
 
 ## The defect
@@ -37,3 +38,7 @@ defaults a project was already offered, so a removed rule stays removed.
 - Changing which skills are seeded by default (DUST4.2 decided: all of them).
 - Team skills (`golem-team-*`).
 - Weakening provenance: an edited skill must still be kept and reported.
+
+## Outcome
+
+shipped in #299

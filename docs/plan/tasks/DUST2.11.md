@@ -1,14 +1,16 @@
 ---
 task: DUST2.11
-title: "golem plugin diagnostics: surface every problem, count it, and name regex-hang risk"
-state: queued
+title: golem plugin diagnostics: surface every problem, count it, and name regex-hang risk
+state: done
 owner: agent
 size: M
 discipline: code
-design: "ADR-0005; wiki Plugin Seams; SUMMARY.md Gaps 1.1/r037 (P), r039 (P), r042 (N)"
-gate: "`golem plugin` reports every load/validation problem it can detect with a count, flags rules whose regex has catastrophic-backtracking shape, and a throwing stage is skipped with the pre-stage body kept AND reported; tests for each. golem verify green by exit code."
+design: ADR-0005; wiki Plugin Seams; SUMMARY.md Gaps 1.1/r037 (P), r039 (P), r042 (N)
+gate: `golem plugin` reports every load/validation problem it can detect with a count, flags rules whose regex has catastrophic-backtracking shape, and a throwing stage is skipped with the pre-stage body kept AND reported; tests for each. golem verify green by exit code.
+depends_on: []
 touches: [src/plugins, src/cli/plugin.ts, src/pipeline, tests]
 created: 2026-10-08
+updated: 2026-10-15T06:12:49.005Z
 ---
 
 ## What this is
@@ -64,3 +66,7 @@ the code only partly delivers. Evidence: DUST1.1 rows 37, 39, 42.
 
 - WASM / declarative successor rules (1.1/r051, r052 — not started, spec register).
 - S8 in-place mutation bypass (Phase 3).
+
+## Outcome
+
+shipped in #313

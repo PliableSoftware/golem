@@ -1,15 +1,16 @@
 ---
 task: DUSTSEC.23
-title: "The request redaction walk is synchronous, so one large many-small-strings body can freeze the proxy for tens of seconds"
-state: queued
+title: The request redaction walk is synchronous, so one large many-small-strings body can freeze the proxy for tens of seconds
+state: done
 owner: agent
 size: L
 discipline: code
-design: "Found by the fact-check and the DUSTSEC.21 reviews (2026-10-09). The JSON walk in src/pipeline/redaction.ts (redactRequestBody and its generic-body caller redactAnyBody in src/pipeline/body-redaction.ts) runs every redaction rule over every string value, synchronously, on the request path. Measured: about 0.7 s per MiB of many small strings; a 32 MiB object with many small values took about 26 s of blocked event loop, which stalls every other session's streams. The redactOnly fail-safe re-runs the whole walk when process fails, so the worst case can repeat. The size limit proxy.max_request_body_bytes (default 32 MiB, DUSTSEC.21) bounds what is admitted, not how long redaction takes."
-gate: "A request body of 32 MiB made of many small strings no longer blocks the event loop for more than a small, stated bound (for example 100 ms per slice): the walk yields to the event loop between slices, or runs in a worker thread, with identical output bytes to the synchronous walk on every recorded-shape fixture and on a property test over random JSON; fail-closed behaviour and the redactOnly fail-safe are preserved (an error or a worker crash refuses, never forwards raw); another session's stream shows no stall in a test that measures event-loop delay during a large redaction; tests/contract/ passes untouched; golem verify exit 0; an independent read-only review before merge, because it is a hard-rule change."
+design: Found by the fact-check and the DUSTSEC.21 reviews (2026-10-09). The JSON walk in src/pipeline/redaction.ts (redactRequestBody and its generic-body caller redactAnyBody in src/pipeline/body-redaction.ts) runs every redaction rule over every string value, synchronously, on the request path. Measured: about 0.7 s per MiB of many small strings; a 32 MiB object with many small values took about 26 s of blocked event loop, which stalls every other session's streams. The redactOnly fail-safe re-runs the whole walk when process fails, so the worst case can repeat. The size limit proxy.max_request_body_bytes (default 32 MiB, DUSTSEC.21) bounds what is admitted, not how long redaction takes.
+gate: A request body of 32 MiB made of many small strings no longer blocks the event loop for more than a small, stated bound (for example 100 ms per slice): the walk yields to the event loop between slices, or runs in a worker thread, with identical output bytes to the synchronous walk on every recorded-shape fixture and on a property test over random JSON; fail-closed behaviour and the redactOnly fail-safe are preserved (an error or a worker crash refuses, never forwards raw); another session's stream shows no stall in a test that measures event-loop delay during a large redaction; tests/contract/ passes untouched; golem verify exit 0; an independent read-only review before merge, because it is a hard-rule change.
 depends_on: []
 touches: [src/pipeline, src/proxy/server.ts, tests]
 created: 2026-10-09
+updated: 2026-10-15T06:12:51.474Z
 ---
 
 ## What this is
@@ -80,3 +81,7 @@ So the claim is: a body of many small values never holds the loop for more than 
 ### Second review round (2026-10-15)
 
 Bodies made mostly of containers skipped the slice: pushing and finishing a container cost nothing and the clock was read only after a committed value, so `[[],[],...]` ran as one slice (0.8 to 1.1 s stall). Now every iteration is charged (a unit per committed value, per container entered, per container finished; strings add one per 32 characters) and the clock is read at the TOP of the loop. Measured after the fix, 32 MB bodies, sync stall vs async worst stall: `[[],...]` 553 vs 195 ms, `[{},...]` 607 vs 252 ms, 16-deep empty arrays 787 vs 376 ms (the remainder is the one-call `JSON.stringify` of such a body; async wall time 1.2 to 1.3x sync here), numbers array 336 vs 123 ms with async wall 258 ms (at or below the sync 336 ms). New tests fail on the previous commit (4 container-heavy cases) and pass now; the array depth check now also asserts the async walk succeeds at 4400. The wiki and the claim above are corrected: the clock counts containers too, and the worst stall is a slice plus the largest single unsliceable call for that body class, not a flat bound.
+
+## Outcome
+
+shipped in #315

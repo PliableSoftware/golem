@@ -1,14 +1,16 @@
 ---
 task: DUST2.23
-title: "Redaction invariants: path-like tokens (§49) and a policy that cannot represent redaction-off"
-state: queued
+title: Redaction invariants: path-like tokens (§49) and a policy that cannot represent redaction-off
+state: done
 owner: agent
 size: M
 discipline: code
-design: "ADR-0004 ('unrepresentable'); verification-notes §49; SUMMARY.md Gaps 1.1/r011 (P) HR, 1.1/r095 (P) HR; DUST1.1 rows 'path-like tokens' and 'Unrepresentable'"
-gate: "Probe 1: a secret inside a path-like token containing `=`/`+` chunks is redacted (before: chunk disqualified it, DUST1.1 headline 9). Probe 2: a caller-built policy can no longer express `redaction: false` for a non-bypass request — a type or runtime check rejects it (before: `pipeline.ts:478`, `:603` obeyed it). golem verify green by exit code."
+design: ADR-0004 ('unrepresentable'); verification-notes §49; SUMMARY.md Gaps 1.1/r011 (P) HR, 1.1/r095 (P) HR; DUST1.1 rows 'path-like tokens' and 'Unrepresentable'
+gate: Probe 1: a secret inside a path-like token containing `=`/`+` chunks is redacted (before: chunk disqualified it, DUST1.1 headline 9). Probe 2: a caller-built policy can no longer express `redaction: false` for a non-bypass request — a type or runtime check rejects it (before: `pipeline.ts:478`, `:603` obeyed it). golem verify green by exit code.
+depends_on: []
 touches: [src/pipeline, src/compression/policy.ts, src/interfaces, tests]
 created: 2026-10-08
+updated: 2026-10-15T06:12:46.524Z
 ---
 
 ## What this is
@@ -62,3 +64,7 @@ unconditionally. `proxy.bypass_all` is untouched.
 - Tests: `tests/unit/pipeline/policy-guard.test.ts` (pipeline level, messages and non-messages) and
   `tests/integration/proxy-no-redaction-off-doors.test.ts` (through the proxy, messages and
   count_tokens, upstream body asserted redacted).
+
+## Outcome
+
+shipped in #311

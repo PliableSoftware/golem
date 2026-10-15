@@ -1,14 +1,16 @@
 ---
 task: DUST2.16
-title: "Settings cascade gaps: default! floor, locked controls rendered with origin + recourse, ApplyResult.overridden"
-state: queued
+title: Settings cascade gaps: default! floor, locked controls rendered with origin + recourse, ApplyResult.overridden
+state: done
 owner: agent
 size: M
 discipline: code
-design: "ADR-0008; wiki Settings Cascade, Configuration Surfaces; SUMMARY.md Gaps 1.8/r004 (N), r010 (P), r011 (P)"
-gate: "`default!` is honoured as a floor; a pinned control renders locked with its origin and recourse on every surface (IMPORTANT_LOCKED); a write the cascade overrules returns ApplyResult.overridden and the surface says so; tests for each. golem verify green by exit code."
+design: ADR-0008; wiki Settings Cascade, Configuration Surfaces; SUMMARY.md Gaps 1.8/r004 (N), r010 (P), r011 (P)
+gate: `default!` is honoured as a floor; a pinned control renders locked with its origin and recourse on every surface (IMPORTANT_LOCKED); a write the cascade overrules returns ApplyResult.overridden and the surface says so; tests for each. golem verify green by exit code.
+depends_on: []
 touches: [src/config, src/cli, src/tui, tests]
 created: 2026-10-08
+updated: 2026-10-15T06:12:50.236Z
 ---
 
 ## What this is
@@ -60,3 +62,7 @@ Tests: `tests/unit/config/default-floor.test.ts`, `tests/unit/config/cascade-gap
    lands and `overridden` says it has no effect (ADR-0008 consequence 4 reads this way). Refusing
    would make `default!` writes impossible to leave behind in a file; the safe reading kept here is
    report-only.
+
+## Outcome
+
+shipped in #314
