@@ -145,10 +145,11 @@ size limit bounds what is admitted, not how long redaction takes.
   store) is the original recursive walk, untouched. The proxy request path
   (`process`, `redactOnlyAsync`, `redactAnyBodyAsync`) uses `redactRequestBodyAsync`
   in `src/pipeline/redaction.ts`: an ITERATIVE walk with an explicit stack (no
-  recursion, so no call-stack limit of its own, and primitives cost nothing) that
+  recursion, so no call-stack limit of its own, and no allocation per primitive) that
   yields to the event loop with `setImmediate` every `REDACTION_SLICE_MS` (20 ms of
-  wall time; the clock is read every 256 cost units, a string counting one unit per
-  32 characters). Same rules, same order, same placeholder table; output is
+  wall time; the clock is read at the top of the loop every 256 cost units: one unit per
+  value committed, per container entered and per container finished, plus one per 32
+  characters of a string, so a body made only of empty containers is sliced as well). Same rules, same order, same placeholder table; output is
   **byte-identical** to the sync walk, held by a differential test (random JSON,
   every recorded shape at every turn length, primitive-heavy bodies, no mutation,
   the non-JSON and refused body classes, idempotence). A first version made the
@@ -167,10 +168,14 @@ size limit bounds what is admitted, not how long redaction takes.
   (that scan is about 300 ms on a key-dense 32 MiB body, the parse about 150 ms,
   each one call, now in separate turns; the token-estimate `JSON.stringify` about
   105 ms, whose result is reused for the forwarded bytes instead of stringifying
-  twice); a 31 MB numbers array 106 to 155 ms; one 30 MB string or a 30 MB non-JSON
-  text body about 0.5 s (one rule scan cannot be sliced). So a slice is 20 ms, the
-  worst stall is one slice plus one of those calls, and the single huge string is
-  not fixed.
+  twice); a 31 MB numbers array 106 to 155 ms; container-heavy 32 MB bodies
+  (`[[],...]`, `[{},...]`, 16-deep empty arrays) 195, 252 and 376 ms against sync
+  walks of 553, 607 and 787 ms (the rest of that is the `JSON.stringify` of such a
+  body, which is slow and one call; their async wall time is about 1.2 to 1.3x sync);
+  one 30 MB string or a 30 MB non-JSON text body about 0.5 s (one rule scan cannot be
+  sliced). So a slice is 20 ms, but the worst stall is a slice plus the largest single
+  unsliceable call on that body class (100 to 375 ms measured, 0.5 s for one huge
+  string), not a flat bound, and the single huge string is not fixed.
 - **Fail closed, unchanged.** A throw inside any slice rejects; `process` then falls
   back to `redactOnlyAsync` exactly as it fell back to `redactOnly`, and a failure
   there is a 502 with nothing forwarded.
