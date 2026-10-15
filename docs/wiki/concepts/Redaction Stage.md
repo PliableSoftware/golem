@@ -141,26 +141,36 @@ measuring machine), so a 32 MiB body (the `proxy.max_request_body_bytes` default
 held the event loop for 10 to 26 s and stalled every other session's streams. The
 size limit bounds what is admitted, not how long redaction takes.
 
-- **One walk, two drivers.** `redactValueSteps` in `src/pipeline/redaction.ts` is a
-  generator that yields between values once a time slice is spent. `redactRequestBody`
-  (sync, for hooks and the conversation store) drains it without ever yielding;
-  `redactRequestBodyAsync` (the proxy request path: `process`, `redactOnlyAsync`,
-  `redactAnyBodyAsync`) yields to the event loop with `setImmediate` every
-  `REDACTION_SLICE_MS` (20 ms of wall time, checked with `performance.now()` after
-  each value, so a slice is bounded whatever the string sizes are). Same rules, same
-  order, same placeholder table: output is **byte-identical** to the sync walk, held
-  by a differential test (400 random JSON bodies, every recorded shape at every turn
-  length, the non-JSON and refused body classes, idempotence).
-- **Measured** (31.9 MB, about 700,000 short strings): sync 10.6 s wall and a 10.6 s
-  stall; async 10.9 s wall (about 1.02x) with 20 ms slices, p99 loop delay 20 ms and
-  a longest stall of 123 to 137 ms. A worker thread was measured and rejected: 11.8 s
-  wall, a 142 ms main-thread stall to structured-clone the body anyway, two resident
-  copies, and a crash path to make fail-closed.
-- **What still blocks.** `JSON.stringify` of the body for the token estimate (about
-  105 ms per 32 MiB, run before and, if anything was redacted, after the walk),
-  `JSON.parse` (about 150 ms), and one single very long string (a rule scans it
-  whole, so a 32 MiB text body is still one synchronous scan). The bound is
-  therefore about 20 ms per slice plus those one-off calls.
+- **Two walks, one output.** The sync `redactRequestBody` (hooks, the conversation
+  store) is the original recursive walk, untouched. The proxy request path
+  (`process`, `redactOnlyAsync`, `redactAnyBodyAsync`) uses `redactRequestBodyAsync`
+  in `src/pipeline/redaction.ts`: an ITERATIVE walk with an explicit stack (no
+  recursion, so no call-stack limit of its own, and primitives cost nothing) that
+  yields to the event loop with `setImmediate` every `REDACTION_SLICE_MS` (20 ms of
+  wall time; the clock is read every 256 cost units, a string counting one unit per
+  32 characters). Same rules, same order, same placeholder table; output is
+  **byte-identical** to the sync walk, held by a differential test (random JSON,
+  every recorded shape at every turn length, primitive-heavy bodies, no mutation,
+  the non-JSON and refused body classes, idempotence). A first version made the
+  sync walk a generator too; review showed that cost nesting depth, so it is not.
+- **Depth.** Bisected through the real proxy, old / now: objects 3432 / 4466, arrays
+  4340 / 4466, mixed 4387 / 4466; direct the async walk reaches 4471, where the
+  whole-body `JSON.stringify` stops, for every shape.
+- **Measured** (32 MiB, about 700,000 short strings): old sync 10.5 to 11.1 s and one
+  stall of that length; async 10.4 to 10.6 s with 20 ms slices, worst stall 102 to
+  107 ms. Numbers array (31 MB): old 275 ms, async 240 ms. A worker thread was
+  measured and rejected: 11.8 s wall, a 142 ms main-thread stall to
+  structured-clone the body, two resident copies, and a crash path to make
+  fail-closed.
+- **What still blocks, per body class** (worst stall measured): many small strings
+  102 to 107 ms walk only, 313 to 547 ms with the parse and the duplicate-key scan
+  (that scan is about 300 ms on a key-dense 32 MiB body, the parse about 150 ms,
+  each one call, now in separate turns; the token-estimate `JSON.stringify` about
+  105 ms, whose result is reused for the forwarded bytes instead of stringifying
+  twice); a 31 MB numbers array 106 to 155 ms; one 30 MB string or a 30 MB non-JSON
+  text body about 0.5 s (one rule scan cannot be sliced). So a slice is 20 ms, the
+  worst stall is one slice plus one of those calls, and the single huge string is
+  not fixed.
 - **Fail closed, unchanged.** A throw inside any slice rejects; `process` then falls
   back to `redactOnlyAsync` exactly as it fell back to `redactOnly`, and a failure
   there is a 502 with nothing forwarded.
@@ -168,7 +178,8 @@ size limit bounds what is admitted, not how long redaction takes.
   client that hangs up mid-walk makes the walk reject between slices, nothing is
   forwarded, the redact-only re-walk is skipped (nobody would read the answer), the
   outcome is reported as `client_gone`, and the in-flight reservation is released by
-  the response close as on every other path.
+  the response close as on every other path. Only a `RedactionAborted` counts: a real
+  pipeline error is reported to `onPipelineError` first, even if the client also left.
 
 ## Open, not yet fixed
 

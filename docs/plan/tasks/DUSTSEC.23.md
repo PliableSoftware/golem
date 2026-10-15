@@ -39,18 +39,40 @@ Parts that cannot be sliced, measured on the same body: `structuredClone` 464 ms
 
 **Slice budget: 20 ms of wall time**, checked with `performance.now()` after each string (time-based, so a slice is bounded whatever the string sizes are). Between slices the walk awaits `setImmediate`, which runs after the poll phase, so socket I/O of other sessions is served every slice; it behaves the same on Windows. The stated bound is therefore about 20 ms plus the longest single string, plus the parts that are not sliceable (parse, stringify, one very large single string, which still cost what they cost per call).
 
-**Design.** One walk, written once as a generator (`redactValueSteps`) that yields when the slice budget is spent. The sync `redactRequestBody` drains it with an infinite budget (so it never yields and its output is the same code's output); the async `redactRequestBodyAsync` drives it with the slice budget and an AbortSignal. A differential test checks the two byte for byte anyway.
+**Design (revised in review round 1, 2026-10-15).** The first cut wrote the walk once as a generator and had the sync walk drain it. Review found that generator frames cost more call stack per level than the old recursion (through the proxy the old code forwarded about 2808 levels of nesting, the generator version about 2144) and that every number, boolean and null allocated a generator. So: the SYNC `redactRequestBody` is the original recursive walk again, byte for byte (so hooks, `redactOnly` and the conversation store are unchanged in depth and speed), and the ASYNC walk is a separate ITERATIVE walk with an explicit stack: no recursion and no generators, primitives handled inline, the clock read every 256 cost units rather than per value. A differential test holds the two to the same bytes.
 
-## Implemented (2026-10-14, branch awaiting independent review)
+## Implemented (2026-10-14, revised 2026-10-15 after the first review)
 
-- `src/pipeline/redaction.ts`: the walk is one generator, `redactValueSteps`; `redactRequestBody` (sync) drains it, `redactRequestBodyAsync` slices it (`REDACTION_SLICE_MS` = 20, `setImmediate`, `AbortSignal`, `RedactionAborted`). Strings are handled inline (no generator per string); sparse arrays keep their holes as `Array.prototype.map` did.
-- `src/pipeline/body-redaction.ts`: `redactAnyBodyAsync` beside the unchanged-behaviour `redactAnyBody`; the non-JSON classification is a shared helper, so both take the same refusals.
-- `src/pipeline/pipeline.ts`: `process` uses the async walks (stage 1, the post-plugin re-redaction, the non-messages and non-JSON fallbacks); new `redactOnlyAsync`; sync `redactOnly` kept.
-- `src/proxy/types.ts` (not `src/interfaces/`, so no frozen contract changed): optional `options.signal` on `process`, optional `redactOnlyAsync`, new `PipelineRunOptions`.
-- `src/proxy/server.ts`: passes the abort signal, prefers `redactOnlyAsync`, and on a client abort during the pipeline or the fallback replies nothing, skips the fallback walk and reports `client_gone`.
-- Callers left synchronous on purpose: `src/session/conversation-store.ts` (an interface method that is sync), hooks, `redactStandaloneText`. None is on the proxy request path.
-- Tests: `tests/unit/pipeline/redaction-async.test.ts` (differential, abort, throw, no leaked timers, stall with the sync version failing the same bound, fairness), `tests/integration/dustsec23-async-redaction.test.ts` (through the proxy: stall, two bodies in flight, hang-up mid-walk, `redactOnlyAsync` preference, fail closed). `tests/contract/` untouched.
+- `src/pipeline/redaction.ts`: sync `redactRequestBody` / `redactValue` restored to the original recursive code (the walk code is identical to development). New `SlicedWalk` (iterative, explicit stack, one-slot root frame, holes preserved as `Array.prototype.map` does, no mutation of the input) behind `redactRequestBodyAsync` (`REDACTION_SLICE_MS` = 20, `setImmediate`, `AbortSignal`). `RedactionPacer` (one per request) yields between the unsliceable steps, but only when 5 ms or more of work ran since its last yield: a small body never yields (and so needs no timer machinery; the local-answer fake-timer tests depend on that). The async result carries `json`, the serialisation it already made for the token estimate, so callers do not stringify twice (same bytes).
+- `src/proxy/request-body.ts`: `RedactionAborted` lives here (re-exported from `redaction.ts`), so the proxy can tell an abort from a real error without importing the pipeline.
+- `src/pipeline/body-redaction.ts`: `redactAnyBodyAsync`; the non-JSON classification is a shared helper, so both take the same refusals; yields between parse, duplicate-key scan, walk and serialise.
+- `src/pipeline/pipeline.ts`: `process` uses the async walks; new `redactOnlyAsync`; sync `redactOnly` kept.
+- `src/proxy/types.ts` (not `src/interfaces/`): optional `options.signal` on `process`, optional `redactOnlyAsync`, `PipelineRunOptions`.
+- `src/proxy/server.ts`: passes the abort signal and prefers `redactOnlyAsync`. Only a `RedactionAborted` counts as the client having gone (reply nothing, skip the fallback, report `client_gone`); any other pipeline error is reported to `onPipelineError` first, even if the client also left, and still forwards nothing.
+- Left synchronous on purpose: `src/session/conversation-store.ts`, hooks, `redactStandaloneText`: not on the proxy request path.
+- Tests: `tests/unit/pipeline/redaction-async.test.ts` (differential over random JSON, recorded shapes, primitive-heavy bodies, no-mutation, deep nesting 1k to 4.4k as objects, arrays and mixed, abort, throw, timers, stall, fairness), `tests/integration/dustsec23-async-redaction.test.ts` (through the proxy: stall measured against the sync stall of the same body, two bodies in flight, hang-up mid-walk, depth 2400, a real error vs a hang-up, `redactOnlyAsync` preference, fail closed). `tests/contract/` untouched. Against a scratch checkout of the first cut, the deep-nesting cases at 3500 and 4400 (objects and mixed), the depth-2400 proxy test and the real-error-vs-hang-up test fail.
 
-Re-measured on the real code (32 MiB body): sync 10.6 s wall, 10.6 s stall; async 10.9 s wall (1.02x), p99 loop delay 20 ms, longest stall 123 to 137 ms (the unsliceable `JSON.stringify` of the token estimate, about 105 ms, plus a slice).
+### Measured (this machine, Linux, 4 cores, Node 24; old = development before this task)
 
-Residual: the stall is bounded by one slice plus `JSON.stringify` / `JSON.parse` / one very long string, not by 100 ms flat; a single large non-JSON text body is still one synchronous scan.
+Nesting capacity (deepest body that still comes out redacted; bisected, +-8):
+
+| Shape | old, direct | first cut, direct | now, direct | old, via proxy | first cut, via proxy | now, via proxy |
+|---|---|---|---|---|---|---|
+| object | 4471 | 2320 | 4471 | 3432 | 2193 | 4466 |
+| array | 1763 | 2237 | 4471 | 4340 | 2325 | 4466 |
+| mixed | 2325 | 2250 | 4471 | 4387 | 2193 | 4466 |
+
+(Direct is the sync walk for old and the async walk for the others; 4471 is where `JSON.stringify` of the whole body stops, which both versions run first. The via-proxy column is bounded by the rest of the request path, not by redaction. The sync walk is the old code again, so its depth is the old depth.)
+
+Wall time and worst event-loop stall (a 2 ms timer's longest gap), old sync vs async, warm second run, two runs where they differ:
+
+| Body | old wall / stall | async wall | async worst stall | where the stall is |
+|---|---|---|---|---|
+| 32 MiB, many small strings (walk only) | 10.5 to 11.1 s / the whole walk | 10.4 to 10.6 s (about 1.0x) | 102 to 107 ms | `JSON.stringify` for the token estimate (about 105 ms) |
+| same, `redactAnyBody` (with parse) | 11.0 s / the whole walk | 10.9 to 12.4 s (1.0 to 1.13x, noisy; other agents share this box) | 313 to 547 ms | the duplicate-key byte scan (about 300 ms on a body with this many keys) and `JSON.parse` (about 150 ms); each is one call, so they now run in separate turns |
+| 31 MB array of numbers (walk only) | 275 ms | 240 ms (0.9x) | 106 ms | `JSON.stringify` before the walk |
+| same, `redactAnyBody` | 670 ms | 522 ms (0.8x) | 155 ms | parse |
+| one 30 MB string in JSON | 540 to 625 ms | 542 to 600 ms | 485 to 489 ms | the single string: one rule scan cannot be sliced |
+| 30 MB non-JSON text | 505 ms | 516 ms | 516 ms | the same, one scan |
+
+So the claim is: a body of many small values never holds the loop for more than a slice (20 ms) plus ONE of the unsliceable calls (up to about 300 ms for the duplicate-key scan on a key-dense 32 MiB body, about 150 ms for the parse, about 105 ms for a stringify); a single huge string, or a huge non-JSON text body, is still one scan of 0.5 s. Not fixed here: slicing the duplicate-key scanner (it is DUSTSEC.21's refusal code) and slicing one rule scan over one string.
