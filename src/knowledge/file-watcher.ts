@@ -28,7 +28,7 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { isChunkableExtension } from "./chunker.js";
-import { MAX_FILE_BYTES, SKIP_DIRS, scanFiles } from "./ingest.js";
+import { MAX_FILE_BYTES, SKIP_DIRS, scanTree, WalkLimitError } from "./ingest.js";
 
 /** One debounced round of changes, classified by whether the path still exists. */
 export interface FileChangeBatch {
@@ -111,9 +111,21 @@ function isIgnoredPath(root: string, absPath: string): boolean {
 }
 
 /** Snapshot of the watched tree: absolute path → `mtimeMs:size` change signal. */
-async function snapshot(root: string): Promise<Map<string, string>> {
+/** Regular files (chunkable or not) the walk may see per scan, as a multiple of `maxFiles`. */
+export const WALK_LIMIT_FACTOR = 10;
+
+async function snapshot(root: string, maxFiles: number): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  for (const f of await scanFiles(root)) map.set(f.abs, `${f.mtimeMs}:${f.size}`);
+  const limit = Number.isFinite(maxFiles) ? maxFiles * WALK_LIMIT_FACTOR : undefined;
+  try {
+    for (const f of (await scanTree(root, undefined, limit)).files) {
+      map.set(f.abs, `${f.mtimeMs}:${f.size}`);
+    }
+  } catch (err) {
+    if (err instanceof WalkLimitError)
+      throw new WatchCapExceededError(root, err.walked, limit ?? 0);
+    throw err;
+  }
   return map;
 }
 
@@ -179,7 +191,7 @@ export async function watchPath(
   };
 
   // Baseline snapshot: only changes AFTER watch start are reported.
-  let prev = await snapshot(root);
+  let prev = await snapshot(root, maxFiles);
   if (prev.size > maxFiles) throw new WatchCapExceededError(root, prev.size, maxFiles);
   let overCap = false;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -187,8 +199,13 @@ export async function watchPath(
   const poll = async (): Promise<void> => {
     let cur: Map<string, string>;
     try {
-      cur = await snapshot(root);
-    } catch {
+      cur = await snapshot(root, maxFiles);
+    } catch (err) {
+      if (err instanceof WatchCapExceededError) {
+        if (!overCap) swallow(err);
+        overCap = true;
+        return; // paused until the tree is walkable again
+      }
       return; // root briefly unreadable (mid-rename, etc.) — try again next tick
     }
     if (cur.size > maxFiles) {

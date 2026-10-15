@@ -5,7 +5,7 @@
  * backed by an in-memory store keyed by source path like the real driver's.
  */
 
-import { mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -17,7 +17,12 @@ import {
   writeManifest,
 } from "../../../src/cli/auto-index.js";
 import type { Chunk, IngestReport, KnowledgeBase } from "../../../src/interfaces/knowledge.js";
-import { collectionDir, knowledgeDir, sourcePathFor } from "../../../src/knowledge/index.js";
+import {
+  collectionDir,
+  knowledgeDir,
+  PartialReindexError,
+  sourcePathFor,
+} from "../../../src/knowledge/index.js";
 import type { IncrementalIngest } from "../../../src/knowledge/knowledge-base.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
@@ -103,11 +108,34 @@ describe("a killed first build resumes", () => {
     for (const k of dying.store.keys()) resumed.store.set(k, 1);
     const r = await ensureProjectIndexed(opts(resumed));
 
-    expect(r.action).toBe("synced"); // a manifest exists now, so this is a continuation
-    expect(r.updated).toBe(total - INDEX_CHECKPOINT_FILES);
+    expect(r.action).toBe("indexed"); // the unfinished build is continued, not a routine sync
     expect(resumed.store.size).toBe(total); // nothing lost
     expect([...resumed.store.values()].every((n) => n === 1)).toBe(true); // nothing doubled
     expect(resumed.fullIngests).toBe(0);
+  });
+
+  it("after a kill, the NEXT session continues under the DEFAULT auto-index cap instead of deferring forever", async () => {
+    const total = 100;
+    await writeFiles(total);
+    const DEFAULT_CAP = 50; // knowledge.auto_index_max_files
+    const dying = new StoreKB(3); // two batches (40 files) land, then the kill
+    await expect(ensureProjectIndexed(opts(dying, { maxAutoFiles: DEFAULT_CAP }))).rejects.toThrow(
+      "killed mid-ingest",
+    );
+    expect((await readManifestJson()).building).toBe(true);
+
+    const resumed = new StoreKB();
+    for (const k of dying.store.keys()) resumed.store.set(k, 1);
+    const r = await ensureProjectIndexed(opts(resumed, { maxAutoFiles: DEFAULT_CAP }));
+    expect(r.action).toBe("indexed"); // NOT "deferred"
+    expect(resumed.store.size).toBe(total);
+    expect((await readManifestJson()).building).toBeUndefined(); // finished: cap applies again
+
+    // a finished index is a routine sync again, and the cap defers a big churn
+    await writeFiles(total, "changed");
+    expect(
+      (await ensureProjectIndexed(opts(new StoreKB(), { maxAutoFiles: DEFAULT_CAP }))).action,
+    ).toBe("deferred");
   });
 
   it("a first build reports indexed and is not deferred by the auto-index cap", async () => {
@@ -131,10 +159,6 @@ describe("an untrustworthy manifest is discarded, never believed", () => {
     ["truncated JSON (a crash mid-write)", '{"signature":"lexical:hash-v1-512","files":{"a.tx'],
     ["a wrong shape", JSON.stringify({ signature: 7, files: [] })],
     [
-      "a newer format",
-      JSON.stringify({ version: 99, signature: "lexical:hash-v1-512", files: {} }),
-    ],
-    [
       "files that are not states",
       JSON.stringify({ signature: "lexical:hash-v1-512", files: { "a.txt": 3 } }),
     ],
@@ -154,6 +178,44 @@ describe("an untrustworthy manifest is discarded, never believed", () => {
       expect((await readManifestJson()).version).toBe(MANIFEST_VERSION);
     });
   }
+
+  it("never wipes the index for a NEWER manifest format: skips, logs, leaves every byte", async () => {
+    await writeFiles(2);
+    await ensureProjectIndexed(opts(new StoreKB()));
+    const newer = JSON.stringify({
+      version: 99,
+      signature: "lexical:hash-v1-512",
+      files: {},
+      x: 1,
+    });
+    await writeFile(manifestPath(), newer, "utf8");
+    const logs: string[] = [];
+    const kb = new StoreKB();
+    const r = await ensureProjectIndexed(opts(kb, { log: (m) => logs.push(m) }));
+    expect(r.action).toBe("skipped");
+    expect(kb.batches).toBe(0);
+    expect(logs.join("\n")).toMatch(/newer golem owns this index/);
+    expect(await readFile(manifestPath(), "utf8")).toBe(newer);
+    // ...and no indexing write may replace it either (golem index, a recorder, a checkpoint)
+    await writeManifest(projectDir, projectDir, "lexical:hash-v1-512", [projectDir], "t", {});
+    expect(await readFile(manifestPath(), "utf8")).toBe(newer);
+  });
+
+  it("an UNREADABLE manifest (not corrupt) defers the sync and keeps the index", async () => {
+    await writeFiles(2);
+    await ensureProjectIndexed(opts(new StoreKB()));
+    // a directory where the file should be: readFile fails with EISDIR, not ENOENT
+    await rm(manifestPath());
+    await mkdir(manifestPath());
+    const logs: string[] = [];
+    const kb = new StoreKB();
+    const r = await ensureProjectIndexed(opts(kb, { log: (m) => logs.push(m) }));
+    expect(r.action).toBe("skipped");
+    expect(kb.batches).toBe(0);
+    expect(logs.join("\n")).toMatch(/unreadable/);
+    expect(logs.join("\n")).not.toMatch(/discarded/);
+    expect((await readdir(path.dirname(manifestPath()))).length).toBeGreaterThan(0); // collection kept
+  });
 
   it("still trusts a legacy manifest with no version field, silently", async () => {
     await writeFiles(2);
@@ -229,5 +291,47 @@ describe("createManifestRecorder", () => {
       removedSourcePaths: [],
     });
     expect(await readFile(manifestPath(), "utf8")).toBe("{nope");
+  });
+});
+
+describe("a signature mismatch never gets written into", () => {
+  it("the recorder refuses another build's manifest", async () => {
+    await writeManifest(projectDir, projectDir, "semantic:bge-m3", [projectDir], "t", {});
+    const record = createManifestRecorder(
+      projectDir,
+      projectDir,
+      [projectDir],
+      "lexical:hash-v1-512",
+    );
+    await record({
+      baseDir: projectDir,
+      changed: [{ abs: path.join(projectDir, "a.txt"), mtimeMs: 5, size: 9 }],
+      removedSourcePaths: [],
+    });
+    expect((await readManifestJson()).files).toEqual({});
+  });
+});
+
+describe("an unreadable file in a sync is not recorded as indexed", () => {
+  it("is retried by the next sync and its old chunks were never dropped", async () => {
+    await writeFiles(3);
+    await ensureProjectIndexed(opts(new StoreKB()));
+    await writeFiles(3, "changed");
+    const bad = path.join(projectDir, "f001.txt");
+    const kb = new StoreKB();
+    const real = kb.reindexFiles.bind(kb);
+    kb.reindexFiles = async (b, p, files) => {
+      const ok = files.filter((f) => f !== bad);
+      await real(b, p, ok);
+      if (ok.length !== files.length) throw new PartialReindexError([bad], ok.length);
+      return ok.length;
+    };
+    await ensureProjectIndexed(opts(kb));
+    const files = (await readManifestJson()).files as Record<string, unknown>;
+    expect(Object.keys(files).sort()).toEqual(["f000.txt", "f002.txt"]); // f001 not current
+
+    const again = new StoreKB();
+    const r = await ensureProjectIndexed(opts(again));
+    expect(r.updated).toBe(1); // only the one that failed
   });
 });

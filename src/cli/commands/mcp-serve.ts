@@ -37,7 +37,12 @@ import { readServedModel } from "../../proxy/served-model.js";
 import { openTelemetryStore } from "../../telemetry/index.js";
 import { VERSION } from "../../version.js";
 import { FederatedWikiReader, FileWikiStore } from "../../wiki/index.js";
-import { ensureProjectIndexed, startKnowledgeWatch } from "../auto-index.js";
+import {
+  type EnsureIndexedResult,
+  embedderSignatureForModel,
+  ensureProjectIndexed,
+  startKnowledgeWatch,
+} from "../auto-index.js";
 import { buildKnowledgeStack } from "../build-knowledge.js";
 import { credentialEnvForProxy } from "../gateways.js";
 import { InitError } from "../init.js";
@@ -197,6 +202,7 @@ export default function register(program: Command): void {
         );
         let knowledge: KnowledgeBase | undefined;
         let indexWatch: IndexWatchDaemon | undefined;
+        let shuttingDown = false;
         let inference: InferenceService | undefined;
         const wiki = settings.knowledge.enabled
           ? new FileWikiStore({
@@ -216,38 +222,47 @@ export default function register(program: Command): void {
             // decision it makes on the user's behalf has to be stated, not
             // inferred from a rebuild that just happens to take a long time.
             if (stack.notice !== undefined) process.stderr.write(`golem kb: ${stack.notice}\n`);
-            // DUST2.14: keep the index fresh while this server lives (wiki + watch_paths).
-            void startKnowledgeWatch({
-              projectDir: opts.dir,
-              projectId: opts.dir,
-              knowledge: stack.knowledge,
-              watchPaths: settings.knowledge.watch_paths,
-              wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir),
-              log: (m) => process.stderr.write(`golem kb: ${m}\n`),
-            })
-              .then((d) => {
-                indexWatch = d;
-              })
-              .catch(() => {});
-            void ensureProjectIndexed({
-              projectDir: opts.dir,
-              projectId: opts.dir,
-              knowledge: stack.knowledge,
-              embedMode: stack.embedMode,
-              embedModel: stack.embedModel,
-              tier: stack.facts.tier,
-              watchPaths: settings.knowledge.watch_paths,
-              // R11.2: this is THE automatic caller — it fires on every session
-              // start, so it is the one that must be capped. `golem index` (the
-              // explicit ask) passes no cap and syncs whatever is pending.
-              maxAutoFiles: settings.knowledge.auto_index_max_files,
-              now: new Date().toISOString(),
-              log: (m) => process.stderr.write(`golem kb: ${m}\n`),
-            }).catch((e) =>
-              process.stderr.write(
-                `golem kb: auto-index failed (${e instanceof Error ? e.message : String(e)})\n`,
-              ),
-            );
+            const kbLog = (m: string): void => void process.stderr.write(`golem kb: ${m}\n`);
+            const syncOnce = (): Promise<EnsureIndexedResult> =>
+              ensureProjectIndexed({
+                projectDir: opts.dir,
+                projectId: opts.dir,
+                knowledge: stack.knowledge,
+                embedMode: stack.embedMode,
+                embedModel: stack.embedModel,
+                tier: stack.facts.tier,
+                watchPaths: settings.knowledge.watch_paths,
+                // R11.2: this is THE automatic caller — it fires on every session
+                // start, so it is the one that must be capped. `golem index` (the
+                // explicit ask) passes no cap and syncs whatever is pending.
+                maxAutoFiles: settings.knowledge.auto_index_max_files,
+                now: new Date().toISOString(),
+                log: kbLog,
+              });
+            // DUST2.14: sync first, THEN keep the index fresh (wiki + watch_paths) while
+            // this server lives. The daemon starts after the sync so the manifest it
+            // checks already carries this session's embedder; if the sync did real work a
+            // second scan catches what changed while it ran (the watcher's baseline is
+            // taken after it).
+            void (async () => {
+              try {
+                const first = await syncOnce();
+                if (first.action !== "skipped" && first.action !== "deferred") await syncOnce();
+              } catch (e) {
+                kbLog(`auto-index failed (${e instanceof Error ? e.message : String(e)})`);
+              }
+              indexWatch = await startKnowledgeWatch({
+                projectDir: opts.dir,
+                projectId: opts.dir,
+                knowledge: stack.knowledge,
+                watchPaths: settings.knowledge.watch_paths,
+                wikiDir: resolveWikiDir(opts.dir, settings.knowledge.wiki_dir),
+                signature: embedderSignatureForModel(stack.embedMode, stack.embedModel),
+                sync: syncOnce,
+                log: kbLog,
+              });
+              if (shuttingDown) void indexWatch?.close();
+            })().catch(() => {});
           } catch (err) {
             process.stderr.write(
               `golem: knowledge base unavailable, serving without it (${err instanceof Error ? err.message : String(err)})\n`,
@@ -339,7 +354,6 @@ export default function register(program: Command): void {
         // must END the process: it cannot wait for `exit`, which does not fire while
         // anything still holds the event loop. Idempotent; the hard exit is a
         // backstop so a wedged close cannot keep an orphan alive.
-        let shuttingDown = false;
         const shutdown = (code: number): void => {
           if (shuttingDown) return;
           shuttingDown = true;

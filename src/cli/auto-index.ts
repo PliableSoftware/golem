@@ -38,12 +38,14 @@ import {
   type FileState,
   type IndexWatchDaemon,
   knowledgeDir,
+  PartialReindexError,
   projectBaseDir,
   readCollectionDim,
   scanFiles,
   sourcePathFor,
   startIndexWatchDaemon,
   supportsIncremental,
+  type Timers,
 } from "../knowledge/index.js";
 import type { EmbedMode } from "./build-knowledge.js";
 
@@ -78,6 +80,8 @@ export const MANIFEST_VERSION = 1;
 
 interface IndexManifest {
   readonly version?: number;
+  /** A first build started and has not finished: a rerun continues it, uncapped. */
+  readonly building?: boolean;
   readonly signature: string;
   readonly ts?: string;
   readonly paths?: readonly string[];
@@ -138,23 +142,36 @@ const manifestSchema = z
     paths: z.array(z.string()).optional(),
     files: z.record(z.string(), z.object({ m: z.number(), s: z.number() })).optional(),
     embedder: z.unknown().optional(),
+    /** True from the start of a first build until it finishes (DUST2.14). */
+    building: z.boolean().optional(),
   })
   .passthrough();
+
+/** What reading a manifest found; at most one of `corrupt`/`unreadable`/`newer` is set. */
+interface ManifestRead {
+  readonly manifest: IndexManifest | null;
+  /** A readable file that fails to parse or validate: discarded, the index rebuilt. */
+  readonly corrupt?: string;
+  /** The file could not be read at all: not evidence of anything, so nothing is changed. */
+  readonly unreadable?: string;
+  /** Written by a newer format version: left strictly alone. */
+  readonly newer?: number;
+}
 
 /**
  * Read a collection's manifest, telling "no manifest" (a fresh index) apart from
  * "a manifest that cannot be trusted" (`corrupt` names why). An untrusted manifest
  * is never half-used: it reads as absent, so the caller rebuilds from the files.
  */
-async function inspectManifest(
-  dir: string,
-): Promise<{ manifest: IndexManifest | null; corrupt?: string }> {
+async function inspectManifest(dir: string): Promise<ManifestRead> {
   let raw: string;
   try {
     raw = await readFile(path.join(dir, "manifest.json"), "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { manifest: null };
-    return { manifest: null, corrupt: `unreadable (${(err as Error).message})` };
+    // Any other read failure (a transient EBUSY/EACCES on Windows, say) says nothing
+    // about the CONTENT: it must never be mistaken for corruption and wipe the index.
+    return { manifest: null, unreadable: (err as Error).message };
   }
   let json: unknown;
   try {
@@ -162,11 +179,12 @@ async function inspectManifest(
   } catch {
     return { manifest: null, corrupt: "not valid JSON (truncated by a crash?)" };
   }
+  // A newer Golem owns this manifest: checked before the shape, since a newer shape
+  // may not match ours. It is neither discarded nor written over.
+  const v = (json as { version?: unknown } | null)?.version;
+  if (typeof v === "number" && v > MANIFEST_VERSION) return { manifest: null, newer: v };
   const parsed = manifestSchema.safeParse(json);
   if (!parsed.success) return { manifest: null, corrupt: "unexpected shape" };
-  if ((parsed.data.version ?? 1) > MANIFEST_VERSION) {
-    return { manifest: null, corrupt: `written by a newer format (v${parsed.data.version})` };
-  }
   return { manifest: parsed.data as IndexManifest };
 }
 
@@ -549,9 +567,12 @@ export async function writeManifest(
   paths: readonly string[],
   now: string,
   files: Readonly<Record<string, PersistedFileState>> = {},
+  building = false,
 ): Promise<void> {
   const base = knowledgeDir(projectDir);
   const dir = collectionDir(base, projectId);
+  // A manifest from a newer Golem is never overwritten by an older one.
+  if ((await inspectManifest(dir)).newer !== undefined) return;
   await mkdir(dir, { recursive: true });
   // R10.4: record the embedder as a FACT ABOUT THE INDEX, not something a
   // reader has to re-derive from the current machine's hardware tier. Width
@@ -571,6 +592,7 @@ export async function writeManifest(
         };
   const manifest: IndexManifest = {
     version: MANIFEST_VERSION,
+    ...(building ? { building: true } : {}),
     signature,
     ts: now,
     paths,
@@ -605,6 +627,7 @@ export function createManifestRecorder(
   projectDir: string,
   projectId: string,
   syncRoots: readonly string[],
+  signature?: string,
 ): (change: AppliedIndexChange) => Promise<void> {
   const dir = collectionDir(knowledgeDir(projectDir), projectId);
   const roots = syncRoots.map((r) => path.resolve(r));
@@ -618,6 +641,9 @@ export function createManifestRecorder(
   return async (change) => {
     const { manifest } = await inspectManifest(dir);
     if (manifest === null) return;
+    // Another build's manifest (a different embedder): its file map describes vectors
+    // this process did not write, so recording into it would lie about them.
+    if (signature !== undefined && manifest.signature !== signature) return;
     const files: Record<string, PersistedFileState> = { ...(manifest.files ?? {}) };
     for (const f of change.changed) {
       if (inRoots(f.abs)) files[sourcePathFor(change.baseDir, f.abs)] = { m: f.mtimeMs, s: f.size };
@@ -716,9 +742,23 @@ export async function ensureProjectIndexed(
     opts.embedModel === undefined
       ? embedderSignature(opts.embedMode, opts.tier)
       : embedderSignatureForModel(opts.embedMode, opts.embedModel);
-  const { manifest, corrupt } = await inspectManifest(dir);
+  const { manifest, corrupt, unreadable, newer } = await inspectManifest(dir);
   const roots = resolveIndexPaths(opts.projectDir, opts.watchPaths);
   const log = opts.log ?? (() => {});
+
+  // Neither of these is evidence the index is bad, so neither may touch it: other
+  // live sessions are searching it, and an older install must not wipe a newer one's.
+  if (unreadable !== undefined) {
+    log(`index manifest unreadable (${unreadable}) — skipping this sync, nothing was changed`);
+    return { action: "skipped", chunks: 0, files: 0 };
+  }
+  if (newer !== undefined) {
+    log(
+      `index manifest is format v${newer}, newer than this golem (v${MANIFEST_VERSION}) — ` +
+        "a newer golem owns this index; not syncing or writing to it",
+    );
+    return { action: "skipped", chunks: 0, files: 0 };
+  }
 
   // An untrusted manifest is discarded, loudly, and the collection with it: its
   // file map is the only record of which chunks belong to which file state, so
@@ -755,11 +795,15 @@ export async function ensureProjectIndexed(
       log(`indexed ${chunks} chunks from ${files} file(s)`);
       return { action: manifest !== null ? "reindexed" : "indexed", chunks, files };
     }
-    await writeManifest(opts.projectDir, opts.projectId, signature, roots, opts.now, {});
+    await writeManifest(opts.projectDir, opts.projectId, signature, roots, opts.now, {}, true);
     fresh = true;
   }
   const built = fresh ? await readManifest(dir) : manifest;
   if (built === null) throw new Error("index manifest vanished during the build");
+  // A build that was started and never finished (killed) carries `building`: a rerun
+  // CONTINUES it. It is not a routine sync, so the auto-index cap must not defer it —
+  // that would leave the project half-indexed for good.
+  const building = fresh || built.building === true;
 
   // Signature matches → incremental sync of changed/new/deleted files.
   const current = await scanAll(roots, opts.projectId);
@@ -771,14 +815,17 @@ export async function ensureProjectIndexed(
   }
   const deleted = Object.keys(prev).filter((sp) => !current.has(sp));
   if (changed.length === 0 && deleted.length === 0) {
-    if (fresh) return { action: manifest !== null ? "reindexed" : "indexed", chunks: 0, files: 0 };
+    if (building) {
+      await writeManifest(opts.projectDir, opts.projectId, signature, roots, opts.now, {});
+      return { action: manifest !== null && fresh ? "reindexed" : "indexed", chunks: 0, files: 0 };
+    }
     return { action: "skipped", chunks: 0, files: 0 };
   }
 
   // R11.2: the cap is checked BEFORE the incremental/rebuild fork — the fallback
   // path is a full rebuild, which is the most expensive outcome of all, and an
   // automatic caller must never reach it by surprise.
-  const cap = fresh ? 0 : (opts.maxAutoFiles ?? 0); // a first build is never capped (see maxAutoFiles)
+  const cap = building ? 0 : (opts.maxAutoFiles ?? 0); // a build in progress is never capped (see maxAutoFiles)
   if (cap > 0 && changed.length + deleted.length > cap) {
     log(
       `${changed.length} changed, ${deleted.length} removed — more than the auto-index cap ` +
@@ -815,7 +862,7 @@ export async function ensureProjectIndexed(
   // batches it did finish permanently done.
   const progress: Record<string, PersistedFileState> = { ...prev };
   const checkpoint = (): Promise<void> =>
-    writeManifest(opts.projectDir, opts.projectId, signature, roots, opts.now, progress);
+    writeManifest(opts.projectDir, opts.projectId, signature, roots, opts.now, progress, building);
   const sourcePathByAbs = new Map<string, string>();
   for (const [sp, f] of current) sourcePathByAbs.set(f.abs, sp);
 
@@ -826,10 +873,26 @@ export async function ensureProjectIndexed(
   if (deleted.length > 0) await checkpoint();
 
   let chunks = 0;
+  // Files that could not be read this run: never recorded as current, so the next
+  // sync retries them (their old chunks were left in place).
+  const unreadableSp = new Set<string>();
   for (let i = 0; i < changed.length; i += INDEX_CHECKPOINT_FILES) {
     const batch = changed.slice(i, i + INDEX_CHECKPOINT_FILES);
-    chunks += await opts.knowledge.reindexFiles(baseDir, opts.projectId, batch);
+    const failed = new Set<string>();
+    try {
+      chunks += await opts.knowledge.reindexFiles(baseDir, opts.projectId, batch);
+    } catch (err) {
+      if (!(err instanceof PartialReindexError)) throw err;
+      chunks += err.chunks;
+      for (const abs of err.failed) failed.add(abs);
+      log(`${err.failed.length} file(s) could not be read and will be retried next sync`);
+    }
     for (const abs of batch) {
+      if (failed.has(abs)) {
+        const sp = sourcePathByAbs.get(abs);
+        if (sp !== undefined) unreadableSp.add(sp);
+        continue;
+      }
       const sp = sourcePathByAbs.get(abs);
       const f = sp === undefined ? undefined : current.get(sp);
       if (sp !== undefined && f !== undefined) progress[sp] = { m: f.mtimeMs, s: f.size };
@@ -846,12 +909,14 @@ export async function ensureProjectIndexed(
     signature,
     roots,
     opts.now,
-    toPersisted(current),
+    Object.fromEntries(
+      Object.entries(toPersisted(current)).filter(([sp]) => !unreadableSp.has(sp)),
+    ),
   );
-  if (fresh) {
+  if (building) {
     log(`indexed ${chunks} chunks from ${current.size} file(s)`);
     return {
-      action: manifest !== null ? "reindexed" : "indexed",
+      action: manifest !== null && fresh ? "reindexed" : "indexed",
       chunks,
       files: current.size,
     };
@@ -871,8 +936,12 @@ export interface StartKnowledgeWatchOptions {
   readonly projectId: string;
   readonly knowledge: KnowledgeBase;
   readonly watchPaths: readonly string[];
-  /** The resolved project wiki dir: watched even when `watchPaths` does not cover it. */
+  /** The resolved project wiki dir: always watched, on its own watcher. */
   readonly wikiDir: string;
+  /** The embedder signature THIS process indexes with; the daemon refuses another build's index. */
+  readonly signature: string;
+  /** Re-sync the index (the session-start sync); run when this session takes over a dead leader. */
+  readonly sync?: () => Promise<unknown>;
   readonly log?: (msg: string) => void;
   /** Defaults to `process.env`; `GOLEM_KB_WATCH=0|false|off` turns the daemon off. */
   readonly env?: NodeJS.ProcessEnv;
@@ -880,12 +949,21 @@ export interface StartKnowledgeWatchOptions {
   readonly pollMs?: number;
   readonly debounceMs?: number;
   readonly maxFiles?: number;
+  readonly timers?: Timers;
+  readonly leasePath?: string;
+}
+
+/** Where the per-project watch lease lives. */
+export function watchLeasePath(projectDir: string): string {
+  return path.join(projectDir, ".golem", "state", "kb-watch.lease");
 }
 
 /**
  * DUST2.14 — keep the vector index fresh while this process lives: watch the
  * index roots (`watch_paths`, else the project) AND the project wiki dir, so a
  * `wiki_upsert` (or an editor save) reaches the index with no manual ingest.
+ * Only ONE session per project (the lease holder) polls and embeds; see
+ * {@link startIndexWatchDaemon}.
  *
  * Returns undefined when disabled, when the KB cannot re-index incrementally, or
  * on any startup failure: a watcher is an optimisation, never a reason for the
@@ -900,18 +978,51 @@ export async function startKnowledgeWatch(
   if (!supportsIncremental(opts.knowledge)) return undefined;
   try {
     const syncRoots = resolveIndexPaths(opts.projectDir, opts.watchPaths);
+    const dir = collectionDir(knowledgeDir(opts.projectDir), opts.projectId);
     const daemon = await startIndexWatchDaemon({
       knowledge: opts.knowledge,
       projectId: opts.projectId,
-      roots: [...syncRoots, opts.wikiDir],
+      roots: syncRoots,
+      wikiDir: opts.wikiDir,
       log,
-      onApplied: createManifestRecorder(opts.projectDir, opts.projectId, syncRoots),
+      leasePath: opts.leasePath ?? watchLeasePath(opts.projectDir),
+      onApplied: createManifestRecorder(opts.projectDir, opts.projectId, syncRoots, opts.signature),
+      verifyIndex: async () => {
+        const r = await inspectManifest(dir);
+        if (r.unreadable !== undefined) return { kind: "retry", reason: "manifest unreadable" };
+        if (r.newer !== undefined) {
+          return { kind: "halt", reason: `index is format v${r.newer}; a newer golem owns it` };
+        }
+        if (r.manifest !== null && r.manifest.signature !== opts.signature) {
+          return {
+            kind: "halt",
+            reason:
+              `the index was rebuilt with another embedder (${describeSignature(r.manifest.signature)}, ` +
+              `this session uses ${describeSignature(opts.signature)}); not writing into it`,
+          };
+        }
+        return { kind: "ok" };
+      },
+      isCurrent: async (baseDir, files) => {
+        const { manifest } = await inspectManifest(dir);
+        const have = new Set<string>();
+        if (manifest === null || manifest.signature !== opts.signature) return have;
+        for (const f of files) {
+          const rec = manifest.files?.[sourcePathFor(baseDir, f.abs)];
+          if (rec !== undefined && rec.m === f.mtimeMs && rec.s === f.size) have.add(f.abs);
+        }
+        return have;
+      },
+      ...(opts.sync !== undefined ? { onTakeover: async () => void (await opts.sync?.()) } : {}),
+      ...(opts.timers !== undefined ? { timers: opts.timers } : {}),
       ...(opts.pollMs !== undefined ? { pollMs: opts.pollMs } : {}),
       ...(opts.debounceMs !== undefined ? { debounceMs: opts.debounceMs } : {}),
       ...(opts.maxFiles !== undefined ? { maxFiles: opts.maxFiles } : {}),
     });
-    const { watched, skipped } = daemon.stats;
-    if (watched.length > 0) log(`watching ${watched.length} root(s) for index freshness`);
+    const { watched, skipped, role } = daemon.stats;
+    if (role === "leader" && watched.length > 0) {
+      log(`watching ${watched.length} root(s) for index freshness`);
+    }
     for (const s of skipped) log(`not watching ${s.root}: ${s.reason}`);
     return daemon;
   } catch (err) {

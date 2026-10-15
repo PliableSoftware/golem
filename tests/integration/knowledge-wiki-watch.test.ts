@@ -46,6 +46,7 @@ async function until(done: () => boolean | Promise<boolean>, what: string): Prom
 const sources = async (q: string): Promise<string[]> =>
   (await kb.search(q, project, 10)).map((h) => h.chunk.sourcePath ?? "");
 
+const SIG = "lexical:hash-v1-512";
 const fast = { pollMs: 40, debounceMs: 40 };
 
 describe("wiki -> vector index via the watcher", () => {
@@ -59,6 +60,7 @@ describe("wiki -> vector index via the watcher", () => {
       watchPaths: [],
       wikiDir,
       env: {},
+      signature: SIG,
       ...fast,
     });
     expect(daemon).toBeDefined();
@@ -89,6 +91,7 @@ describe("wiki -> vector index via the watcher", () => {
       watchPaths: [],
       wikiDir,
       env: {},
+      signature: SIG,
       ...fast,
     });
     expect(daemon?.stats.watched).toHaveLength(2);
@@ -113,6 +116,7 @@ describe("wiki -> vector index via the watcher", () => {
       watchPaths: [],
       wikiDir,
       env: {},
+      signature: SIG,
       ...fast,
     });
     await writeFile(path.join(wikiDir, "P.md"), "# P\n\nplinkplonk.\n");
@@ -136,6 +140,7 @@ describe("wiki -> vector index via the watcher", () => {
           watchPaths: [],
           wikiDir: path.join(project, "docs", "wiki"),
           env: { GOLEM_KB_WATCH: v },
+          signature: SIG,
         }),
       ).toBeUndefined();
     }
@@ -151,6 +156,7 @@ describe("wiki -> vector index via the watcher", () => {
         watchPaths: [],
         wikiDir: path.join(project, "docs", "wiki"),
         env: {},
+        signature: SIG,
       }),
     ).toBeUndefined();
   });
