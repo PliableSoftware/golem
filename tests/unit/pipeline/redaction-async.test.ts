@@ -304,7 +304,7 @@ describe("DUSTSEC.23 deep nesting: the async walk never loses depth the sync wal
         if (depth <= 2000) expect(sync.ok).toBe(true);
         // The iterative walk has no call-stack limit of its own: only the whole-body
         // JSON.stringify (about 4471 levels) bounds it.
-        if (depth <= 4400 && shape !== "array") expect(async_.ok).toBe(true);
+        if (depth <= 4400) expect(async_.ok).toBe(true);
       });
     }
   }
@@ -471,6 +471,52 @@ async function longestStallMs(work: () => Promise<unknown> | unknown): Promise<n
   }
   return max;
 }
+
+describe("DUSTSEC.23 container-heavy bodies are sliced too", () => {
+  const deepEmpty = (levels: number): unknown => {
+    let v: unknown = [];
+    for (let i = 1; i < levels; i += 1) v = [v];
+    return v;
+  };
+  const shapes: [string, () => unknown, number][] = [
+    ["[[],[],...]", () => [], 3_000_000],
+    ["[{},{},...]", () => ({}), 3_000_000],
+    ["16-deep empty arrays", () => deepEmpty(16), 400_000],
+    ["{a:[]} records", () => ({ a: [] }), 1_500_000],
+  ];
+
+  for (const [name, make, n] of shapes) {
+    it(`${name}: identical to the sync walk, and the loop is not held for the whole walk`, async () => {
+      const body = Array.from({ length: n }, make);
+      const syncStall = await longestStallMs(() => redactRequestBody(body));
+      let result: Awaited<ReturnType<typeof redactRequestBodyAsync>> | undefined;
+      let ticks = 0;
+      const timer = setInterval(() => {
+        ticks += 1;
+      }, 2);
+      const asyncStall = await longestStallMs(async () => {
+        result = await redactRequestBodyAsync(body);
+      });
+      clearInterval(timer);
+      expect(result?.count).toBe(0);
+      expect(result?.value).toBe(body);
+      // Many timer ticks landed during the walk: it ran as many slices, not one.
+      expect(ticks).toBeGreaterThan(5);
+      // Relative to this machine's sync walk of the same body, with a generous absolute cap.
+      expect(asyncStall).toBeLessThan(Math.max(syncStall * 0.5, 100));
+      expect(asyncStall).toBeLessThan(1_500);
+    }, 120_000);
+  }
+
+  it("container-heavy bodies with a secret inside come out identical to the sync walk", async () => {
+    const secret = `x ${SECRETS[1]?.(rng(12))}`;
+    for (const [, make] of shapes) {
+      const body = Array.from({ length: 30_000 }, make);
+      (body as unknown[]).push({ deep: [[secret]] });
+      await expectSame(body, 0);
+    }
+  });
+});
 
 describe("DUSTSEC.23 event-loop stall", () => {
   // ~0.33 s of sync walking per MiB on the machine this was written on, so 8 MiB is

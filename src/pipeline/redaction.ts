@@ -558,6 +558,13 @@ class SlicedWalk {
     const stack = this.#stack;
     let cost = 0;
     for (;;) {
+      // Every iteration counts: pushing and finishing a container cost a unit too, so
+      // a body made mostly of containers cannot run as one slice. All state lives in
+      // the frames, so stopping at the top of the loop is always safe.
+      if (cost >= CLOCK_EVERY) {
+        cost = 0;
+        if (performance.now() >= deadline) return false;
+      }
       const top = stack[stack.length - 1] as WalkFrame;
       let child: unknown;
       if (top.arr) {
@@ -569,12 +576,14 @@ class SlicedWalk {
             return true;
           }
           this.#finish(stack);
+          cost += 1;
           continue;
         }
         child = top.src[top.i];
       } else {
         if (top.i >= top.entries.length) {
           this.#finish(stack);
+          cost += 1;
           continue;
         }
         child = (top.entries[top.i] as [string, unknown])[1];
@@ -594,6 +603,7 @@ class SlicedWalk {
             i: 0,
             changed: false,
           });
+          cost += 1;
           continue;
         }
         if (isRecord(child)) {
@@ -605,15 +615,12 @@ class SlicedWalk {
             i: 0,
             changed: false,
           });
+          cost += 1;
           continue;
         }
       }
       commit(top, next, child);
       cost += 1;
-      if (cost >= CLOCK_EVERY) {
-        cost = 0;
-        if (performance.now() >= deadline) return false;
-      }
     }
   }
 
