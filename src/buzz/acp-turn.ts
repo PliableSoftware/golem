@@ -38,7 +38,6 @@ import {
   type TargetDispatcher,
   type TargetDispatcherOptions,
 } from "../inference/target-dispatcher.js";
-import { withTeamPrompt } from "../inference/team-prompt.js";
 import { persistSnoozeNote } from "../mcp/snooze-note.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { perGatewayEnvVar, withDefaultTarget } from "../providers/index.js";
@@ -273,14 +272,14 @@ async function runAcpTurnInner(input: RunAcpTurnInput): Promise<TurnResult> {
     return { stopReason: "end_turn" };
   }
 
-  const promptText = withTeamPrompt(
-    await resolvePromptText(
-      input.personaId,
-      config,
-      input.projectDir,
-      settings.inference.coder_prompt,
-    ),
-    settings.inference.team_prompt,
+  // DUST2.22: `inference.team_prompt` is deliberately NOT appended here. This
+  // turn's only slot for it is the dispatch `system` field, which would give a
+  // team's text system authority. Revisit if a user-level slot exists.
+  const promptText = await resolvePromptText(
+    input.personaId,
+    config,
+    input.projectDir,
+    settings.inference.coder_prompt,
   );
   const turnLane: TurnLane = lane.kind;
 

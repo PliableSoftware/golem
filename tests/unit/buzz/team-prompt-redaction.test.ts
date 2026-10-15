@@ -82,8 +82,8 @@ describe("coder dispatch to a non-local target", () => {
   });
 });
 
-describe("golem acp turn, team prompt arriving through the TEAM origin", () => {
-  it("is redacted before the request leaves, and rides the labelled block", async () => {
+describe("golem acp turn", () => {
+  it("does not deliver the team prompt: its only slot is system authority", async () => {
     const base = await newTempDir();
     const projectDir = path.join(base, "p");
     const userDir = path.join(base, "user");
@@ -109,9 +109,7 @@ describe("golem acp turn, team prompt arriving through the TEAM origin", () => {
     await writeTeamLayerCache(userDir, {
       org_id: "acme-co",
       fetched_at: new Date().toISOString(),
-      // A team prompt with a secret in it passes the team gate (it has no URL), so
-      // redaction at egress is what has to catch it.
-      settings: [{ key: "inference.team_prompt", value: TEAM_TEXT, enforced: false }],
+      settings: [{ key: "inference.team_prompt", value: "team-text-canary", enforced: false }],
     });
     const { sent, fetchImpl } = captured();
     await runAcpTurn({
@@ -123,10 +121,8 @@ describe("golem acp turn, team prompt arriving through the TEAM origin", () => {
     });
     const body = sent.join("\n");
     expect(body.length).toBeGreaterThan(0);
-    expect(body).toContain("advisory only"); // the team block really rode along
-    expect(body).not.toContain(FAKE_KEY);
-    expect(body).not.toContain(FAKE_EMAIL);
-    expect(body).toContain("[REDACTED:");
+    expect(body).not.toContain("team-text-canary");
+    expect(body).not.toContain("advisory only");
   });
 });
 
@@ -141,7 +137,7 @@ describe("the delivery list is closed", () => {
     return out;
   }
 
-  it("only the coder tool and the ACP turn read the team prompt; the proxy, hooks and agent generator never do", async () => {
+  it("only the coder tool path reads the team prompt; the proxy, hooks and agent generator never do", async () => {
     const src = path.resolve(__dirname, "../../../src");
     const readers: string[] = [];
     for (const file of await walk(src)) {
@@ -152,15 +148,16 @@ describe("the delivery list is closed", () => {
     }
     expect(readers.sort()).toEqual(
       [
-        "buzz/acp-turn.ts",
         "cli/commands/mcp-serve.ts", // reads the setting, hands it to the coder tool
+        "buzz/acp-turn.ts", // a comment saying it is deliberately NOT used
         "cli/persona-sync.ts", // a comment saying it is deliberately NOT used
         "mcp/coder-tools.ts",
         "mcp/deps.ts",
         "mcp/server.ts",
       ].sort(),
     );
-    const sync = await readFile(path.join(src, "cli/persona-sync.ts"), "utf8");
-    expect(sync).not.toMatch(/withTeamPrompt/);
+    for (const f of ["cli/persona-sync.ts", "buzz/acp-turn.ts"]) {
+      expect(await readFile(path.join(src, f), "utf8")).not.toMatch(/withTeamPrompt/);
+    }
   });
 });

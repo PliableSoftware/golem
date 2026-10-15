@@ -162,9 +162,9 @@ else prompt-shaped. `inference.personas` (a persona can carry `prompt_file`, a l
 - **Appended, never authoritative.** `src/inference/team-prompt.ts` adds the text AFTER the
   persona's or coder's own prompt, under a fixed label saying it is team-supplied, advisory,
   unable to change tools, permissions or redaction, and ranked below the user's instructions.
-  Delivered only on the dispatch `system` field of the `coder` tool and of the ACP turn, both
-  redacted at egress by the target dispatcher. NOT put in a generated `golem-<id>.md` agent body
-  ([[Persona Registry]]): that is a system prompt by construction. A team cannot `team!`-enforce it.
+  Delivered ONLY on the dispatch `system` field of the `coder` tool, redacted at egress by the
+  target dispatcher. NOT put in a generated `golem-<id>.md` agent body ([[Persona Registry]]) or
+  an ACP turn: the only slot either has is system authority. Revisit if a user-level slot exists. A team cannot `team!`-enforce it.
 - **Bounded.** Plain text, at most 2000 characters, no control characters, no `scheme://` URL.
   The team policy refuses a violating value per key; the read side also strips and caps, because
   a local file or env value never passed the team gate.

@@ -188,8 +188,8 @@ so read the old labels as historical.
 ## A team prompt rides along on the worker lane
 
 `inference.team_prompt` (DUST2.22, [[Team Layer]]) is appended, labelled and advisory, to the
-`coder` dispatch `system` field and the ACP turn prompt. It is deliberately NOT written into
-generated agent bodies (system prompts by construction), and it never replaces a persona's own
+`coder` dispatch `system` field only. It is deliberately NOT written into generated agent
+bodies or ACP turns (their only slot is system authority; revisit if a user-level slot exists), and it never replaces a persona's own
 `prompt`. Personas themselves stay unsettable by a team.
 
 ## The sibling rule: prefer the bench over `fork`
