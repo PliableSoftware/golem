@@ -1,7 +1,7 @@
 ---
 task: DUST2.20
 title: Compression gating completeness: per-content-type Headroom mapping, tool-result cache with mtime invalidation, lossy-stage gate declarations
-state: done
+state: queued
 owner: agent
 size: M
 discipline: code
@@ -29,4 +29,12 @@ in docs (DUST2.4); this task makes the gate declarations real.
 
 ## Outcome
 
-shipped: LOSSY_STAGES + HEADROOM_LEVEL_MAPPING, ToolResultCache, unified MCP surface retired
+partly shipped: LOSSY_STAGES + HEADROOM_LEVEL_MAPPING, ToolResultCache (unwired), unified MCP surface retired.
+
+Still open (reopened 2026-10-20 after review of the first pass):
+
+- Per-content-type Headroom mapping as the gate literally words it. The first pass recorded what Golem sets
+  (recent-history depth, user messages, marker-free tool output) because Headroom was not installed to verify
+  `ContentRouterConfig` fields. Verify against the pinned Headroom, then map per content type or record why not.
+- Wire `ToolResultCache` into a real caller. A request body carries no file path to key on, so the key
+  source must be decided first (record in verification-notes).
