@@ -53,6 +53,8 @@ export {
   type HostLogRotation,
   type HostTurnEntry,
   hostLogPath,
+  isRemoteOrigin,
+  LOCAL_ORIGIN,
   readHostLog,
 } from "./host-log.js";
 export {

@@ -150,12 +150,32 @@ export function wireHostedSession(
       }
     }
   });
-  hosted.on("exit", (info: { code: number | null; error?: string }) => {
-    bus.publish({
-      type: "ended",
-      reason: info.error ?? `the runner exited (code ${String(info.code)})`,
-    });
-  });
+  hosted.on(
+    "exit",
+    (info: {
+      code: number | null;
+      error?: string;
+      interrupted?: boolean;
+      turnCancelled?: boolean;
+    }) => {
+      if (info.interrupted === true) {
+        // DUST2.19 — a device asked for this. Resolve the in-flight turn as
+        // CANCELLED (never as answered), then say honestly that the session
+        // ended with it: the runner cannot be interrupted without being stopped.
+        assistantText = "";
+        if (info.turnCancelled === true) bus.publish({ type: "turn_end", cancelled: true });
+        bus.publish({
+          type: "ended",
+          reason: "interrupted from a device — the runner was stopped, so the session ended",
+        });
+        return;
+      }
+      bus.publish({
+        type: "ended",
+        reason: info.error ?? `the runner exited (code ${String(info.code)})`,
+      });
+    },
+  );
 }
 
 export interface DeviceSessionsOptions {
@@ -568,6 +588,16 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
         entry.hosted.send(text);
       },
       kind: "hosted",
+      interrupt: () => {
+        if (!entry.hosted.interrupt()) return;
+        void appendHostLog(entry.projectDir, {
+          kind: "lifecycle",
+          ts: new Date().toISOString(),
+          sessionId,
+          event: "stopped",
+          detail: "interrupted from a device",
+        }).catch(() => undefined);
+      },
       history: async () => {
         const record = await conversationStore.readConversation(sessionId);
         return (record?.turns ?? []).map((t) => ({

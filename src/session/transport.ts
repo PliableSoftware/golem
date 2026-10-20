@@ -23,7 +23,7 @@ import type {
   SessionEvent,
   SessionMessageResponse,
 } from "../interfaces/session-events.js";
-import { appendHostLog } from "./host-log.js";
+import { appendHostLog, isRemoteOrigin } from "./host-log.js";
 import { MessageLedger, type SessionBus } from "./session-bus.js";
 
 /** `GET /session/:id/stream` — the SSE downstream. */
@@ -125,6 +125,16 @@ export interface TransportOptions {
     /** False when `security.join_injection` is off — a device must be told, not left guessing. */
     readonly injectionEnabled: boolean;
   }>;
+  /**
+   * DUST2.19 — called once a turn authored by a device has been attributed (the
+   * audit line is already durable) and delivered, so the local operator's own
+   * view can mark it. Never called for a turn already seen (`duplicate`).
+   */
+  readonly onRemoteTurn?: (turn: {
+    readonly sessionId: string;
+    readonly origin: string;
+    readonly text: string;
+  }) => void;
   readonly heartbeatMs?: number;
   readonly nowIso?: () => string;
 }
@@ -438,6 +448,13 @@ async function deliverOnce(
 
   const seq = session.bus.cursor;
   ledger.record(messageId, seq);
+  if (isRemoteOrigin(deviceId)) {
+    try {
+      options.onRemoteTurn?.({ sessionId: session.bus.sessionId, origin: deviceId, text });
+    } catch {
+      // A broken local display must never turn a delivered turn into a failed POST.
+    }
+  }
   json(res, 200, { messageId, status: "delivered", seq } satisfies SessionMessageResponse);
 }
 

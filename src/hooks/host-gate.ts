@@ -28,9 +28,18 @@
  */
 
 import { classifyAction, readAutonomyLevel } from "../autonomy/index.js";
+import { type LimitPrediction, readLimitState } from "../proxy/limit-prediction.js";
 import { decideHostGate, type HostGateDecision, resolveHostGate } from "../session/host-gate.js";
 import { appendHostLog } from "../session/host-log.js";
 import { type HookIo, readAll } from "./hook-io.js";
+import { PARK_EXEMPT_TOOLS, readSnoozeEnforced } from "./pre-tool-use.js";
+import {
+  decideSnoozeNudge,
+  readSnoozeNudgeState,
+  snoozeEnforceReason,
+  snoozeNudgeReason,
+  writeSnoozeNudgeState,
+} from "./snooze-nudge.js";
 
 interface HostGatePayload {
   readonly cwd?: string;
@@ -45,6 +54,10 @@ export interface HostGateHookOptions {
   readonly sessionId?: string;
   readonly nowIso?: string;
   readonly readLevel?: (projectDir: string) => Promise<string>;
+  /** Test seams for the usage-limit park (DUST2.19); production reads the live state. */
+  readonly readPrediction?: (projectDir: string) => Promise<LimitPrediction | null>;
+  readonly isSnoozeEnforced?: (projectDir: string) => Promise<boolean>;
+  readonly now?: () => number;
 }
 
 function parsePayload(raw: string): HostGatePayload | null {
@@ -99,6 +112,41 @@ export async function runHostGateHook(
     const projectDir = options.projectDir ?? payload.cwd ?? process.cwd();
     const sessionId = options.sessionId ?? payload.session_id ?? "unknown";
     const action = classifyAction(toolName, payload.tool_input);
+
+    // DUST2.19 — a hosted session parks at the usage limit like any other. The
+    // guest gate (`pre-tool-use.ts`) carries this nudge, but this gate is a
+    // deliberate separate implementation, so the same decision is applied here
+    // with the same pure functions and the same exempt list (the park must stay
+    // reachable). Stale-feed warnings are NOT repeated here: that one-shot is
+    // addressed to a human and a hosted session has none. `snooze` files its
+    // `note` as a durable task before the wait, which is the "note filed" half.
+    if (!PARK_EXEMPT_TOOLS.includes(toolName)) {
+      const nowMs = options.now?.() ?? Date.now();
+      const prediction = await (options.readPrediction ?? readLimitState)(projectDir);
+      const state = await readSnoozeNudgeState(projectDir);
+      const enforce = await (options.isSnoozeEnforced ?? readSnoozeEnforced)(projectDir);
+      const nudge = decideSnoozeNudge(prediction, state, nowMs, undefined, undefined, enforce);
+      if (nudge.kind === "park") {
+        if (!enforce) {
+          await writeSnoozeNudgeState(projectDir, {
+            ...state,
+            nudgedForResetIso: nudge.resetAtIso,
+          });
+        }
+        const reason = enforce
+          ? snoozeEnforceReason(nudge.resetAtIso, nudge.utilization)
+          : snoozeNudgeReason(nudge.resetAtIso, nudge.utilization);
+        await appendHostLog(projectDir, {
+          kind: "lifecycle",
+          ts: options.nowIso ?? new Date(nowMs).toISOString(),
+          sessionId,
+          event: "parked",
+          detail: `usage limit ~${Math.round(nudge.utilization * 100)}%; reset ${nudge.resetAtIso}`,
+        }).catch(() => undefined);
+        io.stdout.write(denyEnvelope(reason));
+        return 0;
+      }
+    }
 
     const level = await (options.readLevel ?? readAutonomyLevel)(projectDir);
     const decided: HostGateDecision = decideHostGate(

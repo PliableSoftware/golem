@@ -66,6 +66,18 @@ export function hostLogPath(projectDir: string): string {
   return path.join(projectDir, ".golem", "state", "host-log.jsonl");
 }
 
+/** The origin the CLI and dashboard stamp on a turn the local human typed. */
+export const LOCAL_ORIGIN = "local";
+
+/**
+ * DUST2.19 — whether a turn was authored somewhere other than this machine's own
+ * CLI/dashboard (i.e. a paired device). A turn nobody at the terminal wrote must
+ * be visibly marked in every local view of the session.
+ */
+export function isRemoteOrigin(origin: string): boolean {
+  return origin !== LOCAL_ORIGIN;
+}
+
 /** A turn relayed INTO a hosted session — written before the runner sees it. */
 export interface HostTurnEntry {
   readonly kind: "turn";

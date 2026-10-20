@@ -245,6 +245,10 @@ export class HostedSession extends EventEmitter {
   private child: ChildProcess | undefined;
   private buffer = "";
   private closed = false;
+  /** Turns written to stdin that have not yet produced a `result` (DUST2.19). */
+  private turnsInFlight = 0;
+  /** Set by {@link interrupt}, so the `exit` event can say the stop was asked for. */
+  private interruptedByRequest = false;
   /** Set when the runner dies unexpectedly; read rather than thrown. */
   lastError: string | undefined;
   /** The runner's own session id, learned from the first `system/init`. */
@@ -292,6 +296,9 @@ export class HostedSession extends EventEmitter {
       this.emit("exit", {
         code,
         ...(this.lastError !== undefined ? { error: this.lastError } : {}),
+        ...(this.interruptedByRequest
+          ? { interrupted: true, turnCancelled: this.turnsInFlight > 0 }
+          : {}),
       });
     });
   }
@@ -315,7 +322,10 @@ export class HostedSession extends EventEmitter {
       if (typeof raw.session_id === "string" && this.runnerSessionId === undefined) {
         this.runnerSessionId = raw.session_id;
       }
-      for (const event of normaliseEvent(raw)) this.emit("event", event);
+      for (const event of normaliseEvent(raw)) {
+        if (event.type === "result" && this.turnsInFlight > 0) this.turnsInFlight -= 1;
+        this.emit("event", event);
+      }
     }
   }
 
@@ -326,6 +336,7 @@ export class HostedSession extends EventEmitter {
       throw new Error("hosted session is not running");
     }
     stdin.write(userMessageLine(text));
+    this.turnsInFlight += 1;
   }
 
   /** Close stdin — the runner finishes its current turn and exits cleanly. */
@@ -343,6 +354,22 @@ export class HostedSession extends EventEmitter {
    */
   kill(): void {
     this.child?.kill();
+  }
+
+  /**
+   * DUST2.19 — stop the running turn on a device's request.
+   *
+   * Same mechanism as {@link kill} (see its note: only a process kill stops a
+   * turn on Windows), but the `exit` event is marked `interrupted`, and
+   * `turnCancelled` says whether a turn was actually mid-flight, so the bus can
+   * resolve that turn as cancelled instead of reporting a generic exit. Returns
+   * false, doing nothing, when there is no running session to interrupt.
+   */
+  interrupt(): boolean {
+    if (!this.running) return false;
+    this.interruptedByRequest = true;
+    this.child?.kill();
+    return true;
   }
 
   get running(): boolean {

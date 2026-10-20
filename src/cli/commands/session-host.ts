@@ -17,6 +17,7 @@ import {
   forgetHostSession,
   HostedSession,
   hostSettingsArg,
+  isRemoteOrigin,
   listHostSessions,
   readHostLog,
   reapDeadSessions,
@@ -269,8 +270,18 @@ export default function register(session: Command): void {
                   deliver: async (text: string) => {
                     hosted.send(text);
                   },
+                  // DUST2.19 — a device can stop the running turn. The exit is
+                  // marked, so the bus resolves the turn as cancelled.
+                  interrupt: () => {
+                    hosted.interrupt();
+                  },
                 }
               : device.lookup(wanted),
+          // DUST2.19 — a turn a device wrote is marked on the local terminal, so
+          // the person at this machine can tell it from their own.
+          onRemoteTurn: ({ origin, text }) => {
+            out(`  [remote:${origin}] ${text.slice(0, 200)}\n`);
+          },
           listSessions: async () => {
             const rest = await device.listSessions();
             return {
@@ -422,7 +433,9 @@ export default function register(session: Command): void {
         }
         for (const e of entries) {
           if (e.kind === "turn") {
-            out(`  ${e.ts}  TURN     ${e.origin.padEnd(10)} ${e.text.slice(0, 90)}\n`);
+            out(
+              `  ${e.ts}  ${isRemoteOrigin(e.origin) ? "REMOTE  " : "TURN    "} ${e.origin.padEnd(10)} ${e.text.slice(0, 90)}\n`,
+            );
           } else if (e.kind === "decision") {
             out(
               `  ${e.ts}  ${e.decision.toUpperCase().padEnd(8)} ${e.tool.padEnd(10)} ${e.action.padEnd(11)} ${e.reason.slice(0, 70)}\n`,
