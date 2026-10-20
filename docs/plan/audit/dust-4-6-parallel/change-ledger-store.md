@@ -11,7 +11,7 @@ Own header counts: matches 6, partial 3, drifted 0, not started 0, contradicted 
 | B03 | Change Ledger.md:44 | `.golem/` excluded by pathspec | matches | src/checkpoint/ledger.ts:64 |
 | B04 | Change Ledger.md:47 | snapshot is a commit parented on HEAD | matches | src/checkpoint/ledger.ts:283 (`-p repo.head`; no parent on an unborn HEAD) |
 | B05 | Change Ledger.md:63-66 | detached HEAD or dirty index refuses | partial | only `restore` refuses: src/checkpoint/ledger.ts:491-497; `create` refuses only on no git or not a repo: ledger.ts:267-268 |
-| B06 | Change Ledger.md:61-62 | restore takes a `pre-restore` checkpoint first | matches | src/checkpoint/ledger.ts:81,133 (kind); search `pre-restore` in ledger.ts |
+| B06 | Change Ledger.md:61-62 | restore takes a `pre-restore` checkpoint first | matches | src/checkpoint/ledger.ts:81,133 (kind); src/checkpoint/ledger.ts:516-520 |
 | B07 | Change Ledger.md:67 | auto-prunes to the 50 newest on create | matches | src/checkpoint/ledger.ts:49,273,320 |
 | B08 | Change Ledger.md:67-68 | re-checkpointing an unchanged tree reuses the ref | partial | compares only against the newest checkpoint's tree: src/checkpoint/ledger.ts:276-279; skips pruning |
-| B09 | Change Ledger.md:72-75 | snapshot and restore go through git filters | matches | src/checkpoint/ledger.ts:31-37 (comment); staging uses `git add` in the temp index |
+| B09 | Change Ledger.md:72-75 | snapshot and restore go through git filters | matches | src/checkpoint/ledger.ts:31-37 (comment); `git add --all` in the temp index: src/checkpoint/ledger.ts:210 |

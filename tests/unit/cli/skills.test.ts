@@ -337,6 +337,21 @@ describe("dust skill (DUST4.1)", () => {
     }
   });
 
+  it("pins the parallel-partition and recount steps and keeps Golem tooling conditional (DUST4.6)", () => {
+    if (skill === undefined) throw new Error("expected a dust skill");
+    const flat = skill.replace(/\s+/g, " ");
+    for (const marker of [
+      "prefix unique to it",
+      "Merge the partition branches",
+      "one grep per class cell",
+      "the recount wins",
+      "a repo without them needs its own",
+      "where the project has one",
+    ]) {
+      expect(flat).toContain(marker);
+    }
+  });
+
   it("names neither a literal redaction marker nor the bypass-off command", () => {
     expect(skill).not.toContain(`[${"RE"}DACTED`);
     expect(skill).not.toMatch(/bypass_all/);

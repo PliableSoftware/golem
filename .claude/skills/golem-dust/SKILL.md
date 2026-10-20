@@ -12,9 +12,10 @@ the wiki or docs tree.
 ## Phase 1 — audit (read-only)
 1. **Partition by subsystem.** One note and one branch per partition, each in its
    own `git worktree` (one HEAD per agent), run in parallel. A slice one auditor
-   can hold is a single partition, still on its own branch. Auditors write notes
-   only, never code, and do not read earlier audit notes until their own table is
-   done.
+   can hold is a single partition, still on its own branch. Name each note for its
+   partition and give its row ids a prefix unique to it (A01, B01), so the notes
+   merge without conflict and an id names one claim. Auditors write notes only,
+   never code, and do not read earlier audit notes until their own table is done.
 2. **Classify every documented claim** with `path:line` evidence. A claim is one
    checkable statement in the docs in scope: list those docs at the top of the
    note, split compound sentences, skip rationale. Classes:
@@ -29,9 +30,11 @@ the wiki or docs tree.
    re-read the lines you cite. Write one table row per claim (id, doc:line,
    claim, class, evidence) with the class in its own cell, so counts can be taken
    with grep.
-3. **Close out.** Merge the notes and write a SUMMARY beside them (the project's
-   audit directory if it has one) whose counts are recounted mechanically from
-   the tables, never added up from the notes' own headers. List contradictions
+3. **Close out.** Merge the partition branches and write a SUMMARY beside the
+   notes (the project's audit directory if it has one) whose counts are recounted
+   mechanically from the tables, never added up from the notes' own headers: one
+   grep per class cell over all the notes, and the class counts must sum to the
+   row count. Where a note's header disagrees with the recount, the recount wins. List contradictions
    for the human; do not resolve them. Flag HIGH security items (a redaction,
    consent, credential or other hard-rule guarantee weaker in code than
    documented) for an out-of-band fix before any refactor.
@@ -65,12 +68,13 @@ and name them.
   reviewer who did not write it. Authors' green tests prove the new test passes,
   not that nothing got weaker. Review again after fixes: fix rounds introduce
   new defects.
-- **Verify serially.** The project's verify command (`golem verify`, judged by
-  exit code) runs one at a time; parallel typechecks get killed for memory
+- **Verify serially.** The project's verify command (in a Golem repo with package
+  scripts, `golem verify`; a repo without them needs its own), judged by exit
+  code, runs one at a time; parallel typechecks get killed for memory
   (exit 137) and make "before" baselines unreliable.
 - **Merge only on the CI gate for the pushed head**, never an older commit's.
 - Merge one PR at a time; never hand-resolve a generated file, regenerate it
-  (`golem task index --write` for the roadmap).
+  (`golem task index --write` for a Golem roadmap, where the project has one).
 
 ## Standing rules for every agent in the run
 - Commit early on your own branch.
