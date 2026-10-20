@@ -4,7 +4,7 @@ type: concept
 tags: [pipeline, compression, brevity, redaction, adr-0004, decision-31]
 sources: [src/interfaces/policy.ts, src/pipeline/brevity.ts, docs/decisions/ADR-0004-retire-the-slider.md, docs/plan/verification-notes.md]
 created: 2026-08-20
-updated: 2026-10-08
+updated: 2026-10-20
 ---
 
 # Compression Levels
@@ -32,6 +32,14 @@ them live. Neither needs a restart.
 | `1` | ✅ | ✅ | — | lossless and prefix-stable: duplicates become recoverable `hash=` markers and tool-result whitespace is compacted; meaning preserved. The default. |
 | `2` | ✅ | ✅ | stale-turn drop | lossy; gated off on a caching upstream; needs `compression.headroom_sidecar`, as level 3 does. |
 | `3` | ✅ | ✅ | max | lossy; gated off on a caching upstream; needs `compression.headroom_sidecar`. |
+
+**What a lossy level hands Headroom** (`HEADROOM_LEVEL_MAPPING`, pinned to the
+worker by a test): level 2 protects the 4 most recent messages and leaves user
+messages alone; level 3 protects 1 and may compress user messages; tool output
+is marker-free at both. Headroom's own router detects content types — Golem
+sets which classes and how much recent history, not a codec per type. Every
+lossy stage is declared in `LOSSY_STAGES` (`src/compression/lossy-stages.ts`)
+with its gate and recovery; a test fails if a stage field has no declaration.
 
 **The dial governs the request pipeline only.** The PostToolUse hook's CCR swap
 of oversized tool output (see [[Compression]]) is dial-independent: it fires at

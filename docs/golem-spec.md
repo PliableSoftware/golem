@@ -48,7 +48,7 @@ Evidence from the codebase (v0.28.0 at the time; the exact PyPI pin is now **0.3
 - **Memory/knowledge division of labor:** Headroom memory = *learned from conversations*; Golem knowledge base = *ingested from documents* (guides, style guides, wikis, codebases). Golem's `search` tool (formerly `search_local`, Decisions 27/35) federates both through the `MemorySearchProvider` seam when the memory sidecar is on (`src/compression/memory-search.ts`); without it, `search` is KNOWLEDGE-only. The merged-and-reranked claim is partial: rerank is the opt-in chat-judge, not a shared cross-encoder (DUST1.4 row r005).
 - **Coordinate `headroom learn`** and memory's CLAUDE.md sync writers with Golem's guidance writer — one merged guidance file, no conflicting instructions.
 - **Kompress vs. local LLM:** the Kompress-default claim was never confirmed (Decision 15). The local LLM is not routed into compression at any level: Decision 31 made the local model reachable only through the explicit `coder` tool.
-- **Unified MCP surface:** **not built** — the 11 Golem MCP tools (§2.1) do not re-export Headroom's retrieve/stats/memory tools (SUMMARY 1.3/r034, §12).
+- **Unified MCP surface:** **retired (DUST2.20, 2026-10-20).** The 11 Golem MCP tools (§2.1) do not re-export Headroom's retrieve/stats/memory tools, and will not. Retrieve is covered by `expand` (Headroom markers are backfilled into the CCR store, `headroom-ccr-bridge.ts`); memory reaches `search` through `MemorySearchProvider`; Headroom stats are folded into `stats` telemetry. A second tool namespace would duplicate all three.
 - **Evaluate Headroom's `--code-graph`** (file-watching code index for compression) in P1 before building Golem's tree-sitter indexer from scratch — reuse or extend if suitable.
 
 ### Non-goals (v1)
@@ -193,7 +193,7 @@ Runtime — **DECIDED (v0.2): Ollama-first behind an OpenAI-compatible interface
 What ships: the CCR store (content-addressed originals, `.golem/ccr`), the WebFetch raw-page cache (`.golem/webcache`, Decision 42) and native lossless dedup/compaction. What is specified but **not built** (§12, no task unless noted):
 - **Exact response cache** — hash(request) → response (no code; DUST1.11 row 9).
 - **Semantic cache** — not built. The dead `StageConfig.semanticCache` field was removed from the frozen interface on 2026-10-09.
-- **Tool-result cache** with mtime invalidation — `StageConfig.toolResultCache` is read only by `src/mcp/in-memory-compression.ts:80,90`, not by the proxy path (DUST2.20).
+- **Tool-result cache** with mtime invalidation — the mechanism exists (`src/compression/tool-result-cache.ts`: an entry is dropped when the file's mtime or size changes, or the file vanishes) but is **not wired into the proxy path**: a request body carries no file path for a tool result, so there is nothing to key on. `StageConfig.toolResultCache` is still read only by `src/mcp/in-memory-compression.ts` (DUST2.20).
 
 ### 3.5 Additional offload candidates (per your ask)
 *(Rebaseline 2026-10-08: only artifact storage ships. The rest is the "Not started (no task)" register, §12.)*
@@ -216,7 +216,7 @@ What ships: the CCR store (content-addressed originals, `.golem/ccr`), the WebFe
 > superseded in that respect; Decision 31's gating below is unchanged and still
 > load-bearing.
 
-`compression.level` (default `1`, `src/config/schema.ts:1135`) and `brevity.level` (default `off`, `:1143`), with per-capability overrides (`PipelinePolicy.overrides`). Every lossy operation declares its gate (levels 2–3 via `resolveEffectiveCompression`; partial for the stages listed in DUST2.20). The stage rows are `LEVEL_TABLE` in the frozen `src/interfaces/policy.ts`.
+`compression.level` (default `1`, `src/config/schema.ts:1135`) and `brevity.level` (default `off`, `:1143`), with per-capability overrides (`PipelinePolicy.overrides`). Every lossy operation declares its gate in `LOSSY_STAGES` (`src/compression/lossy-stages.ts`), enumerated by a test that also fails when a `StageConfig` field has no declaration; the caching-upstream prediction is `resolveEffectiveCompression`. `HEADROOM_LEVEL_MAPPING` in the same file is what each lossy level hands Headroom (`protect_recent`, `compress_user_messages`, marker-free tool output), pinned to `headroom-worker.py`. Headroom's `ContentRouter` picks codecs per content type itself; Golem does not map per type. The stage rows are `LEVEL_TABLE` in the frozen `src/interfaces/policy.ts`.
 
 | Level | Behavior |
 |---|---|

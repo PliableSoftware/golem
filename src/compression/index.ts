@@ -18,6 +18,12 @@ export {
 } from "./context-substitution.js";
 export { backfillHeadroomCcrRefs } from "./headroom-ccr-bridge.js";
 export { LocalDirBlobStore } from "./local-blob-store.js";
+export type { HeadroomLevelMapping, LossyStageDeclaration } from "./lossy-stages.js";
+export {
+  HEADROOM_LEVEL_MAPPING,
+  LOSSY_STAGES,
+  NON_LOSSY_STAGE_FIELDS,
+} from "./lossy-stages.js";
 // The neutral MEMORY-scope federated-search seam (R3.6). HeadroomMemorySidecar
 // is imported directly from ./headroom-adapter.js by the CLI, never re-exported
 // here — same discipline as SemanticCompressor below.
@@ -44,3 +50,4 @@ export { HEADROOM_CLIENT_NPM_PIN, HEADROOM_SIDECAR_PYPI_PIN } from "./pins.js";
 // file and avoid an index↔adapter import cycle.
 export type { SemanticCompressor, SemanticMode, SemanticResult } from "./semantic.js";
 export { estimateTokens } from "./tokens.js";
+export { ToolResultCache } from "./tool-result-cache.js";
