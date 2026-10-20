@@ -146,7 +146,7 @@ export function cardSuffixStarts(target: string): readonly number[] {
   for (let i = 0; i < target.length - 1; i += 1) {
     if (target.charCodeAt(i) !== 32) continue;
     const suffix = target.slice(i + 1);
-    if (/^\d{13,19}$/.test(suffix) || /^\d{4}(?:[ -]\d{4}){2,3}$/.test(suffix)) {
+    if (/^\d{13,19}$/.test(suffix) || /^\d{4}(?:[ -]\d{4}){3}$/.test(suffix)) {
       starts.push(i + 1);
     }
   }

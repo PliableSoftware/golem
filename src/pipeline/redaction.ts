@@ -182,9 +182,8 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
     if (!passesChecks(rule, text, redactStart, redactEnd, target)) {
       // DUSTSEC.26: a rejected greedy run may hold the secret at its tail. Only reached
       // for a match the rule would have left alone, so no span this rule redacted before changes.
-      // Not when the run touches an email-local character or `@`: the email rule (later in the
+      // Not when the run is followed by an email-local character or `@`: the email rule (later in the
       // table) must still see the whole address, and a placeholder would cut it short.
-      const before = redactStart > 0 ? text.charCodeAt(redactStart - 1) : 32;
       const after = redactEnd < text.length ? text.charCodeAt(redactEnd) : 32;
       const emailish = (c: number) =>
         c === 64 ||
@@ -194,7 +193,7 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
         (c >= 48 && c <= 57) ||
         (c >= 65 && c <= 90) ||
         (c >= 97 && c <= 122);
-      const offsets = emailish(before) || emailish(after) ? [] : (rule.retryStarts?.(target) ?? []);
+      const offsets = emailish(after) ? [] : (rule.retryStarts?.(target) ?? []);
       let retried = false;
       for (const offset of offsets) {
         if (!Number.isInteger(offset) || offset <= 0 || offset >= target.length) continue;

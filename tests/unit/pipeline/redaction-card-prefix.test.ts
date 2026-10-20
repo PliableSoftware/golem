@@ -83,9 +83,15 @@ describe("unchanged cases", () => {
     expect(out).not.toContain("example.com");
   });
 
+  it("starts a retry after an email-adjacent left side (only the right side matters)", () => {
+    expect(cardSuffixStarts(`12 ${VISA}`)).toEqual([3]);
+    expect(redactStandaloneText(`item1 ${VISA}`)).not.toContain(VISA);
+  });
+
   it("does not start a retry after a dash", () => {
     const t = `12-${VISA}`;
-    expect(cardSuffixStarts(t)).toEqual([8]);
+    // The 12-digit tail after the first space can never pass Luhn, so it is no start.
+    expect(cardSuffixStarts(t)).toEqual([]);
     expect(cardSuffixStarts(`12 3`)).toEqual([]);
   });
 });
