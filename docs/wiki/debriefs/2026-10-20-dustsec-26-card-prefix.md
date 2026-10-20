@@ -32,3 +32,9 @@ A plugin rule that used to match the whole `12 <card>` run now sees the placehol
 ## Tests
 
 `tests/unit/pipeline/redaction-card-prefix.test.ts`: failing-first cases for the miss, guards (byte dump, Luhn-invalid, hex-glued), and a seeded differential showing no card placeholder is lost against the old rule.
+
+## Review follow-up (2026-10-20)
+
+Decision (accepted): the retry over-redacts. A probe of `<1-3 digits> dddd dddd dddd dddd` rows redacted 594 of 4950 on this branch and 0 on `development`, roughly 1 in 10, whenever the 16-digit tail passes Luhn by chance. No input redacted on `development` is leaked on this branch. Redaction errs toward over-redacting.
+
+Changed after review: dropped the left-side `emailish` guard (the kept suffix always starts after a space, so only the right side can cut an address); suffix group count `{2,3}` to `{3}` (the 12-digit case could never pass Luhn). Still missed: a prefix that pushes the run past 19 digits.
