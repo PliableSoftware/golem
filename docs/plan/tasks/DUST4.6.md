@@ -1,15 +1,16 @@
 ---
 task: DUST4.6
-title: "Exercise the golem-dust skill's parallel-partition and recount steps, and its non-Golem-layout assumptions, which the DUST4.4 dogfood did not reach"
-state: queued
+title: Exercise the golem-dust skill's parallel-partition and recount steps, and its non-Golem-layout assumptions, which the DUST4.4 dogfood did not reach
+state: done
 owner: agent
 size: M
 discipline: code
-design: "docs/plan/audit/dust-4-dogfood/ (DUST4.4 audit note); the skill is src/cli/skills/dust.ts."
-gate: "A Phase 1 run with two sub-partitions in two worktrees produces two notes and one SUMMARY whose counts equal a mechanical recount across both tables; a second run in a scratch repo with only `golem init` run in it records which skill steps assume Golem tooling; each defect is fixed in src/cli/skills/dust.ts with tests or filed; no product code changed."
+design: docs/plan/audit/dust-4-dogfood/ (DUST4.4 audit note); the skill is src/cli/skills/dust.ts.
+gate: A Phase 1 run with two sub-partitions in two worktrees produces two notes and one SUMMARY whose counts equal a mechanical recount across both tables; a second run in a scratch repo with only `golem init` run in it records which skill steps assume Golem tooling; each defect is fixed in src/cli/skills/dust.ts with tests or filed; no product code changed.
 depends_on: [DUST4.4]
 touches: [docs/plan/audit, src/cli/skills/dust.ts, .claude/skills/golem-dust, tests/unit/cli/skills.test.ts]
 created: 2026-10-08
+updated: 2026-10-20T06:51:38.455Z
 ---
 
 ## What this is
@@ -36,3 +37,7 @@ the skill's Golem-specific references (`golem task index --write`, `/golem-park`
 
 - Phases 2 and 3.
 - Fixing any drift the audit finds in the slice.
+
+## Outcome
+
+shipped: two-partition audit, recount, scratch-repo run; 5 skill wording fixes

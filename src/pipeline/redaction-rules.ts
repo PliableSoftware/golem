@@ -62,6 +62,15 @@ export interface RedactionRule {
    * character (`@`) instead of trying a start at every position.
    */
   readonly extendStart?: (text: string, start: number, floor: number) => number;
+  /**
+   * DUSTSEC.26: offsets inside a whole-match target to retry as a shorter span ending
+   * at the same place, tried in order. Consulted ONLY when the full target was
+   * rejected by {@link validate} or {@link validateAt}, so a span the rule redacted
+   * before is never changed: this can only turn a skipped match into a redaction.
+   * Lets a greedy pattern that swallowed a leading unrelated run still find the
+   * secret at its tail. Default: no retry.
+   */
+  readonly retryStarts?: (target: string) => readonly number[];
 }
 
 /** Luhn checksum over the digits of `target` (separators allowed). */
@@ -119,6 +128,29 @@ function hasUniformGrouping(target: string): boolean {
  */
 export function isCreditCardLike(target: string): boolean {
   return luhnValid(target) && hasConsistentSeparatorChar(target) && hasUniformGrouping(target);
+}
+
+/**
+ * DUSTSEC.26 `retryStarts` for the credit-card rule: the offset just after each SPACE
+ * in `target` (never after a dash, where the pattern itself cannot start a match),
+ * longest suffix first. The card pattern is greedy, so a card preceded by digits and
+ * a space (`12 4111 1111 1111 1111`) is matched as one irregularly grouped run and
+ * rejected whole; its tail is the card.
+ *
+ * A suffix is offered only when it reads as a card: separator-free, or every group
+ * exactly 4 digits. Shorter groups would let a decimal byte dump (`72 112 114 ...`)
+ * lose its leading byte and pass the grouping check by chance.
+ */
+export function cardSuffixStarts(target: string): readonly number[] {
+  const starts: number[] = [];
+  for (let i = 0; i < target.length - 1; i += 1) {
+    if (target.charCodeAt(i) !== 32) continue;
+    const suffix = target.slice(i + 1);
+    if (/^\d{13,19}$/.test(suffix) || /^\d{4}(?:[ -]\d{4}){3}$/.test(suffix)) {
+      starts.push(i + 1);
+    }
+  }
+  return starts;
 }
 
 /**
@@ -368,10 +400,13 @@ const BUILT_IN_RULES: readonly RedactionRule[] = [
       "grouping — rejects sparse/irregular digit runs like ASCII byte dumps " +
       "that pass Luhn by chance, verification-notes §50). A run glued onto a " +
       "hex token (see isOutsideHexToken) is part of that token, not a card " +
-      "(DUSTSEC.24).",
+      "(DUSTSEC.24). When the whole run is rejected, its suffixes after a " +
+      "separator are tried, so a card preceded by digits and a space is still " +
+      "redacted (DUSTSEC.26).",
     pattern: /(?<![\d.-])\d(?:[ -]?\d){12,18}(?![\d.-])/g,
     validate: isCreditCardLike,
     validateAt: isOutsideHexToken,
+    retryStarts: cardSuffixStarts,
   },
   {
     id: "email",

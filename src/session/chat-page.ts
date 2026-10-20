@@ -301,7 +301,7 @@ export function renderChatPage(options: ChatPageOptions): string {
       case "turn_end":
         assistantEl = null;
         append(el("div", "boundary",
-          "end of turn" + (typeof ev.costUsd === "number" ? " · $" + ev.costUsd.toFixed(4) : "")));
+          (ev.cancelled === true ? "turn cancelled from a device" : "end of turn") + (typeof ev.costUsd === "number" ? " · $" + ev.costUsd.toFixed(4) : "")));
         break;
       case "parked":
         append(el("div", "gap", "⏸ " + ev.detail));

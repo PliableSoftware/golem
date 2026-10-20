@@ -25,6 +25,7 @@ const ONE_OF_EACH: readonly Unstamped[] = [
   { type: "tool_result", toolCallId: "t1", isError: false, content: "ok" },
   { type: "refused", tool: "Bash", message: "no", by: "host" },
   { type: "turn_end" },
+  { type: "turn_end", cancelled: true },
   { type: "parked", detail: "limit" },
   { type: "ended", reason: "done" },
 ];

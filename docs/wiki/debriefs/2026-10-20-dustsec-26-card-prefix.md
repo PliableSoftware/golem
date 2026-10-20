@@ -1,0 +1,40 @@
+---
+title: "DUSTSEC.26: a card preceded by digits and a space is now redacted"
+type: debrief
+tags: [dust, dustsec, redaction, credit-card, hard-rule]
+sources: [docs/plan/tasks/DUSTSEC.26.md, src/pipeline/redaction.ts, src/pipeline/redaction-rules.ts, tests/unit/pipeline/redaction-card-prefix.test.ts]
+created: 2026-10-20
+updated: 2026-10-20
+---
+
+# DUSTSEC.26: card preceded by digits and a space
+
+Follow-up to DUSTSEC.24 (#304). Rule context on [[Redaction Stage]].
+
+## Outcome
+
+- A card written after a short digit group (`12 <card>`) was swallowed by the greedy card pattern, rejected whole by `isCreditCardLike` as irregularly grouped, and left in the clear. It is now redacted and the leading digits stay.
+- Independent review caught two defects in the first cut, both fixed: a retry before an email local part left the domain in clear (now no retry next to `@` or an email-local character), and 3-digit byte dumps lost their first byte and passed the grouping check (suffix must be separator-free or all 4-digit groups; retry only after spaces, never dashes).
+- New optional `retryStarts` on a redaction rule. When the full match is rejected by `validate` or `validateAt`, `applyRule` retries the suffixes after each separator (longest first). The credit-card rule supplies `cardSuffixStarts`.
+- Rule order and ids are unchanged. The retry runs only for a match the old rule skipped, so a span redacted before is never changed.
+
+## Known limit
+
+The pattern caps a match at 19 digits and must end before a separator or a non-digit. A prefix long enough that the card falls past that cap (for example `2026 10 20 <card>`, 24 digits) is split into two matches and the card is still missed. Out of scope here; a follow-up would extend the retry beyond the match end.
+
+A plugin rule that used to match the whole `12 <card>` run now sees the placeholder instead (built-ins run first); accepted, plugins can only add redaction.
+
+## Lessons
+
+- Redaction by exact span: retrying a sub-span is safe only because it is gated on the old rule's rejection.
+- Uniform-grouping check can now accept a chance Luhn-valid uniform suffix of a byte dump; the dump itself, irregular, stays untouched (tested).
+
+## Tests
+
+`tests/unit/pipeline/redaction-card-prefix.test.ts`: failing-first cases for the miss, guards (byte dump, Luhn-invalid, hex-glued), and a seeded differential showing no card placeholder is lost against the old rule.
+
+## Review follow-up (2026-10-20)
+
+Decision (accepted): the retry over-redacts. A probe of `<1-3 digits> dddd dddd dddd dddd` rows redacted 594 of 4950 on this branch and 0 on `development`, roughly 1 in 10, whenever the 16-digit tail passes Luhn by chance. No input redacted on `development` is leaked on this branch. Redaction errs toward over-redacting.
+
+Changed after review: dropped the left-side `emailish` guard (the kept suffix always starts after a space, so only the right side can cut an address); suffix group count `{2,3}` to `{3}` (the 12-digit case could never pass Luhn). Still missed: a prefix that pushes the run past 19 digits.

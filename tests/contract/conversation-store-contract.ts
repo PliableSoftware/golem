@@ -16,8 +16,10 @@ export interface ConversationStoreHarness {
   readonly readDisk: () => Promise<string>;
 }
 
-const T0 = "2026-09-20T00:00:00.000Z";
-const T1 = "2026-09-20T00:00:01.000Z";
+// Relative to now: a fixed date ages past the store's 30-day eviction window.
+const NOW = Date.now();
+const T0 = new Date(NOW - 60_000).toISOString();
+const T1 = new Date(NOW - 59_000).toISOString();
 
 /** Built at runtime so no scanner flags a literal and no placeholder passes vacuously. */
 export function runtimeSecret(seed = "a"): string {

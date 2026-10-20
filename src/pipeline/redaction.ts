@@ -124,6 +124,17 @@ export function clampScanEnd(raw: number, length: number): number {
   return Number.isInteger(raw) && raw >= 0 && raw <= length ? raw : length;
 }
 
+function passesChecks(
+  rule: RedactionRule,
+  text: string,
+  start: number,
+  end: number,
+  target: string,
+): boolean {
+  if (rule.validate !== undefined && !rule.validate(target)) return false;
+  return rule.validateAt === undefined || rule.validateAt(text, start, end);
+}
+
 function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): [string, number] {
   // Redact by the EXACT matched span (whole match, or the captured group at its
   // real index) — never by first-substring replace, which can hit the wrong
@@ -168,11 +179,34 @@ function applyRule(text: string, rule: RedactionRule, table: PlaceholderTable): 
       redactStart = Number.isInteger(from) && from >= cursor && from <= matchStart ? from : cursor;
       target = text.slice(redactStart, redactEnd);
     }
-    if (rule.validate !== undefined && !rule.validate(target)) {
-      continue; // failed the extra check (e.g. Luhn) → not a secret, leave it
-    }
-    if (rule.validateAt !== undefined && !rule.validateAt(text, redactStart, redactEnd)) {
-      continue; // fails a check that needs the surrounding text → leave it
+    if (!passesChecks(rule, text, redactStart, redactEnd, target)) {
+      // DUSTSEC.26: a rejected greedy run may hold the secret at its tail. Only reached
+      // for a match the rule would have left alone, so no span this rule redacted before changes.
+      // Not when the run is followed by an email-local character or `@`: the email rule (later in the
+      // table) must still see the whole address, and a placeholder would cut it short.
+      const after = redactEnd < text.length ? text.charCodeAt(redactEnd) : 32;
+      const emailish = (c: number) =>
+        c === 64 ||
+        c === 95 ||
+        c === 37 ||
+        c === 43 ||
+        (c >= 48 && c <= 57) ||
+        (c >= 65 && c <= 90) ||
+        (c >= 97 && c <= 122);
+      const offsets = emailish(after) ? [] : (rule.retryStarts?.(target) ?? []);
+      let retried = false;
+      for (const offset of offsets) {
+        if (!Number.isInteger(offset) || offset <= 0 || offset >= target.length) continue;
+        const from = redactStart + offset;
+        const sub = target.slice(offset);
+        if (passesChecks(rule, text, from, redactEnd, sub)) {
+          redactStart = from;
+          target = sub;
+          retried = true;
+          break;
+        }
+      }
+      if (!retried) continue; // failed the extra checks (e.g. Luhn) -> not a secret, leave it
     }
 
     result += text.slice(cursor, redactStart);

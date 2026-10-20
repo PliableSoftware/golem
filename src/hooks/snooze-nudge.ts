@@ -51,6 +51,8 @@ export interface SnoozeNudgeState {
   readonly nudgedForResetIso?: string;
   /** The `observedAtIso` of the stale reading we last emitted a STALE warning for. */
   readonly staleWarnedForObservedIso?: string;
+  /** Host gate only (DUST2.19): the reset window a `parked` host-log line was last written for. */
+  readonly parkLoggedForResetIso?: string;
 }
 
 /**
@@ -187,20 +189,31 @@ export function snoozeStaleReason(
 }
 
 /** `.golem/state/snooze-nudge.json` for a project. */
-export function snoozeNudgeStatePath(projectDir: string): string {
-  return path.join(projectDir, ".golem", "state", "snooze-nudge.json");
+export function snoozeNudgeStatePath(projectDir: string, fileName = "snooze-nudge.json"): string {
+  return path.join(projectDir, ".golem", "state", fileName);
 }
+
+/**
+ * DUST2.19 — the hosted-session gate keeps its OWN one-shot state. Sharing the
+ * guest file would let a hosted session's advisory nudge consume the developer's
+ * own once-per-window redirect, or the reverse.
+ */
+export const HOST_SNOOZE_STATE_FILE = "snooze-nudge-host.json";
 
 const stateSchema = z.object({
   nudgedForResetIso: z.string().optional(),
   staleWarnedForObservedIso: z.string().optional(),
+  parkLoggedForResetIso: z.string().optional(),
 });
 
 /** Read the one-shot state, or `{}` (missing/corrupt → fail-open). */
-export async function readSnoozeNudgeState(projectDir: string): Promise<SnoozeNudgeState> {
+export async function readSnoozeNudgeState(
+  projectDir: string,
+  fileName?: string,
+): Promise<SnoozeNudgeState> {
   let raw: string;
   try {
-    raw = await readFile(snoozeNudgeStatePath(projectDir), "utf8");
+    raw = await readFile(snoozeNudgeStatePath(projectDir, fileName), "utf8");
   } catch {
     return {};
   }
@@ -209,8 +222,9 @@ export async function readSnoozeNudgeState(projectDir: string): Promise<SnoozeNu
     const parsed = stateSchema.safeParse(JSON.parse(stripped));
     if (!parsed.success) return {};
     // Normalize to omit absent keys (exactOptionalPropertyTypes: no `key: undefined`).
-    const { nudgedForResetIso, staleWarnedForObservedIso } = parsed.data;
+    const { nudgedForResetIso, staleWarnedForObservedIso, parkLoggedForResetIso } = parsed.data;
     return {
+      ...(parkLoggedForResetIso !== undefined ? { parkLoggedForResetIso } : {}),
       ...(nudgedForResetIso !== undefined ? { nudgedForResetIso } : {}),
       ...(staleWarnedForObservedIso !== undefined ? { staleWarnedForObservedIso } : {}),
     };
@@ -223,8 +237,9 @@ export async function readSnoozeNudgeState(projectDir: string): Promise<SnoozeNu
 export async function writeSnoozeNudgeState(
   projectDir: string,
   state: SnoozeNudgeState,
+  fileName?: string,
 ): Promise<void> {
-  const file = snoozeNudgeStatePath(projectDir);
+  const file = snoozeNudgeStatePath(projectDir, fileName);
   await mkdir(path.dirname(file), { recursive: true });
   await replaceViaTemp(file, `${JSON.stringify(state, null, 2)}\n`);
 }
