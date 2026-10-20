@@ -16,8 +16,16 @@ export {
   DEFAULT_MIN_SUBSTITUTION_CHARS,
   substituteKnownContent,
 } from "./context-substitution.js";
+export type { FileResultCacheOptions, FileStamp } from "./file-result-cache.js";
+export { FileResultCache, stampFile } from "./file-result-cache.js";
 export { backfillHeadroomCcrRefs } from "./headroom-ccr-bridge.js";
 export { LocalDirBlobStore } from "./local-blob-store.js";
+export type { HeadroomLevelMapping, LossyStageDeclaration } from "./lossy-stages.js";
+export {
+  HEADROOM_LEVEL_MAPPING,
+  LOSSY_STAGES,
+  NON_LOSSY_STAGE_FIELDS,
+} from "./lossy-stages.js";
 // The neutral MEMORY-scope federated-search seam (R3.6). HeadroomMemorySidecar
 // is imported directly from ./headroom-adapter.js by the CLI, never re-exported
 // here — same discipline as SemanticCompressor below.
