@@ -14,9 +14,9 @@ import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   appendHostLog,
   escapeForTerminal,
-  formatTurnLogLine,
   findHostSession,
   forgetHostSession,
+  formatTurnLogLine,
   HostedSession,
   hostSettingsArg,
   listHostSessions,
