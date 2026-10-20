@@ -108,7 +108,15 @@ export interface HostLifecycleEntry {
   readonly kind: "lifecycle";
   readonly ts: string;
   readonly sessionId: string;
-  readonly event: "started" | "stopped" | "crashed" | "parked" | "attached" | "detached";
+  readonly event:
+    | "started"
+    | "stopped"
+    | "crashed"
+    | "parked"
+    | "interrupted"
+    | "limit-feed-stale"
+    | "attached"
+    | "detached";
   readonly detail?: string;
 }
 

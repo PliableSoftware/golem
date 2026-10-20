@@ -35,6 +35,7 @@ import { type HookIo, readAll } from "./hook-io.js";
 import { PARK_EXEMPT_TOOLS, readSnoozeEnforced } from "./pre-tool-use.js";
 import {
   decideSnoozeNudge,
+  HOST_SNOOZE_STATE_FILE,
   readSnoozeNudgeState,
   snoozeEnforceReason,
   snoozeNudgeReason,
@@ -113,38 +114,90 @@ export async function runHostGateHook(
     const sessionId = options.sessionId ?? payload.session_id ?? "unknown";
     const action = classifyAction(toolName, payload.tool_input);
 
-    // DUST2.19 — a hosted session parks at the usage limit like any other. The
-    // guest gate (`pre-tool-use.ts`) carries this nudge, but this gate is a
-    // deliberate separate implementation, so the same decision is applied here
-    // with the same pure functions and the same exempt list (the park must stay
-    // reachable). Stale-feed warnings are NOT repeated here: that one-shot is
-    // addressed to a human and a hosted session has none. `snooze` files its
-    // `note` as a durable task before the wait, which is the "note filed" half.
-    if (!PARK_EXEMPT_TOOLS.includes(toolName)) {
+    // DUST2.19 — the park tools (`snooze`, `ToolSearch` to load its schema,
+    // `expand`) bypass the autonomy matrix entirely. `ToolSearch` classifies as
+    // unknown -> ask -> (nobody attached) deny, which would make `snooze`
+    // unreachable in enforcing mode: a park nobody can perform.
+    if (PARK_EXEMPT_TOOLS.includes(toolName)) {
+      await appendHostLog(projectDir, {
+        kind: "decision",
+        ts: options.nowIso ?? new Date().toISOString(),
+        sessionId,
+        tool: toolName,
+        action,
+        decision: "allow",
+        reason: "park-exempt tool: stays reachable so the session can park",
+      }).catch(() => undefined);
+      return 0;
+    }
+
+    // A hosted session parks at the usage limit like any other. The guest gate
+    // (`pre-tool-use.ts`) carries this nudge, but this gate is a deliberate
+    // separate implementation, so the same pure decision is applied here. It keeps
+    // its OWN one-shot state file (HOST_SNOOZE_STATE_FILE): sharing the guest's
+    // would let either side consume the other's once-per-window redirect.
+    {
       const nowMs = options.now?.() ?? Date.now();
+      const nowIso = options.nowIso ?? new Date(nowMs).toISOString();
       const prediction = await (options.readPrediction ?? readLimitState)(projectDir);
-      const state = await readSnoozeNudgeState(projectDir);
+      const state = await readSnoozeNudgeState(projectDir, HOST_SNOOZE_STATE_FILE);
       const enforce = await (options.isSnoozeEnforced ?? readSnoozeEnforced)(projectDir);
       const nudge = decideSnoozeNudge(prediction, state, nowMs, undefined, undefined, enforce);
       if (nudge.kind === "park") {
-        if (!enforce) {
-          await writeSnoozeNudgeState(projectDir, {
-            ...state,
-            nudgedForResetIso: nudge.resetAtIso,
-          });
-        }
         const reason = enforce
           ? snoozeEnforceReason(nudge.resetAtIso, nudge.utilization)
           : snoozeNudgeReason(nudge.resetAtIso, nudge.utilization);
+        // One decision line per parked tool call: the audit answers "what did
+        // this session try to do" even when the park refused it.
         await appendHostLog(projectDir, {
-          kind: "lifecycle",
-          ts: options.nowIso ?? new Date(nowMs).toISOString(),
+          kind: "decision",
+          ts: nowIso,
           sessionId,
-          event: "parked",
-          detail: `usage limit ~${Math.round(nudge.utilization * 100)}%; reset ${nudge.resetAtIso}`,
+          tool: toolName,
+          action,
+          decision: "deny",
+          reason: "usage-limit park: redirected to snooze",
         }).catch(() => undefined);
+        // The lifecycle line is once per reset window, not once per call (enforcing
+        // mode denies every call, which would otherwise write a line each).
+        const logged = state.parkLoggedForResetIso === nudge.resetAtIso;
+        if (!logged) {
+          await appendHostLog(projectDir, {
+            kind: "lifecycle",
+            ts: nowIso,
+            sessionId,
+            event: "parked",
+            detail: `usage limit ~${Math.round(nudge.utilization * 100)}%; reset ${nudge.resetAtIso}`,
+          }).catch(() => undefined);
+        }
+        await writeSnoozeNudgeState(
+          projectDir,
+          {
+            ...state,
+            parkLoggedForResetIso: nudge.resetAtIso,
+            ...(enforce ? {} : { nudgedForResetIso: nudge.resetAtIso }),
+          },
+          HOST_SNOOZE_STATE_FILE,
+        );
         io.stdout.write(denyEnvelope(reason));
         return 0;
+      }
+      if (nudge.kind === "stale") {
+        // No deny: there is no human to read a one-shot warning, and refusing a
+        // tool call over a cold feed is the blindness trading places with a block.
+        // But the blindness must be on the record, once per stale reading.
+        await appendHostLog(projectDir, {
+          kind: "lifecycle",
+          ts: nowIso,
+          sessionId,
+          event: "limit-feed-stale",
+          detail: `rate-limit feed ${nudge.ageMinutes} min old (~${Math.round(nudge.utilization * 100)}% at ${nudge.observedAtIso}); the usage-limit park is blind`,
+        }).catch(() => undefined);
+        await writeSnoozeNudgeState(
+          projectDir,
+          { ...state, staleWarnedForObservedIso: nudge.observedAtIso },
+          HOST_SNOOZE_STATE_FILE,
+        );
       }
     }
 

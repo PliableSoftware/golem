@@ -89,6 +89,59 @@ describe("host gate: usage-limit park", () => {
     expect(JSON.parse(second.h.stdout.text).hookSpecificOutput.permissionDecision).toBe("deny");
   });
 
+  it("lets ToolSearch and expand through the matrix too, in enforcing mode", async () => {
+    for (const tool of ["ToolSearch", "mcp__golem__expand"]) {
+      const { h, done } = run(tool, 0.95, true);
+      await done;
+      expect(h.stdout.text, tool).toBe("");
+    }
+  });
+
+  it("keeps its own one-shot state, apart from the guest gate's", async () => {
+    await run("Read", 0.95).done;
+    const { readFile } = await import("node:fs/promises");
+    const path = await import("node:path");
+    const host = JSON.parse(
+      await readFile(path.join(dir, ".golem", "state", "snooze-nudge-host.json"), "utf8"),
+    );
+    expect(host.nudgedForResetIso).toBe(RESET);
+    await expect(
+      readFile(path.join(dir, ".golem", "state", "snooze-nudge.json"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("writes one decision line per parked call but one parked lifecycle line per window", async () => {
+    for (let i = 0; i < 3; i += 1) await run("Read", 0.95, true).done;
+    const entries = await readHostLog(dir);
+    expect(entries.filter((e) => e.kind === "decision" && e.decision === "deny")).toHaveLength(3);
+    expect(entries.filter((e) => e.kind === "lifecycle" && e.event === "parked")).toHaveLength(1);
+  });
+
+  it("records a stale feed in the host log, once, without denying", async () => {
+    const stale: LimitPrediction = {
+      observedAtIso: new Date(NOW - 3 * 3600_000).toISOString(),
+      fiveHour: { utilization: 0.5, resetAtIso: RESET },
+    };
+    const go = async () => {
+      const h = io(payload("Read", dir));
+      await runHostGateHook(h, {
+        projectDir: dir,
+        sessionId: "s1",
+        readPrediction: async () => stale,
+        isSnoozeEnforced: async () => false,
+        readLevel: async () => "assisted",
+        now: () => NOW,
+      });
+      return h.stdout.text;
+    };
+    expect(await go()).toBe("");
+    expect(await go()).toBe("");
+    const entries = await readHostLog(dir);
+    expect(
+      entries.filter((e) => e.kind === "lifecycle" && e.event === "limit-feed-stale"),
+    ).toHaveLength(1);
+  });
+
   it("never blocks the park tool itself", async () => {
     const { h, done } = run("mcp__golem__snooze", 0.95, true);
     await done;
