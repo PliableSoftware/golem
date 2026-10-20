@@ -35,4 +35,4 @@ No independent review: no hard-rule code changed.
 
 ## Follow-ups filed
 
-None. The concurrency gap is recorded in `FINDINGS.md` G8.
+DUST4.7: Phase 1 with two live concurrent auditors (FINDINGS.md G8).

@@ -345,8 +345,8 @@ describe("dust skill (DUST4.1)", () => {
       "Merge the partition branches",
       "one grep per class cell",
       "the recount wins",
-      "a repo without them needs its own",
-      "where the project has one",
+      "falls back to its own gate",
+      "with `golem:task-index` markers",
     ]) {
       expect(flat).toContain(marker);
     }

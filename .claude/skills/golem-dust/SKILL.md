@@ -34,8 +34,8 @@ the wiki or docs tree.
    notes (the project's audit directory if it has one) whose counts are recounted
    mechanically from the tables, never added up from the notes' own headers: one
    grep per class cell over all the notes, and the class counts must sum to the
-   row count. Where a note's header disagrees with the recount, the recount wins. List contradictions
-   for the human; do not resolve them. Flag HIGH security items (a redaction,
+   row count. Where a note's header disagrees with the recount, the recount wins.
+   List contradictions for the human; do not resolve them. Flag HIGH security items (a redaction,
    consent, credential or other hard-rule guarantee weaker in code than
    documented) for an out-of-band fix before any refactor.
 
@@ -68,13 +68,15 @@ and name them.
   reviewer who did not write it. Authors' green tests prove the new test passes,
   not that nothing got weaker. Review again after fixes: fix rounds introduce
   new defects.
-- **Verify serially.** The project's verify command (in a Golem repo with package
-  scripts, `golem verify`; a repo without them needs its own), judged by exit
-  code, runs one at a time; parallel typechecks get killed for memory
+- **Verify serially.** The project's verify command, judged by exit code, runs
+  one at a time. `golem verify` needs the npm scripts build, typecheck, lint,
+  format:check, verify:deps and test; a repo without them falls back to its own
+  gate. Parallel runs are out: parallel typechecks get killed for memory
   (exit 137) and make "before" baselines unreliable.
 - **Merge only on the CI gate for the pushed head**, never an older commit's.
 - Merge one PR at a time; never hand-resolve a generated file, regenerate it
-  (`golem task index --write` for a Golem roadmap, where the project has one).
+  (`golem task index --write` for a Golem roadmap, where the project has one
+  with `golem:task-index` markers).
 
 ## Standing rules for every agent in the run
 - Commit early on your own branch.
