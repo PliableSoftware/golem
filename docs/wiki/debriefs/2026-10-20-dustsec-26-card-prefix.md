@@ -14,12 +14,15 @@ Follow-up to DUSTSEC.24 (#304). Rule context on [[Redaction Stage]].
 ## Outcome
 
 - A card written after a short digit group (`12 <card>`) was swallowed by the greedy card pattern, rejected whole by `isCreditCardLike` as irregularly grouped, and left in the clear. It is now redacted and the leading digits stay.
+- Independent review caught two defects in the first cut, both fixed: a retry before an email local part left the domain in clear (now no retry next to `@` or an email-local character), and 3-digit byte dumps lost their first byte and passed the grouping check (suffix must be separator-free or all 4-digit groups; retry only after spaces, never dashes).
 - New optional `retryStarts` on a redaction rule. When the full match is rejected by `validate` or `validateAt`, `applyRule` retries the suffixes after each separator (longest first). The credit-card rule supplies `cardSuffixStarts`.
 - Rule order and ids are unchanged. The retry runs only for a match the old rule skipped, so a span redacted before is never changed.
 
 ## Known limit
 
 The pattern caps a match at 19 digits and must end before a separator or a non-digit. A prefix long enough that the card falls past that cap (for example `2026 10 20 <card>`, 24 digits) is split into two matches and the card is still missed. Out of scope here; a follow-up would extend the retry beyond the match end.
+
+A plugin rule that used to match the whole `12 <card>` run now sees the placeholder instead (built-ins run first); accepted, plugins can only add redaction.
 
 ## Lessons
 
