@@ -67,9 +67,26 @@ describe("unchanged cases", () => {
     expect(redact(t)).toBe(t);
   });
 
-  it("cardSuffixStarts offsets follow separators, longest first", () => {
-    expect(cardSuffixStarts("12 34-5")).toEqual([3, 6]);
-    expect(cardSuffixStarts("1234")).toEqual([]);
+  it("leaves decimal byte dumps whole", () => {
+    for (const t of [
+      "72 112 114 111 120 121",
+      "72 114 111 117 116 101",
+      "72 121 111 117 114 115",
+    ]) {
+      expect(redact(t)).toBe(t);
+    }
+  });
+
+  it("keeps a prefixed email address fully redacted", () => {
+    const t = `contact 12 ${VISA}@example.com now`;
+    const out = redact(t);
+    expect(out).not.toContain("example.com");
+  });
+
+  it("does not start a retry after a dash", () => {
+    const t = `12-${VISA}`;
+    expect(cardSuffixStarts(t)).toEqual([8]);
+    expect(cardSuffixStarts(`12 3`)).toEqual([]);
   });
 });
 

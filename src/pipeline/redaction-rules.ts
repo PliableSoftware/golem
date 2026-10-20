@@ -131,16 +131,24 @@ export function isCreditCardLike(target: string): boolean {
 }
 
 /**
- * DUSTSEC.26 `retryStarts` for the credit-card rule: the offset just after each
- * separator in `target`, longest suffix first. The card pattern is greedy, so a
- * card preceded by digits and a space (`12 4111 1111 1111 1111`) is matched as one
- * irregularly grouped run and rejected whole; its tail is the card.
+ * DUSTSEC.26 `retryStarts` for the credit-card rule: the offset just after each SPACE
+ * in `target` (never after a dash, where the pattern itself cannot start a match),
+ * longest suffix first. The card pattern is greedy, so a card preceded by digits and
+ * a space (`12 4111 1111 1111 1111`) is matched as one irregularly grouped run and
+ * rejected whole; its tail is the card.
+ *
+ * A suffix is offered only when it reads as a card: separator-free, or every group
+ * exactly 4 digits. Shorter groups would let a decimal byte dump (`72 112 114 ...`)
+ * lose its leading byte and pass the grouping check by chance.
  */
 export function cardSuffixStarts(target: string): readonly number[] {
   const starts: number[] = [];
   for (let i = 0; i < target.length - 1; i += 1) {
-    const c = target.charCodeAt(i);
-    if (c === 32 || c === 45) starts.push(i + 1);
+    if (target.charCodeAt(i) !== 32) continue;
+    const suffix = target.slice(i + 1);
+    if (/^\d{13,19}$/.test(suffix) || /^\d{4}(?:[ -]\d{4}){2,3}$/.test(suffix)) {
+      starts.push(i + 1);
+    }
   }
   return starts;
 }
