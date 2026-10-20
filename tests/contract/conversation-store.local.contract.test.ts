@@ -14,7 +14,6 @@ import { describeConversationStoreContract, runtimeSecret } from "./conversation
 // Relative to now: a fixed date ages past the 30-day eviction window.
 const NOW = Date.now();
 const T0 = new Date(NOW - 60_000).toISOString();
-const T1 = new Date(NOW - 59_000).toISOString();
 
 const newTempDir = useTempDirs("golem-dust224-convstore-");
 
