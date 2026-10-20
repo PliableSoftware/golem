@@ -11,6 +11,11 @@ import { LocalConversationStore } from "../../src/session/conversation-store.js"
 import { useTempDirs } from "../helpers/tmp.js";
 import { describeConversationStoreContract, runtimeSecret } from "./conversation-store-contract.js";
 
+// Relative to now: a fixed date ages past the 30-day eviction window.
+const NOW = Date.now();
+const T0 = new Date(NOW - 60_000).toISOString();
+const T1 = new Date(NOW - 59_000).toISOString();
+
 const newTempDir = useTempDirs("golem-dust224-convstore-");
 
 async function readTree(dir: string): Promise<string> {
@@ -42,7 +47,7 @@ describe("ConversationStore known gaps (Phase 3, S9)", () => {
     await store.appendTurn("c-key", {
       role: "user",
       content: { [secret]: "value" },
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
     expect(await readTree(dir)).not.toContain(secret);
   });
@@ -53,7 +58,7 @@ describe("ConversationStore known gaps (Phase 3, S9)", () => {
     await store.appendTurn("c-same", {
       role: "user",
       content,
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
     const rec = await store.readConversation("c-same");
     expect(rec?.turns[0]?.content).toEqual(redactRequestBody(content).value);
