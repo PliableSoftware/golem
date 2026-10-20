@@ -16,6 +16,8 @@ export {
   DEFAULT_MIN_SUBSTITUTION_CHARS,
   substituteKnownContent,
 } from "./context-substitution.js";
+export type { FileResultCacheOptions, FileStamp } from "./file-result-cache.js";
+export { FileResultCache, stampFile } from "./file-result-cache.js";
 export { backfillHeadroomCcrRefs } from "./headroom-ccr-bridge.js";
 export { LocalDirBlobStore } from "./local-blob-store.js";
 export type { HeadroomLevelMapping, LossyStageDeclaration } from "./lossy-stages.js";
@@ -50,4 +52,3 @@ export { HEADROOM_CLIENT_NPM_PIN, HEADROOM_SIDECAR_PYPI_PIN } from "./pins.js";
 // file and avoid an index↔adapter import cycle.
 export type { SemanticCompressor, SemanticMode, SemanticResult } from "./semantic.js";
 export { estimateTokens } from "./tokens.js";
-export { ToolResultCache } from "./tool-result-cache.js";

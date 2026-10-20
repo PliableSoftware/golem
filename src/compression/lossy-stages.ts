@@ -35,6 +35,8 @@ export interface LossyStageDeclaration {
   readonly recovery: Recovery;
   /** Where the gate is enforced, for the reader following a declaration to code. */
   readonly enforcedAt: string;
+  /** Anything a reader of `stageField` would otherwise get wrong. */
+  readonly note?: string;
 }
 
 export const LOSSY_STAGES: readonly LossyStageDeclaration[] = Object.freeze([
@@ -60,8 +62,14 @@ export const LOSSY_STAGES: readonly LossyStageDeclaration[] = Object.freeze([
     needsHeadroomSidecar: false,
     recovery: "ccr-marker",
     enforcedAt: "src/pipeline/pipeline.ts (stage 4)",
+    note:
+      "Shares `semanticCompression` with the Headroom stage: it runs at the same levels " +
+      "but is a separate stage with a separate gate (no sidecar needed, force flag ignored).",
   },
   {
+    // The telemetry key and `StageConfig` field keep the historical name. What
+    // they gate is the standalone MCP service's CCR swap of large tool results; it
+    // is unrelated to `FileResultCache`, the mtime-invalidated file cache.
     id: "tool_result_cache",
     stageField: "toolResultCache",
     minLevel: 2,
@@ -72,6 +80,7 @@ export const LOSSY_STAGES: readonly LossyStageDeclaration[] = Object.freeze([
     needsHeadroomSidecar: false,
     recovery: "ccr-marker",
     enforcedAt: "src/mcp/in-memory-compression.ts (standalone `golem mcp serve` only)",
+    note: "A CCR swap of large tool results, not a cache. See `FileResultCache` for the mtime cache.",
   },
 ]);
 
@@ -85,23 +94,26 @@ export const NON_LOSSY_STAGE_FIELDS: readonly (keyof StageConfig)[] = Object.fre
 ]);
 
 /**
- * What `compression.level` hands Headroom, per content class.
+ * What `compression.level` hands Headroom by DEFAULT, per content class.
  *
- * Headroom's `ContentRouter` does its own content-type detection; Golem does not
- * choose a codec per type. What the level controls is which content CLASSES the
- * sidecar may touch and how many recent turns it leaves alone. These values are
- * the worker's `_MODE_PRESETS` and router preset (`headroom-worker.py`); the test
- * pins this table to that file so the two cannot drift.
+ * These are defaults, not locks: `compression.headroom_config` is layered over
+ * them per key, so an operator override wins (and the worker reports keys it
+ * cannot apply). Headroom's `ContentRouter` does its own content-type detection;
+ * Golem does not choose a codec per type. What the level sets is which content
+ * CLASSES the sidecar may touch and how many recent turns it leaves alone. The
+ * values are the worker's `_MODE_PRESETS` and router preset
+ * (`headroom-worker.py`); the test pins this table to that file so the two cannot
+ * drift.
  */
 export interface HeadroomLevelMapping {
   readonly level: Exclude<CompressionLevel, "off" | 1>;
   readonly mode: "stale_turns" | "aggressive";
-  /** Recent messages Headroom must leave untouched (`protect_recent`). */
+  /** Default recent messages Headroom leaves untouched (`protect_recent`). */
   readonly protectRecent: number;
-  /** Whether user-authored messages are compressible (`compress_user_messages`). */
+  /** Default for whether user-authored messages are compressible (`compress_user_messages`). */
   readonly compressUserMessages: boolean;
-  /** Tool output is emitted marker-free (`router.lossless`) at every level. */
-  readonly toolOutputMarkerFree: true;
+  /** Default: tool output is emitted marker-free (`router.lossless`). Overridable. */
+  readonly toolOutputMarkerFreeByDefault: boolean;
 }
 
 export const HEADROOM_LEVEL_MAPPING: readonly HeadroomLevelMapping[] = Object.freeze([
@@ -110,13 +122,13 @@ export const HEADROOM_LEVEL_MAPPING: readonly HeadroomLevelMapping[] = Object.fr
     mode: "stale_turns",
     protectRecent: 4,
     compressUserMessages: false,
-    toolOutputMarkerFree: true,
+    toolOutputMarkerFreeByDefault: true,
   },
   {
     level: 3,
     mode: "aggressive",
     protectRecent: 1,
     compressUserMessages: true,
-    toolOutputMarkerFree: true,
+    toolOutputMarkerFreeByDefault: true,
   },
 ]);

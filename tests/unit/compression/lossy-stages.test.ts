@@ -46,22 +46,54 @@ describe("LOSSY_STAGES", () => {
     for (const s of LOSSY_STAGES) expect(s.enforcedAt.length).toBeGreaterThan(0);
   });
 
-  it("caching-gated stages agree with resolveEffectiveCompression", () => {
-    const gated = LOSSY_STAGES.some((s) => s.gatedOffOnCachingUpstream);
-    const eff = resolveEffectiveCompression({
-      level: 3,
-      assumeCachingUpstream: true,
-      headroomSidecar: true,
-      forceSemanticOnCaching: false,
+  // `resolveEffectiveCompression` predicts ONE level, so it can only speak for the
+  // Headroom stage. Each stage is checked against its own declaration instead, and
+  // the two places the single-level prediction is knowingly coarser are pinned.
+  const effective = (o: { caching: boolean; force: boolean; sidecar: boolean; level?: 2 | 3 }) =>
+    resolveEffectiveCompression({
+      level: o.level ?? 3,
+      assumeCachingUpstream: o.caching,
+      headroomSidecar: o.sidecar,
+      forceSemanticOnCaching: o.force,
     });
-    expect(eff.degraded).toBe(gated);
-    const forced = resolveEffectiveCompression({
-      level: 3,
-      assumeCachingUpstream: true,
-      headroomSidecar: true,
-      forceSemanticOnCaching: true,
-    });
-    expect(forced.degraded).toBe(false);
+
+  /** Whether `stage` runs, from its declaration alone. */
+  const runs = (
+    stage: (typeof LOSSY_STAGES)[number],
+    o: { caching: boolean; force: boolean; sidecar: boolean },
+  ): boolean => {
+    if (stage.needsHeadroomSidecar && !o.sidecar) return false;
+    if (!stage.gatedOffOnCachingUpstream || !o.caching) return true;
+    return stage.forceFlagLiftsCachingGate && o.force;
+  };
+
+  it("each stage's declared gate matches the prediction wherever the prediction speaks for it", () => {
+    const semantic = LOSSY_STAGES.find((s) => s.id === "semantic");
+    if (semantic === undefined) throw new Error("no semantic stage");
+    for (const caching of [true, false]) {
+      for (const force of [true, false]) {
+        for (const sidecar of [true, false]) {
+          const o = { caching, force, sidecar };
+          expect(!effective(o).degraded, JSON.stringify(o)).toBe(runs(semantic, o));
+        }
+      }
+    }
+  });
+
+  it("known disagreement 1: the force flag lifts the semantic gate but not contextSubstitution", () => {
+    const sub = LOSSY_STAGES.find((s) => s.id === "contextSubstitution");
+    if (sub === undefined) throw new Error("no contextSubstitution stage");
+    const o = { caching: true, force: true, sidecar: true };
+    expect(effective(o).degraded).toBe(false); // prediction: level 3 delivers
+    expect(runs(sub, o)).toBe(false); // but this stage is still gated off
+  });
+
+  it("known disagreement 2: without the sidecar the prediction says level 1, yet contextSubstitution still runs", () => {
+    const sub = LOSSY_STAGES.find((s) => s.id === "contextSubstitution");
+    if (sub === undefined) throw new Error("no contextSubstitution stage");
+    const o = { caching: false, force: false, sidecar: false };
+    expect(effective(o).degraded).toBe(true);
+    expect(runs(sub, o)).toBe(true);
   });
 
   it("only the semantic stage needs the sidecar and honours the force flag", () => {
@@ -101,7 +133,10 @@ describe("HEADROOM_LEVEL_MAPPING", () => {
     }
   });
 
-  it("tool output is marker-free in the worker's router preset", () => {
+  it("marker-free tool output is the worker's default, not a lock", () => {
     expect(worker).toContain('_ROUTER_PRESET = {"lossless": True}');
+    expect(HEADROOM_LEVEL_MAPPING.every((r) => r.toolOutputMarkerFreeByDefault)).toBe(true);
+    // Caller overrides are layered on top of the preset in the worker.
+    expect(worker).toContain("router_overrides.update(caller_router)");
   });
 });

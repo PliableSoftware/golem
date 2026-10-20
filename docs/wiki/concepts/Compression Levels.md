@@ -33,10 +33,11 @@ them live. Neither needs a restart.
 | `2` | ✅ | ✅ | stale-turn drop | lossy; gated off on a caching upstream; needs `compression.headroom_sidecar`, as level 3 does. |
 | `3` | ✅ | ✅ | max | lossy; gated off on a caching upstream; needs `compression.headroom_sidecar`. |
 
-**What a lossy level hands Headroom** (`HEADROOM_LEVEL_MAPPING`, pinned to the
-worker by a test): level 2 protects the 4 most recent messages and leaves user
+**What a lossy level hands Headroom by default** (`HEADROOM_LEVEL_MAPPING`,
+pinned to the worker by a test; `compression.headroom_config` overrides any key):
+level 2 protects the 4 most recent messages and leaves user
 messages alone; level 3 protects 1 and may compress user messages; tool output
-is marker-free at both. Headroom's own router detects content types — Golem
+is marker-free at both by default. Headroom's own router detects content types — Golem
 sets which classes and how much recent history, not a codec per type. Every
 lossy stage is declared in `LOSSY_STAGES` (`src/compression/lossy-stages.ts`)
 with its gate and recovery; a test fails if a stage field has no declaration.
