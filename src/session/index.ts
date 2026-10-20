@@ -45,6 +45,8 @@ export {
 } from "./host-gate.js";
 export {
   appendHostLog,
+  escapeForTerminal,
+  formatTurnLogLine,
   HOST_LOG_KEEP_ROTATED,
   HOST_LOG_MAX_BYTES,
   type HostDecisionEntry,

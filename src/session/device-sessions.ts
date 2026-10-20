@@ -588,15 +588,18 @@ export function createDeviceSessionsHandler(options: DeviceSessionsOptions): {
         entry.hosted.send(text);
       },
       kind: "hosted",
-      interrupt: () => {
-        if (!entry.hosted.interrupt()) return;
-        void appendHostLog(entry.projectDir, {
+      interrupt: async (deviceId: string) => {
+        if (!entry.hosted.running) return false;
+        // Attribution BEFORE the kill (invariant 4): who stopped it is on the
+        // record even if the process dies mid-write. `exit` records the stop.
+        await appendHostLog(entry.projectDir, {
           kind: "lifecycle",
           ts: new Date().toISOString(),
           sessionId,
-          event: "stopped",
-          detail: "interrupted from a device",
+          event: "interrupted",
+          detail: `interrupted by device ${deviceId}`,
         }).catch(() => undefined);
+        return entry.hosted.interrupt();
       },
       history: async () => {
         const record = await conversationStore.readConversation(sessionId);

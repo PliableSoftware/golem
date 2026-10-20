@@ -74,7 +74,7 @@ export interface TransportSession {
    * labelled "stop the turn" that actually stops the session would be the same
    * class of lie as an optimistic acknowledgement.
    */
-  readonly interrupt?: () => void;
+  readonly interrupt?: (deviceId: string) => boolean | void | Promise<boolean | void>;
   /** Scrollback, oldest first — already redacted by the store that holds it. */
   readonly history?: () => Promise<readonly { role: string; content: string }[]>;
   /** `hosted` (R13.3) or `joined` (R13.7). Shown in the chat header. */
@@ -547,8 +547,11 @@ export function sessionTransportHandler(options: TransportOptions) {
         json(request.res, 501, { error: "this session cannot be interrupted" });
         return;
       }
-      session.interrupt();
-      json(request.res, 200, { stopped: true });
+      // DUST2.19 — the answer says what happened: `false` means there was
+      // nothing running to stop. An implementation that returns nothing is
+      // taken to have stopped (the pre-existing contract).
+      const stopped = (await session.interrupt(request.device.id)) !== false;
+      json(request.res, 200, { stopped });
       return;
     }
     if (route.route === "stream") {

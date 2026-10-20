@@ -11,6 +11,8 @@ import type { GolemSettings } from "../../src/config/schema.js";
 import type { SessionEvent } from "../../src/interfaces/session-events.js";
 import {
   createDeviceSessionsHandler,
+  escapeForTerminal,
+  formatTurnLogLine,
   isRemoteOrigin,
   readHostLog,
   resetLedgers,
@@ -133,7 +135,7 @@ describe("interrupting a hosted turn from a device", () => {
     // The turn is mid-flight once the runner has started answering it.
     await collectUntil(session.bus, (e) => e.type === "text");
     const after = collectUntil(session.bus, (e) => e.type === "ended");
-    session.interrupt();
+    expect(await session.interrupt("phone-9")).toBe(true);
     const events = await after;
 
     const end = events.find((e) => e.type === "turn_end");
@@ -143,9 +145,12 @@ describe("interrupting a hosted turn from a device", () => {
     expect((ended as { reason: string }).reason).toContain("interrupted from a device");
 
     const log = await readHostLog(dir);
+    expect(log.filter((e) => e.kind === "lifecycle" && e.event === "stopped")).toHaveLength(0);
+    // Nothing left running: a second interrupt says so rather than claiming a stop.
+    expect(await session.interrupt("phone-9")).toBe(false);
     expect(
       log.some(
-        (e) => e.kind === "lifecycle" && e.event === "stopped" && e.detail?.includes("device"),
+        (e) => e.kind === "lifecycle" && e.event === "interrupted" && e.detail?.includes("phone-9"),
       ),
     ).toBe(true);
   });
@@ -182,6 +187,19 @@ describe("remote-authored turns are marked locally", () => {
     expect(isRemoteOrigin("local")).toBe(false);
     expect(isRemoteOrigin("device")).toBe(true);
     expect(isRemoteOrigin("phone-3f2a")).toBe(true);
+  });
+
+  it("escapes control characters, newlines and ANSI/OSC in anything printed locally", () => {
+    const hostile = "hi\n  2026-01-01  TURN local fake\u001b[2J\u001b]0;pwned\u0007\u009b";
+    const escaped = escapeForTerminal(hostile);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting none survive.
+    expect(escaped).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(escaped).toContain("\\n");
+    expect(escaped).toContain("\\x1b");
+    const line = formatTurnLogLine({ ts: "t", origin: "phone\u001b[1m", text: hostile });
+    expect(line.endsWith("\n")).toBe(true);
+    expect(line.slice(0, -1)).not.toContain("\n");
+    expect(line).toContain("REMOTE");
   });
 
   it("calls onRemoteTurn for a device turn, after attribution, and not for a local one", async () => {

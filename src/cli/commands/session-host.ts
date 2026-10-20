@@ -13,11 +13,12 @@ import { classifyAction } from "../../autonomy/index.js";
 import { findProjectDir, loadEffectiveConfig } from "../../config/index.js";
 import {
   appendHostLog,
+  escapeForTerminal,
+  formatTurnLogLine,
   findHostSession,
   forgetHostSession,
   HostedSession,
   hostSettingsArg,
-  isRemoteOrigin,
   listHostSessions,
   readHostLog,
   reapDeadSessions,
@@ -272,15 +273,25 @@ export default function register(session: Command): void {
                   },
                   // DUST2.19 — a device can stop the running turn. The exit is
                   // marked, so the bus resolves the turn as cancelled.
-                  interrupt: () => {
-                    hosted.interrupt();
+                  interrupt: async (deviceId: string) => {
+                    if (!hosted.running) return false;
+                    await appendHostLog(dir, {
+                      kind: "lifecycle",
+                      ts: new Date().toISOString(),
+                      sessionId: id,
+                      event: "interrupted",
+                      detail: `interrupted by device ${deviceId}`,
+                    }).catch(() => undefined);
+                    return hosted.interrupt();
                   },
                 }
               : device.lookup(wanted),
           // DUST2.19 — a turn a device wrote is marked on the local terminal, so
           // the person at this machine can tell it from their own.
           onRemoteTurn: ({ origin, text }) => {
-            out(`  [remote:${origin}] ${text.slice(0, 200)}\n`);
+            out(
+              `  [remote:${escapeForTerminal(origin)}] ${escapeForTerminal(text.slice(0, 200))}\n`,
+            );
           },
           listSessions: async () => {
             const rest = await device.listSessions();
@@ -433,9 +444,7 @@ export default function register(session: Command): void {
         }
         for (const e of entries) {
           if (e.kind === "turn") {
-            out(
-              `  ${e.ts}  ${isRemoteOrigin(e.origin) ? "REMOTE  " : "TURN    "} ${e.origin.padEnd(10)} ${e.text.slice(0, 90)}\n`,
-            );
+            out(formatTurnLogLine(e));
           } else if (e.kind === "decision") {
             out(
               `  ${e.ts}  ${e.decision.toUpperCase().padEnd(8)} ${e.tool.padEnd(10)} ${e.action.padEnd(11)} ${e.reason.slice(0, 70)}\n`,

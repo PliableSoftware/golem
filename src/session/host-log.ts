@@ -78,6 +78,33 @@ export function isRemoteOrigin(origin: string): boolean {
   return origin !== LOCAL_ORIGIN;
 }
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+const UNSAFE_FOR_TERMINAL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * DUST2.19 — make device-authored text safe to print on the local operator's
+ * terminal. Every control character (newline, ESC, so any ANSI/OSC sequence,
+ * C1 controls) and bidi override becomes a visible escape such as `\x1b` or `\n`,
+ * so a remote turn can neither forge extra log lines nor drive the terminal.
+ */
+export function escapeForTerminal(text: string): string {
+  return text.replace(UNSAFE_FOR_TERMINAL, (ch) => {
+    if (ch === "\n") return "\\n";
+    if (ch === "\r") return "\\r";
+    if (ch === "\t") return "\\t";
+    const code = ch.charCodeAt(0);
+    return code <= 0xff
+      ? `\\x${code.toString(16).padStart(2, "0")}`
+      : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
+}
+
+/** One `golem session host log` line for a turn; remote turns are marked and escaped. */
+export function formatTurnLogLine(e: Pick<HostTurnEntry, "ts" | "origin" | "text">): string {
+  const label = isRemoteOrigin(e.origin) ? "REMOTE  " : "TURN    ";
+  return `  ${e.ts}  ${label} ${escapeForTerminal(e.origin).padEnd(10)} ${escapeForTerminal(e.text.slice(0, 90))}\n`;
+}
+
 /** A turn relayed INTO a hosted session — written before the runner sees it. */
 export interface HostTurnEntry {
   readonly kind: "turn";
