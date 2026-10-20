@@ -18,6 +18,11 @@ import {
 import { resolveWorktreeRoot } from "../../../src/shared/git-worktree.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
+// Relative to now: a fixed date ages past the 30-day eviction window.
+const NOW = Date.now();
+const T0 = new Date(NOW - 60_000).toISOString();
+const T1 = new Date(NOW - 59_000).toISOString();
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 let dir: string;
@@ -45,7 +50,7 @@ describe("LocalConversationStore — redaction before write", () => {
     await store.appendTurn("conv-1", {
       role: "user",
       content: `here is my token: ${secret}`,
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
 
     const record = await store.readConversation("conv-1");
@@ -61,12 +66,12 @@ describe("LocalConversationStore — redaction before write", () => {
     await store.appendTurn("conv-2", {
       role: "user",
       content: "hello",
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
     await store.appendTurn("conv-2", {
       role: "assistant",
       content: `token: ${secret}`,
-      timestamp: "2026-09-20T00:01:00.000Z",
+      timestamp: T1,
     });
 
     const record = await store.readConversation("conv-2");
@@ -82,12 +87,12 @@ describe("LocalConversationStore — restart round-trip (the seam, not just the 
     await first.appendTurn("conv-3", {
       role: "user",
       content: "what does this repo do?",
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
     await first.appendTurn("conv-3", {
       role: "assistant",
       content: "it is a local-first pre-LLM processing layer.",
-      timestamp: "2026-09-20T00:01:00.000Z",
+      timestamp: T1,
     });
 
     // A restart is a brand-new process: nothing but the on-disk files
@@ -111,7 +116,7 @@ describe("LocalConversationStore — bounded by count", () => {
       await store.appendTurn(ids[i] as string, {
         role: "user",
         content: `turn ${i}`,
-        timestamp: `2026-09-20T00:0${i}:00.000Z`,
+        timestamp: new Date(NOW - 600_000 + i * 60_000).toISOString(),
       });
     }
 
@@ -162,12 +167,12 @@ describe("LocalConversationStore — forget", () => {
     await store.appendTurn("keep", {
       role: "user",
       content: "hi",
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
     await store.appendTurn("drop", {
       role: "user",
       content: "bye",
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
 
     expect(await store.forget("drop")).toBe(true);
@@ -181,12 +186,12 @@ describe("LocalConversationStore — forget", () => {
     await store.appendTurn("one", {
       role: "user",
       content: "a",
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
     await store.appendTurn("two", {
       role: "user",
       content: "b",
-      timestamp: "2026-09-20T00:00:00.000Z",
+      timestamp: T0,
     });
 
     await store.forgetAll();
