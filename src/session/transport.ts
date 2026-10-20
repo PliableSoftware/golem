@@ -23,7 +23,7 @@ import type {
   SessionEvent,
   SessionMessageResponse,
 } from "../interfaces/session-events.js";
-import { appendHostLog } from "./host-log.js";
+import { appendHostLog, isRemoteOrigin } from "./host-log.js";
 import { MessageLedger, type SessionBus } from "./session-bus.js";
 
 /** `GET /session/:id/stream` — the SSE downstream. */
@@ -74,7 +74,7 @@ export interface TransportSession {
    * labelled "stop the turn" that actually stops the session would be the same
    * class of lie as an optimistic acknowledgement.
    */
-  readonly interrupt?: () => void;
+  readonly interrupt?: (deviceId: string) => boolean | void | Promise<boolean | void>;
   /** Scrollback, oldest first — already redacted by the store that holds it. */
   readonly history?: () => Promise<readonly { role: string; content: string }[]>;
   /** `hosted` (R13.3) or `joined` (R13.7). Shown in the chat header. */
@@ -125,6 +125,16 @@ export interface TransportOptions {
     /** False when `security.join_injection` is off — a device must be told, not left guessing. */
     readonly injectionEnabled: boolean;
   }>;
+  /**
+   * DUST2.19 — called once a turn authored by a device has been attributed (the
+   * audit line is already durable) and delivered, so the local operator's own
+   * view can mark it. Never called for a turn already seen (`duplicate`).
+   */
+  readonly onRemoteTurn?: (turn: {
+    readonly sessionId: string;
+    readonly origin: string;
+    readonly text: string;
+  }) => void;
   readonly heartbeatMs?: number;
   readonly nowIso?: () => string;
 }
@@ -438,6 +448,13 @@ async function deliverOnce(
 
   const seq = session.bus.cursor;
   ledger.record(messageId, seq);
+  if (isRemoteOrigin(deviceId)) {
+    try {
+      options.onRemoteTurn?.({ sessionId: session.bus.sessionId, origin: deviceId, text });
+    } catch {
+      // A broken local display must never turn a delivered turn into a failed POST.
+    }
+  }
   json(res, 200, { messageId, status: "delivered", seq } satisfies SessionMessageResponse);
 }
 
@@ -530,8 +547,11 @@ export function sessionTransportHandler(options: TransportOptions) {
         json(request.res, 501, { error: "this session cannot be interrupted" });
         return;
       }
-      session.interrupt();
-      json(request.res, 200, { stopped: true });
+      // DUST2.19 — the answer says what happened: `false` means there was
+      // nothing running to stop. An implementation that returns nothing is
+      // taken to have stopped (the pre-existing contract).
+      const stopped = (await session.interrupt(request.device.id)) !== false;
+      json(request.res, 200, { stopped });
       return;
     }
     if (route.route === "stream") {

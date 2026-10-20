@@ -112,6 +112,12 @@ export interface SessionTurnEndEvent {
   readonly type: "turn_end";
   readonly seq: number;
   readonly costUsd?: number;
+  /**
+   * DUST2.19 — true when the turn did not finish: a device interrupted it. The
+   * turn RESOLVES (a client must not wait for an answer that is not coming), but
+   * as cancelled, never as answered. Additive: absent on a normal turn end.
+   */
+  readonly cancelled?: true;
 }
 
 /**

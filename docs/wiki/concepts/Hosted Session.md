@@ -38,6 +38,12 @@ Shipped-behaviour notes (DUST1.10 rows 19, 39):
   supervising CLI. Whether that takes the `claude` child with it on Windows is
   UNVERIFIED (suspected, not run).
 
+## Remote turns, the usage-limit park and interrupt (DUST2.19)
+
+- A turn authored by a device is marked `REMOTE` in `golem session host log` and as `[remote:<id>]` on the `serve` terminal. `local` is the only origin that is not remote.
+- The host gate parks at the usage limit like the guest gate: a redirect to `snooze` (advisory one-shot, or every call when `snooze.enforce` is on), a `parked` lifecycle line, `snooze` itself exempt.
+- `POST /session/:id/interrupt` resolves a running turn as `turn_end {cancelled: true}` and then `ended`; the session ends with it, because only a process kill stops a turn.
+
 ## How it differs from the session on your screen
 
 |  | your session | a hosted session |
