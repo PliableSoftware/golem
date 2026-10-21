@@ -574,9 +574,7 @@ describe("every security.* key declares a stricter direction", () => {
       securityLeaves.filter((k) => !(k in SECURITY_DIRECTIONS)),
       "a new security.* key needs a declared stricter direction (or 'denied') in SECURITY_DIRECTIONS and TEAM_POLICY",
     ).toEqual([]);
-    expect(Object.keys(SECURITY_DIRECTIONS).filter((k) => !securityLeaves.includes(k))).toEqual(
-      [],
-    );
+    expect(Object.keys(SECURITY_DIRECTIONS).filter((k) => !securityLeaves.includes(k))).toEqual([]);
   });
 
   it.each(securityLeaves)("%s: the table matches the declared direction", (key) => {

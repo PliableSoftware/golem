@@ -18,6 +18,9 @@
  *                The team value must be a number no greater than the value the
  *                member would otherwise have, so it is judged at load time
  *                against the member's own effective value.
+ * - `raise-only` a number where HIGHER is stricter (a confidence floor). The team
+ *                value must be no less than the value the member would otherwise
+ *                have, judged at load time like `lower-only`.
  * - `narrow-roots` `security.origination_roots`: a non-empty allowlist of paths.
  *                Empty means "all roots" (the loosest), so a team may neither
  *                send `[]` nor widen: every team root must sit inside one of the
@@ -49,6 +52,7 @@ export type TeamRule =
   | "false-only"
   | "true-only"
   | "lower-only"
+  | "raise-only"
   | "narrow-roots"
   | "bounded-text"
   | "denied";
@@ -64,6 +68,7 @@ const S: TeamRule = "settable";
 const F: TeamRule = "false-only";
 const T: TeamRule = "true-only";
 const L: TeamRule = "lower-only";
+const R: TeamRule = "raise-only";
 const D: TeamRule = "denied";
 
 /**
@@ -132,7 +137,7 @@ export const TEAM_POLICY: Readonly<Record<LeafPath, TeamRule>> = {
   "knowledge.auto_index_max_files": L,
   "knowledge.wiki_dir": D,
   "knowledge.local_answer_enabled": F,
-  "knowledge.local_answer_min_confidence": D, // higher is stricter; no raise-only class yet
+  "knowledge.local_answer_min_confidence": R, // higher floor declines more, so only RAISE
   "knowledge.syntax_aware_chunking": F,
   "knowledge.repo_map_enabled": F,
   "knowledge.read_skeleton_enabled": F, // a lossy view of what Read returns
@@ -253,6 +258,7 @@ export function staticRefusal(dotted: string, value: unknown): string | undefine
         ? undefined
         : "a team may only force it to true (tighten), never disable it";
     case "lower-only":
+    case "raise-only":
       // Type and range are the schema's job: a wrong-typed value is an INVALID
       // value and skips the layer (ADR-0008), identically in the dry run and the
       // real pass. The member-relative comparison happens after Zod.
@@ -271,7 +277,7 @@ export function staticRefusal(dotted: string, value: unknown): string | undefine
 /** True for rules finished at load time against the member's own value (`lower-only`, `narrow-roots`). */
 export function isMemberRelative(dotted: string): boolean {
   const rule = teamRule(dotted);
-  return rule === "lower-only" || rule === "narrow-roots";
+  return rule === "lower-only" || rule === "raise-only" || rule === "narrow-roots";
 }
 
 /** What the consumer compares: `resolveWorktreeRoot(path.resolve(root))` (device-sessions.ts). */
@@ -301,6 +307,14 @@ export function relativeRefusal(
         return "0 means no cap, which is looser than yours; a team may only lower it to a real cap";
       }
       return undefined;
+    }
+    case "raise-only": {
+      const v = rank(dotted, value);
+      const c = rank(dotted, current);
+      if (v === undefined || c === undefined) return undefined;
+      return v < c
+        ? `a team may only raise it (yours is ${String(current)}, the team sent ${String(value)})`
+        : undefined;
     }
     case "narrow-roots": {
       if (!Array.isArray(value) || !Array.isArray(current) || current.length === 0)

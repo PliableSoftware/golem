@@ -26,3 +26,18 @@ The comparison is against what the member's own layers resolve to, not against t
 ## Status after `team-layer-everywhere` (2026-10-09, after the third review)
 
 The classification, the per-direction enforcement and the tests landed in `team-layer-everywhere` (see `src/config/team-policy.ts`), for ALL keys and not only `security.*`, so this task's gate is covered except for what remains here: a `raise-only` class (a number where higher is stricter; `knowledge.local_answer_min_confidence` is denied until then), the `golem team sync` report cannot show member-relative refusals (`lower-only`, `narrow-roots` need the member's own value, so only load-time warnings and `team.skipped` show them), and a fresh independent review of the final table.
+
+## Security classification (2026-10-21)
+
+| Key | Stricter direction | Why |
+|---|---|---|
+| `security.write_port` | none (denied) | a port has no stricter value |
+| `security.write_lan` | false-only | true exposes the write surface to the LAN |
+| `security.unlock_window_minutes` | lower-only | shorter unlock window |
+| `security.idle_relock_minutes` | lower-only | relocks sooner |
+| `security.step_up_max_age_minutes` | lower-only | fresher step-up required |
+| `security.device_cert_days` | lower-only | shorter certificate lifetime |
+| `security.join_injection` | false-only | true widens what a join can inject |
+| `security.origination_roots` | narrow-roots | empty means all roots; a subset is stricter |
+
+`raise-only` added for `knowledge.local_answer_min_confidence`. A new `security.*` key without an entry in `SECURITY_DIRECTIONS` (tests/unit/config/team-policy.test.ts) fails a test.
