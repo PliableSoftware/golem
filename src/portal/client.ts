@@ -21,6 +21,7 @@
  */
 
 import { z } from "zod";
+import { isValidPortalProjectSlug } from "./binding.js";
 import type { AuthorizationServerMetadata, FetchLike } from "./discovery.js";
 import { PortalAuthError } from "./errors.js";
 import { refreshTokens } from "./exchange.js";
@@ -70,6 +71,23 @@ const identitySchema = z.object({
 
 export type PortalIdentity = z.infer<typeof identitySchema>;
 
+/**
+ * `GET /api/v1/orgs/{orgId}/projects` — the portal projects a repo can name.
+ *
+ * Unknown fields are ignored (the contract says fields may be added). A slug
+ * this harness would not write to `team.project` is left out of the list rather
+ * than offered: an entry nobody can pick is worse than a shorter list.
+ */
+const portalProjectEntrySchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  description: wireOptional(z.string()).transform((value) => value ?? ""),
+  default: wireOptional(z.boolean()).transform((value) => value === true),
+});
+const portalProjectsSchema = z.object({ projects: z.array(z.unknown()) });
+
+export type PortalProjectEntry = z.infer<typeof portalProjectEntrySchema>;
+
 /** What the retry ladder actually did, for tests and `--json` diagnostics. */
 export interface PortalClientStats {
   readonly requests: number;
@@ -82,6 +100,13 @@ export interface PortalClient {
   request(path: string, init?: RequestInit): Promise<Response>;
   /** `GET /api/v1/me`, validated. */
   me(): Promise<PortalIdentity>;
+  /**
+   * `GET /api/v1/orgs/{orgId}/projects`: the team's non-archived portal
+   * projects, default first. Throws {@link PortalAuthError} (with `status` when
+   * the portal answered) for anything but a well-formed 200 — the caller decides
+   * that a missing list must not stop a team link.
+   */
+  projects(orgId: string): Promise<PortalProjectEntry[]>;
   /**
    * Throw `origin_mismatch` / `insecure_url` / `not_linked` WITHOUT sending
    * anything, when the stored token may not be used against this client's API
@@ -277,6 +302,33 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
     request,
     assertBound: async () => {
       assertTokenBound(await current());
+    },
+
+    projects: async (orgId: string): Promise<PortalProjectEntry[]> => {
+      const response = await request(`/api/v1/orgs/${encodeURIComponent(orgId)}/projects`);
+      if (!response.ok) {
+        throw new PortalAuthError(
+          "api_error",
+          `GET /api/v1/orgs/${orgId}/projects answered ${response.status}`,
+          response.status,
+        );
+      }
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        throw new PortalAuthError("api_error", "the portal project list did not return JSON");
+      }
+      const envelope = portalProjectsSchema.safeParse(payload);
+      if (!envelope.success) {
+        throw new PortalAuthError("api_error", "the portal project list had an unexpected shape");
+      }
+      const entries: PortalProjectEntry[] = [];
+      for (const raw of envelope.data.projects) {
+        const parsed = portalProjectEntrySchema.safeParse(raw);
+        if (parsed.success && isValidPortalProjectSlug(parsed.data.slug)) entries.push(parsed.data);
+      }
+      return entries;
     },
 
     me: async (): Promise<PortalIdentity> => {

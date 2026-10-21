@@ -28,14 +28,17 @@ import {
   createPortalClient,
   describeCacheAge,
   discoverAuthorizationServer,
+  isValidPortalProjectSlug,
   linkPortal,
   listTeamLayerCaches,
   PortalAuthError,
   type PortalIdentity,
   type PortalOrganization,
+  type PortalProjectEntry,
   portalStatus,
   portalTokenStore,
   printingBrowser,
+  readProjectTeamKeys,
   readTeamBinding,
   readTeamLayerCache,
   resolvePortalConfig,
@@ -88,6 +91,8 @@ interface LinkOptions {
   /** `--no-bind`: sign in without touching the project's settings. */
   readonly bind: boolean;
   readonly org?: string;
+  /** `--project <slug>`: the portal project this repo names (`default` clears it). */
+  readonly project?: string;
   readonly timeout?: string;
   readonly portalUrl?: string;
   readonly issuer?: string;
@@ -102,18 +107,82 @@ interface LinkOptions {
  * not (several teams and no `--org`), and reporting one as the other is how a
  * user ends up believing a repo is linked when only their keychain is.
  */
-type BindOutcome =
+export type PortalProjectOutcome =
+  /** A portal project other than the default was picked and written. */
+  | { readonly kind: "chosen"; readonly slug: string; readonly name: string }
+  /** The default portal project was picked; `team.project` is absent. */
+  | { readonly kind: "default" }
+  /** Nothing was chosen; the same team's existing `team.project` stays. */
+  | { readonly kind: "kept"; readonly slug: string }
+  /** A prompt was offered and declined. `team.project` is as it was. */
+  | { readonly kind: "skipped" }
+  /** `--json` or no TTY: no prompt was offered and no `--project` given. */
+  | { readonly kind: "skipped_non_interactive" }
+  /** `--project` named a slug the team's list does not contain. */
+  | {
+      readonly kind: "unknown_project";
+      readonly requested: string;
+      readonly available: readonly string[];
+    }
+  /** The list could not be had (old portal, 402/403, 5xx, offline). */
+  | {
+      readonly kind: "projects_unavailable";
+      readonly reason: string;
+      readonly requested?: string;
+    };
+
+export type BindOutcome =
   | {
       readonly kind: "bound";
       readonly orgId: string;
       readonly name: string;
       readonly settingsFile: string;
       readonly entitled: boolean;
+      /** The team this repo named before, when this run changed it; else null. */
+      readonly movedFrom: string | null;
+      /** The old `team.project` removed because the team changed; else null. */
+      readonly droppedPortalProject: string | null;
+      readonly portalProject: PortalProjectOutcome;
     }
   | { readonly kind: "skipped" }
   | { readonly kind: "no_organizations" }
   | { readonly kind: "ambiguous"; readonly candidates: readonly PortalOrganization[] }
   | { readonly kind: "unknown"; readonly requested: string };
+
+/** One honest line per portal project outcome; never silent about an unrecorded choice. */
+function describePortalProjectOutcome(outcome: PortalProjectOutcome): string {
+  switch (outcome.kind) {
+    case "chosen":
+      return `Portal project: ${outcome.name} (${outcome.slug}), recorded as team.project.`;
+    case "default":
+      return "Portal project: the team's default (team.project is not set).";
+    case "kept":
+      return `Portal project: unchanged, team.project stays ${outcome.slug}.`;
+    case "skipped":
+      return (
+        "Portal project not chosen: the team's default applies unless team.project is set. " +
+        "Re-run with `--project <slug>` to choose one."
+      );
+    case "skipped_non_interactive":
+      return (
+        "Portal project not chosen (no terminal to ask in): the team's default applies. " +
+        "Re-run with `--project <slug>` to choose one."
+      );
+    case "unknown_project":
+      return (
+        `Portal project not chosen: the team has no portal project ${JSON.stringify(outcome.requested)}. ` +
+        `Valid: ${outcome.available.join(", ")}.`
+      );
+    case "projects_unavailable":
+      return (
+        `Portal project not chosen: could not get the team's portal project list ` +
+        `(${outcome.reason}). The team is linked; the team's default portal project applies. ` +
+        (outcome.requested === undefined
+          ? "Re-run `golem team link` later, or set team.project by hand."
+          : `\`--project ${outcome.requested}\` was NOT recorded.`)
+      );
+  }
+}
 
 function describeOrg(org: PortalOrganization): string {
   const slug = org.slug === undefined ? "" : ` (${org.slug})`;
@@ -140,21 +209,80 @@ async function promptForOrg(
   }
 }
 
+function describePortalProject(entry: PortalProjectEntry): string {
+  const description = entry.description === "" ? "" : ` — ${entry.description}`;
+  return `${entry.name} (${entry.slug})${entry.default ? " [default]" : ""}${description}`;
+}
+
+/** The interactive half of choosing a portal project. Enter takes the default pick. */
+async function promptForPortalProject(
+  entries: readonly PortalProjectEntry[],
+  defaultSlug: string,
+): Promise<PortalProjectEntry | null> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    process.stdout.write("\nWhich portal project does this repo use?\n");
+    entries.forEach((entry, index) => {
+      process.stdout.write(`  ${index + 1}) ${describePortalProject(entry)}\n`);
+    });
+    const fallbackIndex = entries.findIndex((entry) => entry.slug === defaultSlug);
+    const answer = (
+      await rl.question(
+        `Choose 1-${entries.length} (Enter for ${defaultSlug}, or type "skip" to leave it unchosen): `,
+      )
+    ).trim();
+    if (answer.toLowerCase() === "skip") return null;
+    if (answer === "") return entries[fallbackIndex] ?? null;
+    const index = Number(answer);
+    if (!Number.isInteger(index) || index < 1 || index > entries.length) return null;
+    return entries[index - 1] ?? null;
+  } finally {
+    rl.close();
+  }
+}
+
+/** Why a portal project list could not be had, in words a person can act on. */
+function whyNoPortalProjects(err: unknown): string {
+  const status = err instanceof PortalAuthError ? err.status : undefined;
+  switch (status) {
+    case 404:
+      return "this portal does not offer a portal project list (it may be an older release)";
+    case 402:
+      return "the team has no live subscription";
+    case 403:
+      return "the portal refused the request for the list";
+    case undefined:
+      return err instanceof Error ? err.message : String(err);
+    default:
+      return `the portal answered ${status}`;
+  }
+}
+
 /**
- * Record the team in the project's COMMITTED settings.
+ * Record the team in the project's COMMITTED settings, then the portal project.
  *
  * This is the whole of `project-team-binding` on the link path. A sign-in that
  * stops at a stored token leaves the project no better off than before: the
  * keychain knows who you are, and nothing knows which team this repo belongs
  * to. `interactive` is false for `--json` and for a non-TTY, where a prompt
  * would hang a script instead of asking a person.
+ *
+ * The portal project list can never stop the team link: every way of failing to
+ * get it ends in `projects_unavailable` with the team recorded.
  */
-async function bindProjectTeam(options: {
+export async function bindProjectTeam(options: {
   readonly dir: string;
   readonly identity: PortalIdentity;
   readonly requested?: string;
+  /** `--project`: a slug, or `default` to remove `team.project`. */
+  readonly project?: string;
   readonly interactive: boolean;
   readonly portalUrl: string;
+  readonly listProjects: (orgId: string) => Promise<readonly PortalProjectEntry[]>;
+  readonly pickProject?: (
+    entries: readonly PortalProjectEntry[],
+    defaultSlug: string,
+  ) => Promise<PortalProjectEntry | null>;
 }): Promise<BindOutcome> {
   const choice = chooseOrganization(options.identity.organizations, options.requested);
   let org: PortalOrganization;
@@ -174,17 +302,105 @@ async function bindProjectTeam(options: {
       break;
     }
   }
+
+  const before = await readProjectTeamKeys(options.dir);
+  const sameTeam = before.orgId === org.id;
+  const existing = sameTeam ? before.project : null;
+  const requested = options.project?.trim() ?? "";
+
+  // What to hand bindTeam (undefined = nothing chosen) and what to report.
+  let write: string | null | undefined;
+  let outcome: PortalProjectOutcome | undefined;
+
+  if (requested.toLowerCase() === "default") {
+    write = null;
+    outcome = { kind: "default" };
+  } else if (requested !== "" || options.interactive) {
+    let entries: readonly PortalProjectEntry[] | null = null;
+    let reason = "";
+    try {
+      entries = await options.listProjects(org.id);
+    } catch (err) {
+      reason = whyNoPortalProjects(err);
+    }
+    if (entries === null) {
+      outcome = {
+        kind: "projects_unavailable",
+        reason,
+        ...(requested === "" ? {} : { requested }),
+      };
+    } else if (requested !== "") {
+      const match = entries.find((entry) => entry.slug === requested);
+      if (match === undefined || !isValidPortalProjectSlug(match.slug)) {
+        outcome = {
+          kind: "unknown_project",
+          requested,
+          available: entries.map((entry) => entry.slug),
+        };
+      } else if (match.default) {
+        write = null;
+        outcome = { kind: "default" };
+      } else {
+        write = match.slug;
+        outcome = { kind: "chosen", slug: match.slug, name: match.name };
+      }
+    } else {
+      const portalDefault = entries.find((entry) => entry.default)?.slug ?? "";
+      const only = entries.length <= 1 ? entries[0] : undefined;
+      if (entries.length === 0) {
+        outcome = { kind: "projects_unavailable", reason: "the team has no portal projects" };
+      } else if (only !== undefined && only.default) {
+        // Nothing to choose between. Said as `default`, not silently dropped.
+        write = null;
+        outcome = { kind: "default" };
+      } else {
+        const defaultSlug =
+          existing !== null && entries.some((entry) => entry.slug === existing)
+            ? existing
+            : portalDefault !== ""
+              ? portalDefault
+              : (entries[0]?.slug ?? "");
+        const picked = await (options.pickProject ?? promptForPortalProject)(entries, defaultSlug);
+        if (picked === null) {
+          outcome = { kind: "skipped" };
+        } else if (picked.default) {
+          write = null;
+          outcome = { kind: "default" };
+        } else {
+          write = picked.slug;
+          outcome = { kind: "chosen", slug: picked.slug, name: picked.name };
+        }
+      }
+    }
+  } else {
+    outcome = { kind: "skipped_non_interactive" };
+  }
+
   const result = await bindTeam({
     projectDir: options.dir,
     orgId: org.id,
     portalUrl: options.portalUrl,
+    ...(write === undefined ? {} : { portalProject: write }),
   });
+  // Nothing chosen and the same team's slug survived: say it is kept, not skipped.
+  if (
+    result.portalProject === "kept" &&
+    (outcome.kind === "skipped_non_interactive" || outcome.kind === "skipped")
+  ) {
+    outcome = { kind: "kept", slug: result.previousPortalProject ?? "" };
+  }
   return {
     kind: "bound",
     orgId: result.orgId,
     name: org.name,
     settingsFile: result.settingsFile,
     entitled: org.entitled !== false,
+    movedFrom:
+      result.previousOrgId !== null && result.previousOrgId !== result.orgId
+        ? result.previousOrgId
+        : null,
+    droppedPortalProject: result.portalProject === "dropped" ? result.previousPortalProject : null,
+    portalProject: outcome,
   };
 }
 
@@ -304,6 +520,10 @@ export default function register(program: Command): void {
     .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--no-browser", "print the sign-in URL instead of opening a browser")
     .option("--org <id-or-slug>", "which team to bind this project to (skips the prompt)")
+    .option(
+      "--project <slug>",
+      "which portal project this repo uses (`default` removes team.project; skips the prompt)",
+    )
     .option("--no-bind", "sign in only — do not write team.org_id into this project")
     .option("--timeout <ms>", "override how long to wait for the browser round trip")
     .option("--portal-url <url>", "portal API base to bind the token to (https or loopback)")
@@ -311,6 +531,12 @@ export default function register(program: Command): void {
     .option("--json", "machine-readable output", false)
     .action(async (opts: LinkOptions) => {
       try {
+        if (opts.project !== undefined && !opts.bind) {
+          throw new Error(
+            "--project records a portal project in this repo's settings, so it cannot be " +
+              "combined with --no-bind",
+          );
+        }
         const { config, tokens, provenance } = await portalContext(opts.dir, {
           ...(opts.portalUrl === undefined ? {} : { portalUrl: opts.portalUrl }),
           ...(opts.issuer === undefined ? {} : { issuer: opts.issuer }),
@@ -359,8 +585,10 @@ export default function register(program: Command): void {
               dir: opts.dir,
               identity,
               ...(opts.org === undefined ? {} : { requested: opts.org }),
+              ...(opts.project === undefined ? {} : { project: opts.project }),
               interactive: !opts.json && process.stdin.isTTY === true,
               portalUrl: config.apiBaseUrl,
+              listProjects: (orgId) => client.projects(orgId),
             })
           : { kind: "skipped" };
 
@@ -369,6 +597,16 @@ export default function register(program: Command): void {
         // code) says "one more decision needed" while the sign-in still
         // reports success. Exit 0 with no team recorded would read as linked.
         if (bind.kind === "ambiguous" || bind.kind === "unknown") process.exitCode = 2;
+        // The same rule for the portal project: a `--project` that could not be
+        // recorded is a decision still owed, not a success.
+        if (
+          bind.kind === "bound" &&
+          (bind.portalProject.kind === "unknown_project" ||
+            (bind.portalProject.kind === "projects_unavailable" &&
+              bind.portalProject.requested !== undefined))
+        ) {
+          process.exitCode = 2;
+        }
 
         if (opts.json) {
           process.stdout.write(
@@ -411,6 +649,18 @@ export default function register(program: Command): void {
                 `Recorded in ${bind.settingsFile} — commit it, and a colleague who clones ` +
                 `this repo is pointed at the same team.\n`,
             );
+            if (bind.movedFrom !== null) {
+              process.stdout.write(
+                `It was bound to ${bind.movedFrom}; that team no longer applies here.\n`,
+              );
+            }
+            if (bind.droppedPortalProject !== null) {
+              process.stdout.write(
+                `Removed team.project (${bind.droppedPortalProject}): a portal project belongs ` +
+                  "to one team and means nothing in another.\n",
+              );
+            }
+            process.stdout.write(`${describePortalProjectOutcome(bind.portalProject)}\n`);
             if (!bind.entitled) {
               // Said now rather than at the next surprising moment. The link is
               // still correct; what is missing is the subscription behind it.

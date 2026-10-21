@@ -91,7 +91,9 @@ describe("client.projects", () => {
     expect((await c.projects("org_abc")).map((p) => p.slug)).toEqual(["ok"]);
   });
 
-  it.each([402, 403, 404, 500, 503])("a %i throws PortalAuthError carrying the status", async (status) => {
+  it.each([
+    402, 403, 404, 500, 503,
+  ])("a %i throws PortalAuthError carrying the status", async (status) => {
     const c = client(async () => json(status, { error: "x", code: "whatever" }));
     await expect(c.projects("org_abc")).rejects.toMatchObject({
       name: "PortalAuthError",

@@ -146,6 +146,38 @@ succeed while binding does not. An unbound project exits 2 — the recoverable
 code — so "the keychain knows you but this repo names no team" is never mistaken
 for success.
 
+### Choosing the portal project, and re-linking
+
+After the team is settled, `link` asks the portal for that team's portal projects
+(`GET /api/v1/orgs/{orgId}/projects`: non-archived, default first, then by name)
+and, in a terminal, offers them as a list. The pick is written as `team.project`
+by the same `bindTeam` call that writes `team.org_id`, so both live in the same
+committed file. Picking the team's default portal project writes **no**
+`team.project` key; the portal's own fallback serves it.
+
+- `--project <slug>` skips the prompt. A slug the list does not contain is refused
+  with the valid ones (the typo this exists to catch) and exits 2. `--project
+  default` removes `team.project`. `--project` with `--no-bind` is an error.
+- Enter takes the existing `team.project` when re-linking the same team, otherwise
+  the portal's default. A slug that fails `^[a-z0-9][a-z0-9-]{0,63}$` is never
+  written, whatever the portal listed.
+- `--json` and a non-TTY never prompt and never call the list endpoint; the
+  outcome is `skipped_non_interactive` (or `kept` when the same team's slug stayed).
+- Re-linking to a **different** team replaces `team.org_id` and removes any
+  `team.project` not chosen in that run, saying so: a slug is only meaningful
+  inside the team that issued it. Re-linking the same team keeps it.
+- **The list can never stop the team link.** 404 (an older portal), 402, 403, 5xx
+  and network failure all leave the team linked and report
+  `projects_unavailable` with the reason; the team's default portal project then
+  applies. If `--project` was given, that slug was **not** recorded, and the exit
+  code is 2.
+
+`--json` carries `team.portalProject.kind`: `chosen`, `default`, `kept`, `skipped`,
+`skipped_non_interactive`, `unknown_project` or `projects_unavailable`, plus
+`movedFrom` and `droppedPortalProject` when a re-link changed the team.
+`golem team status` reads a cleared `team.project` as the default portal project,
+not as a fallback.
+
 `unlink` is the project-scope inverse. It removes the key and the managed team
 skills, and it **keeps** `~/.golem/teams/<org_id>.json`:
 
