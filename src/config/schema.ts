@@ -998,6 +998,21 @@ export const SETTINGS_LEAVES = {
      */
     portal_url: z.string(),
     /**
+     * The portal project this repo takes its team settings and skills from, by
+     * slug, e.g. `payments`. Empty (the default) means the team's default portal
+     * project, exactly as before. Inert while {@link org_id} is empty: naming a
+     * portal project with no team performs no portal I/O.
+     *
+     * A portal project is a named group of settings and skills on the portal,
+     * shared by one or more repos. It is NOT the `project` settings origin (this
+     * repo's own `.golem/settings.json`). Naming one is a choice, not access
+     * control: the team still comes from the link, and anyone who can edit the
+     * file can name any portal project in their own team. A name the portal
+     * cannot apply (missing, archived) falls back to the default portal project
+     * with one warning.
+     */
+    project: z.string(),
+    /**
      * Whether to apply the team's settings layer. On by default *for a linked
      * project*, and completely inert while {@link org_id} is empty.
      *
@@ -1303,6 +1318,7 @@ export const DEFAULT_SETTINGS: GolemSettings = deepFreeze({
   team: {
     org_id: "",
     portal_url: "",
+    project: "",
     sync: true,
     skills: true,
   },

@@ -37,6 +37,7 @@ import {
   portalTokenStore,
   printingBrowser,
   readTeamBinding,
+  readTeamLayerCache,
   resolvePortalConfig,
   syncTeamLayer,
   systemBrowser,
@@ -194,6 +195,13 @@ export interface ProjectBindingView {
   readonly summary: string;
   /** Human line about `~/.golem/teams/<org>.json`; null when unlinked. */
   readonly cache: string | null;
+  /** The portal project this repo names; null for the team's default. */
+  readonly portalProject: string | null;
+  /**
+   * Which portal project's data is in force and why, from the last sync's
+   * record. `null` when nothing is known (never synced) or the repo is unlinked.
+   */
+  readonly portalProjectState: "found" | "default" | "fallback" | "denied" | null;
 }
 
 /**
@@ -208,7 +216,10 @@ export function portalIsConfigured(portal: { readonly url: string }): boolean {
   return portal.url.trim() !== "";
 }
 
-export async function describeProjectBinding(team: TeamSettings): Promise<ProjectBindingView> {
+export async function describeProjectBinding(
+  team: TeamSettings,
+  userDir: string = defaultUserDir(),
+): Promise<ProjectBindingView> {
   const state = readTeamBinding(team);
   if (state.kind === "unlinked") {
     // The free tier, stated as a fact rather than an absence — and NO cache is
@@ -218,6 +229,8 @@ export async function describeProjectBinding(team: TeamSettings): Promise<Projec
       orgId: null,
       summary: "none — this project is not linked to a team (Golem is complete without one)",
       cache: null,
+      portalProject: null,
+      portalProjectState: null,
     };
   }
   if (state.kind === "invalid") {
@@ -226,11 +239,14 @@ export async function describeProjectBinding(team: TeamSettings): Promise<Projec
       orgId: state.orgId,
       summary: `${state.orgId} — IGNORED, because ${state.reason}`,
       cache: null,
+      portalProject: null,
+      portalProjectState: null,
     };
   }
   const { binding } = state;
   const applied = binding.sync ? "" : " (team.sync is off, so its settings are not applied)";
-  const cachePath = teamCachePath(defaultUserDir(), binding.orgId);
+  const project = binding.project ?? "";
+  const cachePath = teamCachePath(userDir, binding.orgId, project);
   let cache: string;
   try {
     const info = await stat(cachePath);
@@ -238,11 +254,38 @@ export async function describeProjectBinding(team: TeamSettings): Promise<Projec
   } catch {
     cache = `${cachePath} — not fetched yet`;
   }
+
+  // Which portal project applies, and why. The reason comes from the record the
+  // last sync left in this portal project's own cache, so this stays a pure
+  // local read: no request is made.
+  let resolved: ProjectBindingView["portalProjectState"] = project === "" ? "default" : null;
+  let which = project === "" ? "the default portal project" : `portal project ${project}`;
+  if (project !== "") {
+    const recorded = await readTeamLayerCache(userDir, binding.orgId, { project }).catch(
+      () => null,
+    );
+    if (recorded?.denied !== undefined) {
+      resolved = "denied";
+      which =
+        `portal project ${project} (the portal denied this team on ${recorded.denied.at}: ` +
+        `${recorded.denied.code}; its cached settings are NOT applied)`;
+    } else if (recorded?.project_state !== undefined) {
+      resolved = "fallback";
+      which =
+        `the default portal project (portal project ${project} did not apply: ` +
+        `${recorded.project_state})`;
+    } else if (recorded !== null) {
+      resolved = "found";
+    }
+  }
+  const rejected = binding.projectRejected === undefined ? "" : `; ${binding.projectRejected}`;
   return {
     linked: true,
     orgId: binding.orgId,
-    summary: `${binding.orgId}${applied}`,
+    summary: `${binding.orgId} — ${which}${applied}${rejected}`,
     cache,
+    portalProject: project === "" ? null : project,
+    portalProjectState: resolved,
   };
 }
 
@@ -535,17 +578,31 @@ export default function register(program: Command): void {
 
         const { config, tokens } = await portalContext(opts.dir);
         const { binding } = state;
-        const targets: { orgId: string; portalUrl: string }[] = [
-          { orgId: binding.orgId, portalUrl: teamApiBaseUrl(binding, config.apiBaseUrl) },
+        const targets: { orgId: string; portalUrl: string; project: string }[] = [
+          {
+            orgId: binding.orgId,
+            portalUrl: teamApiBaseUrl(binding, config.apiBaseUrl),
+            project: binding.project ?? "",
+          },
         ];
         if (opts.all) {
           for (const cached of await listTeamLayerCaches(userDir)) {
-            if (cached.org_id === binding.orgId) continue;
+            // A cache is per portal project: the same org's other portal
+            // projects are refreshed under their own slug, never this repo's.
+            if (
+              cached.org_id === binding.orgId &&
+              (cached.portal_project ?? "") === (binding.project ?? "")
+            )
+              continue;
             // Another team's own `team.portal_url` is not knowable from here —
             // only the project that names it has that — so a sweep uses this
             // machine's configured portal, which is right for the ordinary
             // single-portal case and honestly wrong for nothing else.
-            targets.push({ orgId: cached.org_id, portalUrl: config.apiBaseUrl });
+            targets.push({
+              orgId: cached.org_id,
+              portalUrl: config.apiBaseUrl,
+              project: cached.portal_project ?? "",
+            });
           }
         }
 
@@ -561,18 +618,25 @@ export default function register(program: Command): void {
           // token may not go to this portal: no request is made (DUSTSEC.4).
           await client.assertBound?.();
           const result = await syncTeamLayer({
-            binding: { ...binding, orgId: target.orgId, portalUrl: target.portalUrl },
+            binding: {
+              ...binding,
+              orgId: target.orgId,
+              portalUrl: target.portalUrl,
+              project: target.project,
+            },
             userDir,
             client,
             report: true,
           });
           results.push({
             org_id: target.orgId,
+            ...(target.project === "" ? {} : { portal_project: target.project }),
             disposition: result.disposition.kind,
             applied: result.applied,
             skipped: result.skipped,
             from_cache: result.fromCache,
             notice: result.notice,
+            ...(result.project === undefined ? {} : { portal_project_resolution: result.project }),
             ...(result.cacheWritten === undefined ? {} : { cache_written: result.cacheWritten }),
             ...(result.cacheDenied === undefined ? {} : { cache_denied: result.cacheDenied }),
           });
@@ -739,6 +803,7 @@ export default function register(program: Command): void {
           projectDir: opts.dir,
           team: settings.team,
           dryRun: opts.dryRun,
+          userDir: defaultUserDir(),
           ...(transport === undefined ? {} : { transport }),
         });
 

@@ -4,7 +4,7 @@ type: concept
 tags: [config, settings, precedence, cascade, important, team, css, provenance]
 sources: [docs/decisions/ADR-0008-settings-cascade-and-importance.md, docs/golem-spec.md, src/config/loader.ts, docs/plan/verification-notes.md#154]
 created: 2026-09-04
-updated: 2026-10-14
+updated: 2026-10-21
 ---
 
 # Settings Cascade
@@ -37,12 +37,22 @@ Most foundational first. Only `team` is new; the rest is the shipped ladder with
 | 6 | `env` | `GOLEM_*` | the invoking shell |
 | 7 | `override` | per-request headers | the caller |
 
-**Why `project` sits above `team`:** a team is shared by many projects, so the
-team origin is project-agnostic. A repo specialising a company default is the
-expected case, not a violation. A team that needs a value to hold everywhere
-marks it important; one that permits divergence does not. Per-project team
-values are deliberately not a feature — the project origin already is that
-feature, and the same answer in two places is how they drift.
+**Why `project` sits above `team`:** a team is shared by many repos. A repo
+specialising a company default is the expected case, not a violation. A team
+that needs a value to hold everywhere marks it important; one that permits
+divergence does not.
+
+**Portal projects (2026-10-21).** The portal groups settings and skills into
+named *portal projects*; every team has a default one. A repo may name one in
+its committed `.golem/settings.json` as `team.project`, beside `team.org_id`.
+The named portal project's settings arrive as this same `team` origin: no new
+origin, `ORIGIN_ORDER` and the `enforced`/`important` rules unchanged. A repo
+naming none, or a name that does not resolve (missing, archived), gets the
+default project's settings, with one warning per name. Naming a portal project
+is a choice, not access control, and a member's own `~/.golem` important
+declaration still wins. A portal project is not the `project` origin: that one
+is the repo's own file. The repo file names a portal project and never holds its
+values, so the same answer still lives in one place.
 
 ## The two bands
 
