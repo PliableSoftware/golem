@@ -300,3 +300,31 @@ describe("review fixes", () => {
     expect(view.summary).toContain("denied");
   });
 });
+
+describe("skills warn once, recorded in the portal project's cache", () => {
+  it("warns once across separate runs when the settings cache exists, and again on a reason change", async () => {
+    const userDir = await newTempDir();
+    await writeTeamLayerCache(userDir, {
+      org_id: ORG,
+      project: "gone",
+      fetched_at: new Date().toISOString(),
+      settings: [],
+    });
+    const runWith = (marker: string) =>
+      syncTeamSkills({
+        projectDir: dir,
+        team: linked({ project: "gone" }),
+        dryRun: false,
+        transport: portal({ "": { base: "x" } }, marker).transport,
+        userDir,
+      });
+    const first = await runWith("not_found");
+    expect(first.notices.join("\n")).toContain("gone");
+    resetPortalProjectWarnings();
+    const second = await runWith("not_found");
+    expect(second.notices.join("\n")).not.toContain("gone");
+    resetPortalProjectWarnings();
+    const changed = await runWith("archived");
+    expect(changed.notices.join("\n")).toContain("archived");
+  });
+});

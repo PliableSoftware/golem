@@ -386,3 +386,71 @@ describe("review fixes", () => {
     expect(await readTeamLayerCache(userDir, ORG)).toBeNull();
   });
 });
+
+describe("warn once, recorded in the portal project's cache", () => {
+  const sync = async (userDir: string, marker?: string, slug = "payments") => {
+    const { client } = fakeClient(() =>
+      json({ ...rows(true), ...(marker === undefined ? {} : { project: marker }) }),
+    );
+    return await syncTeamLayer({ binding: binding({ project: slug }), userDir, client });
+  };
+
+  it("warns once across separate runs, with the module state wiped between them", async () => {
+    const userDir = await newTempDir();
+    const first = await sync(userDir, "not_found");
+    expect(first.projectWarning).toContain("payments");
+    expect((await readTeamLayerCache(userDir, ORG, { project: "payments" }))?.project_warned).toBe(
+      "not_found",
+    );
+    resetPortalProjectWarnings(); // a fresh process
+    const second = await sync(userDir, "not_found");
+    expect(second.projectWarning).toBeUndefined();
+    expect(second.project).toEqual({ kind: "fallback", slug: "payments", reason: "not_found" });
+  });
+
+  it("warns again when the fallback reason changes", async () => {
+    const userDir = await newTempDir();
+    await sync(userDir, "not_found");
+    resetPortalProjectWarnings();
+    const changed = await sync(userDir, "archived");
+    expect(changed.projectWarning).toContain("archived");
+    expect((await readTeamLayerCache(userDir, ORG, { project: "payments" }))?.project_warned).toBe(
+      "archived",
+    );
+  });
+
+  it("clears the marker when the portal project resolves as found, so a later fallback warns again", async () => {
+    const userDir = await newTempDir();
+    await sync(userDir, "archived");
+    resetPortalProjectWarnings();
+    const found = await sync(userDir);
+    expect(found.projectWarning).toBeUndefined();
+    expect(
+      (await readTeamLayerCache(userDir, ORG, { project: "payments" }))?.project_warned,
+    ).toBeUndefined();
+    resetPortalProjectWarnings();
+    const again = await sync(userDir, "archived");
+    expect(again.projectWarning).toContain("payments");
+  });
+
+  it("a different slug warns separately", async () => {
+    const userDir = await newTempDir();
+    await sync(userDir, "not_found", "one");
+    resetPortalProjectWarnings();
+    const other = await sync(userDir, "not_found", "two");
+    expect(other.projectWarning).toContain("two");
+  });
+
+  it("the cached read path does not turn the fallback into a warning on every load", async () => {
+    const userDir = await newTempDir();
+    await sync(userDir, "not_found");
+    const read = await resolveTeamLayerForProject({
+      team: linked({ project: "payments" }),
+      userDir,
+    });
+    expect(read.project).toEqual({ kind: "fallback", slug: "payments", reason: "not_found" });
+    expect(read.projectWarning).toBeUndefined();
+    expect(read.notice).not.toContain("did not apply");
+    expect(read.notice).not.toContain("not_found");
+  });
+});
