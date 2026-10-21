@@ -5,7 +5,7 @@ tags: [config, settings, precedence, cascade, important, team, portal, css]
 sources:
   [src/config/loader.ts, src/config/schema.ts, src/config/control-surface-types.ts, docs/wiki/concepts/Team Layer.md, docs/wiki/concepts/Configuration Surfaces.md, docs/plan/tasks/team-settings-layer.md, docs/plan/verification-notes.md#157]
 created: 2026-09-04
-updated: 2026-09-06
+updated: 2026-10-21
 ---
 
 # ADR-0008 — The settings cascade: any origin may declare `!important`, and importance reverses origin order
@@ -75,13 +75,28 @@ Seven, most foundational first. `team` is new; the rest are today's ladder with
 | 6 | `env` | `GOLEM_*` | the invoking shell |
 | 7 | `override` | per-request headers | the caller |
 
-**A team is shared across many projects, so the team origin is
-project-agnostic.** That is why `project` sits above it in the normal band: a
-repo specialising a company default is the expected case, not a violation. A
-team that must hold a value across every project marks it `!important`; a team
-that wants to permit divergence simply does not. Per-project team overrides are
-deliberately **out of scope** — the project origin already is that feature, and
-storing per-project team values would put the same answer in two places.
+**A team is shared across many repos, so the team origin does not vary by
+repo.** That is why `project` sits above it in the normal band: a repo
+specialising a company default is the expected case, not a violation. A team
+that must hold a value across every repo marks it `!important`; a team that
+wants to permit divergence simply does not.
+
+**Amended 2026-10-21 (task `team-portal-projects`) — portal projects.** The
+portal now groups settings and skills into named *portal projects*; a team
+always has a default one, and a repo may name another in its committed
+`.golem/settings.json` (`team.project`, beside `team.org_id`). The settings of
+the resolved portal project arrive as the **same `team` origin** — the origin
+count, `ORIGIN_ORDER`, the two bands and every `enforced`/`important` rule are
+unchanged. What changed is only *which payload* fills origin 3: the named
+project's, or the default project's when the repo names none or the name does
+not resolve (warn once, never block). The repo file *names* a portal project;
+it does not hold that project's values, so the same answer is still stored in
+one place. A portal project is unrelated to the `project` origin above, which
+is a repo's own file. Naming a portal project is a choice, not access control:
+anyone who can edit the repo can name any portal project in their own team, and
+a member's own `~/.golem` important declaration still wins over it. The earlier
+"per-project team overrides are out of scope" sentence is retired by this
+amendment.
 
 ## The two bands
 
