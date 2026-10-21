@@ -88,6 +88,9 @@ const portalProjectsSchema = z.object({ projects: z.array(z.unknown()) });
 
 export type PortalProjectEntry = z.infer<typeof portalProjectEntrySchema>;
 
+/** Matches the team-layer fetch (`DEFAULT_FETCH_TIMEOUT_MS`, team-layer.ts). */
+const PROJECTS_TIMEOUT_MS = 10_000;
+
 /** What the retry ladder actually did, for tests and `--json` diagnostics. */
 export interface PortalClientStats {
   readonly requests: number;
@@ -106,7 +109,7 @@ export interface PortalClient {
    * the portal answered) for anything but a well-formed 200 — the caller decides
    * that a missing list must not stop a team link.
    */
-  projects(orgId: string): Promise<PortalProjectEntry[]>;
+  projects(orgId: string, timeoutMs?: number): Promise<PortalProjectEntry[]>;
   /**
    * Throw `origin_mismatch` / `insecure_url` / `not_linked` WITHOUT sending
    * anything, when the stored token may not be used against this client's API
@@ -304,8 +307,25 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       assertTokenBound(await current());
     },
 
-    projects: async (orgId: string): Promise<PortalProjectEntry[]> => {
-      const response = await request(`/api/v1/orgs/${encodeURIComponent(orgId)}/projects`);
+    projects: async (
+      orgId: string,
+      timeoutMs: number = PROJECTS_TIMEOUT_MS,
+    ): Promise<PortalProjectEntry[]> => {
+      // A list nobody answers must not hold the team link hostage: the bound
+      // covers the response body too, and the ending is an error the caller
+      // reports as "list unavailable".
+      const signal = AbortSignal.timeout(timeoutMs);
+      const timedOut = () =>
+        new PortalAuthError("api_error", `the portal project list timed out after ${timeoutMs} ms`);
+      let response: Response;
+      try {
+        response = await request(`/api/v1/orgs/${encodeURIComponent(orgId)}/projects`, {
+          signal,
+        });
+      } catch (err) {
+        if (signal.aborted) throw timedOut();
+        throw err;
+      }
       if (!response.ok) {
         throw new PortalAuthError(
           "api_error",
@@ -317,6 +337,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       try {
         payload = await response.json();
       } catch {
+        if (signal.aborted) throw timedOut();
         throw new PortalAuthError("api_error", "the portal project list did not return JSON");
       }
       const envelope = portalProjectsSchema.safeParse(payload);

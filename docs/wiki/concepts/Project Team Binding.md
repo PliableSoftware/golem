@@ -161,15 +161,23 @@ committed file. Picking the team's default portal project writes **no**
 - Enter takes the existing `team.project` when re-linking the same team, otherwise
   the portal's default. A slug that fails `^[a-z0-9][a-z0-9-]{0,63}$` is never
   written, whatever the portal listed.
-- `--json` and a non-TTY never prompt and never call the list endpoint; the
-  outcome is `skipped_non_interactive` (or `kept` when the same team's slug stayed).
+- `--json` and a non-TTY never prompt. Without `--project` they also never call
+  the list endpoint, and the outcome is `skipped_non_interactive` (or `kept` when
+  the same team's slug stayed). With `--project` they do call it, to validate the
+  slug. A blank `--project` is an error (exit 2).
+- The prompt re-asks an invalid answer (three tries, range stated); Enter takes
+  the default pick, `skip` leaves it unchosen, and Ctrl-D/EOF is a skip with the
+  team still linked. The list call has a 10 s timeout and ends as
+  `projects_unavailable`, so a portal that never answers cannot hold the link.
 - Re-linking to a **different** team replaces `team.org_id` and removes any
   `team.project` not chosen in that run, saying so: a slug is only meaningful
   inside the team that issued it. Re-linking the same team keeps it.
 - **The list can never stop the team link.** 404 (an older portal), 402, 403, 5xx
   and network failure all leave the team linked and report
   `projects_unavailable` with the reason; the team's default portal project then
-  applies. If `--project` was given, that slug was **not** recorded, and the exit
+  applies, unless a re-link of the same team left its existing `team.project` in
+  place, in which case the outcome carries `keptSlug` and the message names it
+  (the same goes for `unknown_project`). If `--project` was given, that slug was **not** recorded, and the exit
   code is 2.
 
 `--json` carries `team.portalProject.kind`: `chosen`, `default`, `kept`, `skipped`,

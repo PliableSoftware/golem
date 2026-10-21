@@ -123,12 +123,15 @@ export type PortalProjectOutcome =
       readonly kind: "unknown_project";
       readonly requested: string;
       readonly available: readonly string[];
+      /** The same team's `team.project` that stayed in the file, when there is one. */
+      readonly keptSlug?: string;
     }
   /** The list could not be had (old portal, 402/403, 5xx, offline). */
   | {
       readonly kind: "projects_unavailable";
       readonly reason: string;
       readonly requested?: string;
+      readonly keptSlug?: string;
     };
 
 export type BindOutcome =
@@ -149,8 +152,59 @@ export type BindOutcome =
   | { readonly kind: "ambiguous"; readonly candidates: readonly PortalOrganization[] }
   | { readonly kind: "unknown"; readonly requested: string };
 
+/**
+ * Flags that cannot be honoured, said before anything signs in. Exit 2: a
+ * decision the caller still owes, the same code as an unbound team.
+ */
+export function linkFlagError(opts: {
+  readonly project?: string | undefined;
+  readonly bind: boolean;
+}): string | null {
+  if (opts.project === undefined) return null;
+  if (opts.project.trim() === "") {
+    return '--project needs a portal project slug (or "default"); it was blank';
+  }
+  if (!opts.bind) {
+    return (
+      "--project records a portal project in this repo's settings, so it cannot be " +
+      "combined with --no-bind"
+    );
+  }
+  return null;
+}
+
+/**
+ * The exit code for a link's bind result. 2 means a decision is still owed: no
+ * team was recorded, or a `--project` was asked for and not recorded.
+ */
+export function bindExitCode(bind: BindOutcome): number {
+  if (bind.kind === "ambiguous" || bind.kind === "unknown") return 2;
+  if (bind.kind !== "bound") return 0;
+  const outcome = bind.portalProject;
+  if (outcome.kind === "unknown_project") return 2;
+  if (outcome.kind === "projects_unavailable" && outcome.requested !== undefined) return 2;
+  return 0;
+}
+
+/** What `golem team link --json` prints. The credential is never in it. */
+export function linkJsonPayload(input: {
+  readonly stored: unknown;
+  readonly token: unknown;
+  readonly identity: PortalIdentity;
+  readonly bind: BindOutcome;
+}) {
+  return {
+    linked: true,
+    storedIn: input.stored,
+    token: input.token,
+    user: input.identity.user,
+    organizations: input.identity.organizations,
+    team: input.bind,
+  };
+}
+
 /** One honest line per portal project outcome; never silent about an unrecorded choice. */
-function describePortalProjectOutcome(outcome: PortalProjectOutcome): string {
+export function describePortalProjectOutcome(outcome: PortalProjectOutcome): string {
   switch (outcome.kind) {
     case "chosen":
       return `Portal project: ${outcome.name} (${outcome.slug}), recorded as team.project.`;
@@ -171,12 +225,18 @@ function describePortalProjectOutcome(outcome: PortalProjectOutcome): string {
     case "unknown_project":
       return (
         `Portal project not chosen: the team has no portal project ${JSON.stringify(outcome.requested)}. ` +
-        `Valid: ${outcome.available.join(", ")}.`
+        `Valid: ${outcome.available.join(", ")}.` +
+        (outcome.keptSlug === undefined
+          ? ""
+          : ` team.project stays ${outcome.keptSlug}, so that portal project still applies.`)
       );
     case "projects_unavailable":
       return (
         `Portal project not chosen: could not get the team's portal project list ` +
-        `(${outcome.reason}). The team is linked; the team's default portal project applies. ` +
+        `(${outcome.reason}). The team is linked; ` +
+        (outcome.keptSlug === undefined
+          ? "the team's default portal project applies. "
+          : `team.project stays ${outcome.keptSlug}, so that portal project still applies. `) +
         (outcome.requested === undefined
           ? "Re-run `golem team link` later, or set team.project by hand."
           : `\`--project ${outcome.requested}\` was NOT recorded.`)
@@ -190,17 +250,50 @@ function describeOrg(org: PortalOrganization): string {
   return `${org.name}${slug} — ${org.id}${lapsed}`;
 }
 
+/** Where a prompt reads and writes; injectable so a closed stream is testable. */
+export interface PromptIo {
+  readonly input: NodeJS.ReadableStream;
+  readonly output: NodeJS.WritableStream;
+}
+
+const STDIO: PromptIo = { input: process.stdin, output: process.stdout };
+
+/**
+ * One question, answered or abandoned. Resolves null when the input closes
+ * (Ctrl-D, a closed pipe) — `rl.question` itself never settles then, and an
+ * unsettled await ends the process with exit 13 and nothing linked.
+ */
+function askLine(rl: readline.Interface, query: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const onClose = () => resolve(null);
+    rl.once("close", onClose);
+    try {
+      rl.question(query).then(
+        (answer) => {
+          rl.off("close", onClose);
+          resolve(answer);
+        },
+        () => resolve(null),
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 /** The interactive half of "one team links silently; several prompt". */
-async function promptForOrg(
+export async function promptForOrg(
   candidates: readonly PortalOrganization[],
+  io: PromptIo = STDIO,
 ): Promise<PortalOrganization | null> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({ input: io.input, output: io.output });
   try {
-    process.stdout.write("\nYou are in more than one team. Which one is this project?\n");
+    io.output.write("\nYou are in more than one team. Which one is this project?\n");
     candidates.forEach((org, index) => {
-      process.stdout.write(`  ${index + 1}) ${describeOrg(org)}\n`);
+      io.output.write(`  ${index + 1}) ${describeOrg(org)}\n`);
     });
-    const answer = await rl.question(`Choose 1-${candidates.length} (or Enter to skip): `);
+    const answer = await askLine(rl, `Choose 1-${candidates.length} (or Enter to skip): `);
+    if (answer === null) return null;
     const index = Number(answer.trim());
     if (!Number.isInteger(index) || index < 1 || index > candidates.length) return null;
     return candidates[index - 1] ?? null;
@@ -214,28 +307,41 @@ function describePortalProject(entry: PortalProjectEntry): string {
   return `${entry.name} (${entry.slug})${entry.default ? " [default]" : ""}${description}`;
 }
 
-/** The interactive half of choosing a portal project. Enter takes the default pick. */
-async function promptForPortalProject(
+const MAX_PROJECT_PROMPT_TRIES = 3;
+
+/**
+ * The interactive half of choosing a portal project. Enter takes the default
+ * pick, `skip` leaves it unchosen, an invalid answer is asked again (at most
+ * {@link MAX_PROJECT_PROMPT_TRIES} times), and a closed input is a skip.
+ */
+export async function promptForPortalProject(
   entries: readonly PortalProjectEntry[],
   defaultSlug: string,
+  io: PromptIo = STDIO,
 ): Promise<PortalProjectEntry | null> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({ input: io.input, output: io.output });
   try {
-    process.stdout.write("\nWhich portal project does this repo use?\n");
+    io.output.write("\nWhich portal project does this repo use?\n");
     entries.forEach((entry, index) => {
-      process.stdout.write(`  ${index + 1}) ${describePortalProject(entry)}\n`);
+      io.output.write(`  ${index + 1}) ${describePortalProject(entry)}\n`);
     });
-    const fallbackIndex = entries.findIndex((entry) => entry.slug === defaultSlug);
-    const answer = (
-      await rl.question(
-        `Choose 1-${entries.length} (Enter for ${defaultSlug}, or type "skip" to leave it unchosen): `,
-      )
-    ).trim();
-    if (answer.toLowerCase() === "skip") return null;
-    if (answer === "") return entries[fallbackIndex] ?? null;
-    const index = Number(answer);
-    if (!Number.isInteger(index) || index < 1 || index > entries.length) return null;
-    return entries[index - 1] ?? null;
+    const fallback = entries.find((entry) => entry.slug === defaultSlug) ?? null;
+    for (let attempt = 1; attempt <= MAX_PROJECT_PROMPT_TRIES; attempt += 1) {
+      const raw = await askLine(
+        rl,
+        `Choose 1-${entries.length} (Enter for ${defaultSlug}, or "skip"): `,
+      );
+      if (raw === null) return null;
+      const answer = raw.trim();
+      if (answer.toLowerCase() === "skip") return null;
+      if (answer === "") return fallback;
+      if (/^\d+$/.test(answer)) {
+        const index = Number(answer);
+        if (index >= 1 && index <= entries.length) return entries[index - 1] ?? null;
+      }
+      io.output.write(`Not a valid choice: enter a number from 1 to ${entries.length}.\n`);
+    }
+    return null;
   } finally {
     rl.close();
   }
@@ -382,6 +488,15 @@ export async function bindProjectTeam(options: {
     portalUrl: options.portalUrl,
     ...(write === undefined ? {} : { portalProject: write }),
   });
+  // The same team's slug survived a failed or refused choice: name it, because
+  // "the default applies" would be false while team.project is still in the file.
+  if (
+    result.portalProject === "kept" &&
+    result.previousPortalProject !== null &&
+    (outcome.kind === "unknown_project" || outcome.kind === "projects_unavailable")
+  ) {
+    outcome = { ...outcome, keptSlug: result.previousPortalProject };
+  }
   // Nothing chosen and the same team's slug survived: say it is kept, not skipped.
   if (
     result.portalProject === "kept" &&
@@ -522,7 +637,7 @@ export default function register(program: Command): void {
     .option("--org <id-or-slug>", "which team to bind this project to (skips the prompt)")
     .option(
       "--project <slug>",
-      "which portal project this repo uses (`default` removes team.project; skips the prompt)",
+      "which portal project this repo uses (`default` removes team.project; skips the prompt; exit 2 if it cannot be recorded)",
     )
     .option("--no-bind", "sign in only — do not write team.org_id into this project")
     .option("--timeout <ms>", "override how long to wait for the browser round trip")
@@ -531,11 +646,11 @@ export default function register(program: Command): void {
     .option("--json", "machine-readable output", false)
     .action(async (opts: LinkOptions) => {
       try {
-        if (opts.project !== undefined && !opts.bind) {
-          throw new Error(
-            "--project records a portal project in this repo's settings, so it cannot be " +
-              "combined with --no-bind",
-          );
+        const flagError = linkFlagError(opts);
+        if (flagError !== null) {
+          process.stderr.write(`golem: ${flagError}\n`);
+          process.exitCode = 2;
+          return;
         }
         const { config, tokens, provenance } = await portalContext(opts.dir, {
           ...(opts.portalUrl === undefined ? {} : { portalUrl: opts.portalUrl }),
@@ -596,29 +711,17 @@ export default function register(program: Command): void {
         // WRONG belief behind is an unbound project: exit 2 (the recoverable
         // code) says "one more decision needed" while the sign-in still
         // reports success. Exit 0 with no team recorded would read as linked.
-        if (bind.kind === "ambiguous" || bind.kind === "unknown") process.exitCode = 2;
-        // The same rule for the portal project: a `--project` that could not be
-        // recorded is a decision still owed, not a success.
-        if (
-          bind.kind === "bound" &&
-          (bind.portalProject.kind === "unknown_project" ||
-            (bind.portalProject.kind === "projects_unavailable" &&
-              bind.portalProject.requested !== undefined))
-        ) {
-          process.exitCode = 2;
-        }
+        process.exitCode = bindExitCode(bind);
 
         if (opts.json) {
           process.stdout.write(
             `${JSON.stringify(
-              {
-                linked: true,
-                storedIn: result.location,
+              linkJsonPayload({
+                stored: result.location,
                 token: result.summary,
-                user: identity.user,
-                organizations: identity.organizations,
-                team: bind,
-              },
+                identity,
+                bind,
+              }),
               null,
               2,
             )}\n`,

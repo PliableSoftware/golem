@@ -420,11 +420,27 @@ describe("a project list that cannot be had never stops the team link", () => {
   });
 });
 
+/**
+ * Scripted prompt streams. Each answer is fed only once the prompt asks (a line
+ * that arrives while no question is pending is dropped by readline), and the
+ * input ends after the last one, like a person pressing Ctrl-D.
+ */
 function io(input: string | null) {
   const inStream = new PassThrough();
   const outStream = new PassThrough();
-  if (input !== null) inStream.write(input);
-  inStream.end();
+  if (input === null) {
+    inStream.end();
+    return { input: inStream, output: outStream };
+  }
+  const answers = input.split("\n").slice(0, -1);
+  outStream.on("data", (chunk) => {
+    if (!String(chunk).includes("Choose")) return;
+    setImmediate(() => {
+      const next = answers.shift();
+      if (next === undefined) inStream.end();
+      else inStream.write(`${next}\n`);
+    });
+  });
   return { input: inStream, output: outStream };
 }
 
@@ -448,7 +464,7 @@ describe("promptForPortalProject", () => {
   });
 
   it("re-asks on an invalid answer, stating the range, then accepts a valid one", async () => {
-    const streams = io("abc\n2x\n9\n3\n");
+    const streams = io("abc\n9\n3\n");
     let shown = "";
     streams.output.on("data", (c) => {
       shown += String(c);

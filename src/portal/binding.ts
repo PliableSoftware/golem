@@ -41,7 +41,7 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { defaultUserDir } from "../config/paths.js";
-import { writeSetting } from "../config/write-setting.js";
+import { writeSetting, writeSettings } from "../config/write-setting.js";
 import type { PortalIdentity } from "./client.js";
 
 /** The `team` settings section, structurally (snake_case, as on disk). */
@@ -327,27 +327,36 @@ export async function bindTeam(options: BindTeamOptions): Promise<BindTeamResult
   }
   // Read BEFORE writing: what the file said is what the re-link report names.
   const previous = await readProjectTeamKeys(options.projectDir);
-  const settingsFile = await writeSetting("project", "team.org_id", orgId, scopeOptions);
   const portalUrl = options.portalUrl?.trim() ?? "";
-  if (portalUrl !== "") {
-    await writeSetting("project", "team.portal_url", portalUrl, scopeOptions);
-  }
-
   let portalProject: PortalProjectWrite;
+  let projectChange: { readonly value: string | undefined } | null;
   if (typeof options.portalProject === "string") {
-    await writeSetting("project", "team.project", options.portalProject, scopeOptions);
+    projectChange = { value: options.portalProject };
     portalProject = "set";
   } else if (options.portalProject === null) {
-    await writeSetting("project", "team.project", undefined, scopeOptions);
+    projectChange = { value: undefined };
     portalProject = "cleared";
   } else if (previous.project === null) {
+    projectChange = null;
     portalProject = "unchanged";
   } else if (previous.orgId === orgId) {
+    projectChange = null;
     portalProject = "kept";
   } else {
-    await writeSetting("project", "team.project", undefined, scopeOptions);
+    projectChange = { value: undefined };
     portalProject = "dropped";
   }
+  // ONE write for every key: a failure between separate writes would leave the
+  // new team beside the old team's slug, which resolves as not_found at sync.
+  const settingsFile = await writeSettings(
+    "project",
+    {
+      "team.org_id": orgId,
+      ...(portalUrl === "" ? {} : { "team.portal_url": portalUrl }),
+      ...(projectChange === null ? {} : { "team.project": projectChange.value }),
+    },
+    scopeOptions,
+  );
   return {
     orgId,
     previousOrgId: previous.orgId,
