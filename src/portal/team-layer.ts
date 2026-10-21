@@ -83,6 +83,7 @@ import {
 import {
   type PortalProjectResolution,
   portalProjectMarkerSchema,
+  portalProjectWarnedMarker,
   resolvePortalProject,
   warnPortalProjectOnce,
 } from "./team-project.js";
@@ -321,6 +322,8 @@ const teamCacheSchema = z.object({
   project: z.string().optional(),
   /** Why the default portal project's data is in here, when `project` did not apply. */
   project_state: z.string().optional(),
+  /** The fallback reason already warned about, so a later sync or load stays quiet. */
+  project_warned: z.string().optional(),
   settings: z.array(teamSettingRowSchema).default([]),
   /** Present once the portal has denied this org. See {@link cacheDenialSchema}. */
   denied: cacheDenialSchema.optional(),
@@ -638,11 +641,10 @@ function cachedResolution(
     cacheAge: age,
     applied: translated.applied,
     skipped: translated.skipped,
-    notice:
-      resolution.kind === "fallback"
-        ? `Team ${orgId}: using the cached default portal project settings (portal project ` +
-          `"${resolution.slug}" did not apply: ${resolution.reason}), which are ${age}.`
-        : `Team ${orgId}${forProject(project)}: using the cached team settings, which are ${age}.`,
+    // Never restates a fallback: that warning is given once at sync time, and
+    // `golem team status` carries the reason. A notice here would resurface on
+    // every config load.
+    notice: `Team ${orgId}${resolution.kind === "found" ? forProject(project) : ""}: using the cached team settings, which are ${age}.`,
   };
 }
 
@@ -821,6 +823,13 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
   const project = binding.project ?? "";
   const fetched = await fetchTeamSettings(client, binding.orgId, options.timeoutMs, project);
   const { disposition } = fetched;
+  // What this portal project's cache already warned about, read before it is
+  // rewritten. Unreadable counts as nothing warned: one extra warning, not a throw.
+  const priorWarned =
+    project === ""
+      ? undefined
+      : (await readTeamLayerCache(userDir, binding.orgId, { project }).catch(() => null))
+          ?.project_warned;
 
   if (disposition.kind === "entitled" && fetched.response !== undefined) {
     const rows = fetched.response.settings;
@@ -830,6 +839,9 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
       org_id: binding.orgId,
       ...(project === "" ? {} : { project }),
       ...(fetched.project?.kind === "fallback" ? { project_state: fetched.project.reason } : {}),
+      ...(fetched.project === undefined || portalProjectWarnedMarker(fetched.project) === undefined
+        ? {}
+        : { project_warned: portalProjectWarnedMarker(fetched.project) as string }),
       fetched_at: fetchedAt,
       ...(fetched.response.schema_version === undefined
         ? {}
@@ -849,7 +861,7 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
     if (options.report === true) await postSyncReport(client, binding.orgId, translated.skipped);
 
     const resolution = fetched.project ?? { kind: "default" as const };
-    const projectWarning = warnPortalProjectOnce(resolution);
+    const projectWarning = warnPortalProjectOnce(resolution, priorWarned);
     const notice = describeTeamOutcome(disposition, { orgId: binding.orgId });
     return {
       disposition,
@@ -1026,4 +1038,34 @@ async function postSyncReport(
   } catch {
     // By contract, invisible.
   }
+}
+
+/**
+ * The once-per-slug warning for a skills sync, recorded in the portal project's
+ * cache file when one exists. With no cache the in-process guard is all there
+ * is; a cache is never created here, because an empty one would read as a
+ * team layer that applies nothing.
+ */
+export async function recordPortalProjectWarning(
+  userDir: string,
+  orgId: string,
+  resolution: PortalProjectResolution,
+): Promise<string | undefined> {
+  if (resolution.kind === "default") return undefined;
+  const project = resolution.slug;
+  const cache = await readTeamLayerCache(userDir, orgId, { project }).catch(() => null);
+  const warning = warnPortalProjectOnce(resolution, cache?.project_warned);
+  if (cache === null) return warning;
+  const marker = portalProjectWarnedMarker(resolution);
+  if (cache.project_warned === marker) return warning;
+  try {
+    const { project_warned: _old, ...rest } = cache;
+    await writeTeamLayerCache(userDir, {
+      ...rest,
+      ...(marker === undefined ? {} : { project_warned: marker }),
+    });
+  } catch {
+    // Advisory: a failed write costs one repeated warning, nothing else.
+  }
+  return warning;
 }

@@ -135,6 +135,7 @@ export {
   type ResolveForProjectOptions,
   type ResolveTeamLayerOptions,
   readTeamLayerCache,
+  recordPortalProjectWarning,
   resolveTeamLayer,
   resolveTeamLayerForProject,
   type SyncTeamLayerOptions,

@@ -803,6 +803,7 @@ export default function register(program: Command): void {
           projectDir: opts.dir,
           team: settings.team,
           dryRun: opts.dryRun,
+          userDir: defaultUserDir(),
           ...(transport === undefined ? {} : { transport }),
         });
 

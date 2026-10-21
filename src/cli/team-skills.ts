@@ -84,6 +84,7 @@ import {
   mayUseCachedTeamLayer,
   type PortalProjectResolution,
   readTeamBinding,
+  recordPortalProjectWarning,
   TEAM_SKILLS_DIR,
   TEAM_SKILLS_PREFIX,
   type TeamBinding,
@@ -154,6 +155,16 @@ function describeSkillsSource(source: SkillsSource): string {
   return `${which} of team ${source.org_id}`;
 }
 
+async function warnForProject(
+  options: SyncTeamSkillsOptions,
+  orgId: string,
+  resolution: PortalProjectResolution,
+): Promise<string | undefined> {
+  return options.userDir === undefined
+    ? warnPortalProjectOnce(resolution)
+    : await recordPortalProjectWarning(options.userDir, orgId, resolution);
+}
+
 /** `golem-team-<name>`. The only place a team skill directory name is formed. */
 export function teamSkillDirName(name: string): string {
   if (!isValidTeamSkillName(name)) {
@@ -214,6 +225,11 @@ export interface SyncTeamSkillsOptions {
    */
   readonly readLocal?: (projectDir: string) => Promise<readonly LocalTeamSkill[]>;
   readonly now?: () => number;
+  /**
+   * The user config dir, where the once-per-slug warning is recorded in the
+   * portal project's cache. Absent means the in-process guard only.
+   */
+  readonly userDir?: string;
 }
 
 export type TeamSkillsOutcome =
@@ -443,7 +459,7 @@ export async function syncTeamSkills(
     return await handleFailure(options, binding, manifest.disposition, readLocal, now, notices);
   }
 
-  const projectWarning = warnPortalProjectOnce(manifest.project);
+  const projectWarning = await warnForProject(options, binding.orgId, manifest.project);
   if (projectWarning !== undefined) notices.push(projectWarning);
 
   const local = await readLocal(projectDir);
@@ -534,7 +550,7 @@ export async function syncTeamSkills(
       // The manifest named this portal project but the bodies came from the
       // default one: the two disagree, so no body is written against a manifest
       // it does not belong to.
-      const late = warnPortalProjectOnce(bodies.project);
+      const late = await warnForProject(options, binding.orgId, bodies.project);
       if (late !== undefined) notices.push(late);
       notices.push(
         `Team ${binding.orgId}: the skill contents did not come from the same portal project ` +

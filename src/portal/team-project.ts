@@ -58,23 +58,39 @@ export function describePortalProjectFallback(
   );
 }
 
-/** Slugs already warned about, for the life of this process (one session). */
+/** Slug and reason already warned about in THIS process; a cheap second guard. */
 const warned = new Set<string>();
 
 /**
- * The warning for a resolution, the first time this process sees that slug.
- * `undefined` for everything else, including every later sync of the same slug:
- * once per slug per session, never on every sync. Settings and skills share the
- * set, so one `golem team sync` run does not say it twice.
+ * The warning for a resolution, or `undefined` when it has already been given.
+ *
+ * Once per slug until the fallback reason changes. The durable record is the
+ * `project_warned` marker in the portal project's own cache file, passed in as
+ * `priorWarned`; the in-process set only stops one run saying it twice (settings
+ * and skills in the same `golem team sync`). A found portal project clears both,
+ * so a later fallback is news again.
  */
-export function warnPortalProjectOnce(resolution: PortalProjectResolution): string | undefined {
+export function warnPortalProjectOnce(
+  resolution: PortalProjectResolution,
+  priorWarned?: string,
+): string | undefined {
+  if (resolution.kind === "found") {
+    for (const key of [...warned]) if (key.startsWith(`${resolution.slug}\0`)) warned.delete(key);
+    return undefined;
+  }
   if (resolution.kind !== "fallback") return undefined;
-  if (warned.has(resolution.slug)) return undefined;
-  warned.add(resolution.slug);
-  return describePortalProjectFallback(resolution);
+  const key = `${resolution.slug}\0${resolution.reason}`;
+  const seen = warned.has(key) || priorWarned === resolution.reason;
+  warned.add(key);
+  return seen ? undefined : describePortalProjectFallback(resolution);
 }
 
-/** Test seam: forget what has been warned about. */
+/** What a cache should remember having warned about: the reason, for a fallback only. */
+export function portalProjectWarnedMarker(resolution: PortalProjectResolution): string | undefined {
+  return resolution.kind === "fallback" ? resolution.reason : undefined;
+}
+
+/** Test seam: forget what this process has warned about. */
 export function resetPortalProjectWarnings(): void {
   warned.clear();
 }

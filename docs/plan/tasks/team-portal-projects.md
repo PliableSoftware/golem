@@ -44,6 +44,8 @@ A repo joins a project by naming it in its committed `.golem/settings.json`, bes
 | 4xx other than the above | Do not retry (status codes are instructions to the sender) |
 | `team.project` set but no `team.org_id` | Zero portal I/O, as today |
 
+Decided behaviour, recorded here so it is not re-derived: an outage after a switch keeps the previous portal project's skills on disk, with a notice naming whose they are, because an unreachable portal never changes local state. And "warn once" means once per slug until the fallback reason changes, recorded as a `project_warned` marker in that portal project's cache file (cleared when the portal project resolves as found), not once per process.
+
 5. **Skills.** Project skills land exactly where team skills land today, flat as `.claude/skills/golem-team-<name>/SKILL.md`. Switching a repo from one project to another must remove the previous project's managed skills and write the new ones, and must not touch anything outside the `golem-team-` prefix.
 6. **`golem team status`** (or its equivalent) shows which project resolved and why, including the fallback reason.
 7. **Warn once** means once per slug per session, never on every sync.
