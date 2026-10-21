@@ -193,11 +193,15 @@ describe("portal project skills: failure rows", () => {
   it.each([
     400, 404, 422,
   ])("%i is requested once, never retried, and leaves installed skills on disk (api_error is not a verdict)", async (status) => {
+    const seed = portal({ alpha: { one: "1" } });
+    await run(linked({ project: "alpha" }), seed.transport);
     const bad = vi.fn(async () => json({ code: "x" }, status));
     const result = await run(linked({ project: "alpha" }), bad);
     // Manifest only: no second attempt, and no body fetch.
     expect(bad).toHaveBeenCalledTimes(1);
-    expect(result.outcome.kind).toBe("dropped");
+    expect(result.outcome.kind).toBe("kept_cached");
+    expect(await exists(teamSkillFile(dir, "one"))).toBe(true);
+    expect(result.notices.length).toBeGreaterThan(0);
   });
 
   it("an outage after switching does not present the previous portal project's skills as the new one's", async () => {
