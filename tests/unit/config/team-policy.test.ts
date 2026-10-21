@@ -549,3 +549,80 @@ describe("what the team sync reports", () => {
     expect(c.team.skipped.find((s) => s.key === key)?.reason).toMatch(/REFUSED/);
   });
 });
+
+/**
+ * The stricter direction of every security.* key, declared HERE as well as in
+ * the table, so adding a key forces a deliberate choice in two places and a
+ * `settable` (no direction) security key cannot slip through.
+ */
+const SECURITY_DIRECTIONS: Record<string, TeamRule> = {
+  "security.write_port": "denied", // a port has no stricter direction
+  "security.write_lan": "false-only",
+  "security.unlock_window_minutes": "lower-only",
+  "security.idle_relock_minutes": "lower-only",
+  "security.step_up_max_age_minutes": "lower-only",
+  "security.device_cert_days": "lower-only",
+  "security.join_injection": "false-only",
+  "security.origination_roots": "narrow-roots",
+};
+
+describe("every security.* key declares a stricter direction", () => {
+  const securityLeaves = [...allLeafPaths()].filter((k) => k.startsWith("security."));
+
+  it("has a declared direction for every security key in the schema, and none stale", () => {
+    expect(
+      securityLeaves.filter((k) => !(k in SECURITY_DIRECTIONS)),
+      "a new security.* key needs a declared stricter direction (or 'denied') in SECURITY_DIRECTIONS and TEAM_POLICY",
+    ).toEqual([]);
+    expect(Object.keys(SECURITY_DIRECTIONS).filter((k) => !securityLeaves.includes(k))).toEqual(
+      [],
+    );
+  });
+
+  it.each(securityLeaves)("%s: the table matches the declared direction", (key) => {
+    expect(teamRule(key)).toBe(SECURITY_DIRECTIONS[key]);
+  });
+
+  it("never leaves a security key settable (no direction means denied)", () => {
+    for (const key of securityLeaves) expect(teamRule(key)).not.toBe("settable");
+  });
+
+  it("denies a security key that is not classified (fail closed)", () => {
+    expect(teamRule("security.some_new_gate")).toBe("denied");
+  });
+});
+
+describe("raise-only numbers", () => {
+  const key = "knowledge.local_answer_min_confidence";
+
+  it("classifies the confidence floor as raise-only", () => {
+    expect(teamRule(key)).toBe("raise-only");
+  });
+
+  it("applies a higher team value, accepts an equal one, ignores a lower one with a warning", async () => {
+    const base = defaultOf(key) as number;
+    const higher = await load(await project({ rows: [{ key, value: 0.9, enforced: true }] }));
+    expect(read(higher.settings, key)).toBe(0.9);
+    expect(higher.provenance[key]?.layer).toBe("team");
+
+    const same = await load(await project({ rows: [{ key, value: base, enforced: true }] }));
+    expect(refusedFor(same.warnings, key)).toBe(false);
+
+    const lower = await load(await project({ rows: [{ key, value: 0.1, enforced: true }] }));
+    expect(read(lower.settings, key)).toBe(base);
+    expect(refusedFor(lower.warnings, key)).toBe(true);
+    expect(lower.warnings.some((w) => w.includes(`"${key}"`) && w.includes("0.1"))).toBe(true);
+    expect(lower.refused).toContain(key);
+  });
+
+  it("judges against the MEMBER's own value, not the default", async () => {
+    const c = await load(
+      await project({
+        userSettings: { knowledge: { local_answer_min_confidence: 0.95 } },
+        rows: [{ key, value: 0.8, enforced: true }], // above the default, below mine
+      }),
+    );
+    expect(read(c.settings, key)).toBe(0.95);
+    expect(refusedFor(c.warnings, key)).toBe(true);
+  });
+});
