@@ -96,7 +96,7 @@ export async function writeSettings(
 
   const existing = await readExisting(file);
   const root = existing.root;
-  for (const { key, section, leafKey, validated } of planned) {
+  for (const { section, leafKey, validated } of planned) {
     const sectionValue = root[section];
     if (sectionValue !== undefined && !isPlainObject(sectionValue)) {
       throw new ConfigError(
