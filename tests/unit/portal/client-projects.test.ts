@@ -105,4 +105,24 @@ describe("client.projects", () => {
     const c = client(async () => json(200, { nope: [] }));
     await expect(c.projects("org_abc")).rejects.toBeInstanceOf(PortalAuthError);
   });
+
+  it("a portal that never answers is a timed-out PortalAuthError, not a hang", async () => {
+    const c = client(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    );
+    await expect(c.projects("org_abc", 30)).rejects.toThrow(/timed out/);
+  });
+
+  it("sends an abort signal by default", async () => {
+    let signal: AbortSignal | null | undefined;
+    const c = client(async (_url, init) => {
+      signal = init?.signal;
+      return json(200, { projects: [] });
+    });
+    await c.projects("org_abc");
+    expect(signal).toBeInstanceOf(AbortSignal);
+  });
 });

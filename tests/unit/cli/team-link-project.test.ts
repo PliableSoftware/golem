@@ -9,8 +9,19 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { type BindOutcome, bindProjectTeam } from "../../../src/cli/commands/team.js";
+import {
+  type BindOutcome,
+  bindExitCode,
+  bindProjectTeam,
+  describePortalProjectOutcome,
+  linkFlagError,
+  linkJsonPayload,
+  type PortalProjectOutcome,
+  promptForOrg,
+  promptForPortalProject,
+} from "../../../src/cli/commands/team.js";
 import {
   type AuthorizationServerMetadata,
   createPortalClient,
@@ -341,14 +352,206 @@ describe("a project list that cannot be had never stops the team link", () => {
   it("keeps the existing slug of the same team when the list is unavailable", async () => {
     const dir = await newTempDir();
     await seed(dir, { team: { org_id: "org_a", project: "web-app" } });
-    await bindProjectTeam({
-      dir,
-      identity: identity(["org_a"]),
-      interactive: true,
-      portalUrl: API,
-      listProjects: portal(status(404)).listProjects,
-      pickProject: pick(null).fn,
-    });
+    const out = bound(
+      await bindProjectTeam({
+        dir,
+        identity: identity(["org_a"]),
+        interactive: true,
+        portalUrl: API,
+        listProjects: portal(status(404)).listProjects,
+        pickProject: pick(null).fn,
+      }),
+    );
     expect(await team(dir)).toMatchObject({ project: "web-app" });
+    expect(out.portalProject).toMatchObject({ kind: "projects_unavailable", keptSlug: "web-app" });
+    const text = describePortalProjectOutcome(out.portalProject);
+    expect(text).toContain("web-app");
+    expect(text).not.toMatch(/default (portal project )?applies/);
+  });
+
+  it("an unknown --project on the same team reports the kept slug, not the default", async () => {
+    const dir = await newTempDir();
+    await seed(dir, { team: { org_id: "org_a", project: "web-app" } });
+    const out = bound(
+      await bindProjectTeam({
+        dir,
+        identity: identity(["org_a"]),
+        interactive: false,
+        portalUrl: API,
+        project: "nope",
+        listProjects: portal(ok).listProjects,
+      }),
+    );
+    expect(out.portalProject).toMatchObject({ kind: "unknown_project", keptSlug: "web-app" });
+    expect(describePortalProjectOutcome(out.portalProject)).toContain("web-app");
+  });
+
+  it("a portal that never answers ends as projects_unavailable and the team still links", async () => {
+    const dir = await newTempDir();
+    const hang: FetchLike = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    const client = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "c",
+      metadata: async () => META,
+      tokens: {
+        read: async () => TOKENS,
+        write: async () => ({ backend: "keychain", label: "t", protection: "os-keychain" }),
+        clear: async () => [],
+      },
+      fetchImpl: hang,
+      now: () => 1,
+    });
+    const out = bound(
+      await bindProjectTeam({
+        dir,
+        identity: identity(["org_a"]),
+        interactive: true,
+        portalUrl: API,
+        listProjects: (id) => client.projects(id, 30),
+        pickProject: pick("web-app").fn,
+      }),
+    );
+    expect(await team(dir)).toMatchObject({ org_id: "org_a" });
+    expect(out.portalProject).toMatchObject({ kind: "projects_unavailable" });
+    expect(describePortalProjectOutcome(out.portalProject)).toMatch(/timed out/);
+  });
+});
+
+function io(input: string | null) {
+  const inStream = new PassThrough();
+  const outStream = new PassThrough();
+  if (input !== null) inStream.write(input);
+  inStream.end();
+  return { input: inStream, output: outStream };
+}
+
+const ENTRIES: PortalProjectEntry[] = PROJECTS;
+
+describe("promptForPortalProject", () => {
+  it("resolves null on EOF with no answer (Ctrl-D) instead of hanging", async () => {
+    expect(await promptForPortalProject(ENTRIES, "default", io(null))).toBeNull();
+  });
+
+  it("Enter takes the default pick", async () => {
+    expect((await promptForPortalProject(ENTRIES, "mobile", io("\n")))?.slug).toBe("mobile");
+  });
+
+  it("a number picks that entry", async () => {
+    expect((await promptForPortalProject(ENTRIES, "default", io("2\n")))?.slug).toBe("web-app");
+  });
+
+  it("skip is a skip", async () => {
+    expect(await promptForPortalProject(ENTRIES, "default", io("skip\n"))).toBeNull();
+  });
+
+  it("re-asks on an invalid answer, stating the range, then accepts a valid one", async () => {
+    const streams = io("abc\n2x\n9\n3\n");
+    let shown = "";
+    streams.output.on("data", (c) => {
+      shown += String(c);
+    });
+    expect((await promptForPortalProject(ENTRIES, "default", streams))?.slug).toBe("mobile");
+    expect(shown).toContain("1-3");
+  });
+
+  it("gives up after three invalid answers", async () => {
+    expect(await promptForPortalProject(ENTRIES, "default", io("x\ny\n9\n2\n"))).toBeNull();
+  });
+});
+
+describe("promptForOrg", () => {
+  it("resolves null on EOF instead of hanging", async () => {
+    const orgs = [
+      { id: "org_a", name: "A" },
+      { id: "org_b", name: "B" },
+    ] as PortalIdentity["organizations"];
+    expect(await promptForOrg(orgs, io(null))).toBeNull();
+  });
+});
+
+describe("link flags and reporting", () => {
+  it("--project with --no-bind is refused", () => {
+    expect(linkFlagError({ project: "web-app", bind: false })).toMatch(/--no-bind/);
+  });
+
+  it("a blank --project is an error, not silently ignored", () => {
+    expect(linkFlagError({ project: "   ", bind: true })).toMatch(/--project/);
+    expect(linkFlagError({ project: "", bind: true })).toMatch(/--project/);
+  });
+
+  it("no --project and a real one are fine", () => {
+    expect(linkFlagError({ bind: true })).toBeNull();
+    expect(linkFlagError({ project: "web-app", bind: true })).toBeNull();
+  });
+
+  const boundWith = (portalProject: PortalProjectOutcome): BindOutcome => ({
+    kind: "bound",
+    orgId: "org_a",
+    name: "A",
+    settingsFile: "f",
+    entitled: true,
+    movedFrom: null,
+    droppedPortalProject: null,
+    portalProject,
+  });
+
+  it.each([
+    [{ kind: "unknown_project", requested: "x", available: ["default"] }, 2],
+    [{ kind: "projects_unavailable", reason: "r", requested: "x" }, 2],
+    [{ kind: "projects_unavailable", reason: "r" }, 0],
+    [{ kind: "chosen", slug: "a", name: "A" }, 0],
+    [{ kind: "default" }, 0],
+    [{ kind: "kept", slug: "a" }, 0],
+    [{ kind: "skipped" }, 0],
+    [{ kind: "skipped_non_interactive" }, 0],
+  ] as [PortalProjectOutcome, number][])("exit code for %j is %i", (outcome, code) => {
+    expect(bindExitCode(boundWith(outcome))).toBe(code);
+  });
+
+  it("an unbound outcome is exit 2 only for ambiguous and unknown", () => {
+    expect(bindExitCode({ kind: "ambiguous", candidates: [] })).toBe(2);
+    expect(bindExitCode({ kind: "unknown", requested: "x" })).toBe(2);
+    expect(bindExitCode({ kind: "skipped" })).toBe(0);
+  });
+
+  it.each([
+    [{ kind: "chosen", slug: "web-app", name: "Web app" }, /Web app.*web-app.*team\.project/],
+    [{ kind: "default" }, /default/],
+    [{ kind: "kept", slug: "web-app" }, /web-app/],
+    [{ kind: "skipped" }, /not chosen/],
+    [{ kind: "skipped_non_interactive" }, /not chosen.*--project/],
+    [
+      { kind: "unknown_project", requested: "x", available: ["default", "mobile"] },
+      /"x".*default, mobile/,
+    ],
+    [
+      { kind: "projects_unavailable", reason: "old", requested: "x" },
+      /old.*--project x.*NOT recorded/,
+    ],
+    [{ kind: "projects_unavailable", reason: "old" }, /old/],
+  ] as [PortalProjectOutcome, RegExp][])("text for %j", (outcome, pattern) => {
+    expect(describePortalProjectOutcome(outcome)).toMatch(pattern);
+  });
+
+  it("--json carries team.portalProject.kind and the re-link fields", () => {
+    const payload = linkJsonPayload({
+      stored: { label: "kc" },
+      token: {},
+      identity: identity(["org_a"]),
+      bind: {
+        ...boundWith({ kind: "default" }),
+        movedFrom: "org_old",
+        droppedPortalProject: "web-app",
+      } as BindOutcome,
+    });
+    const parsed = JSON.parse(JSON.stringify(payload));
+    expect(parsed.linked).toBe(true);
+    expect(parsed.team.kind).toBe("bound");
+    expect(parsed.team.portalProject).toEqual({ kind: "default" });
+    expect(parsed.team.movedFrom).toBe("org_old");
+    expect(parsed.team.droppedPortalProject).toBe("web-app");
   });
 });
