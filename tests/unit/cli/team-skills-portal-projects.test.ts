@@ -192,13 +192,23 @@ describe("portal project skills: failure rows", () => {
 
   it.each([
     400, 404, 422,
-  ])("%i is requested once, never retried, and removes nothing", async (status) => {
+  ])("%i is requested once and never retried; the existing api_error handling applies", async (status) => {
+    const bad = vi.fn(async () => json({ code: "x" }, status));
+    const result = await run(linked({ project: "alpha" }), bad);
+    // Manifest only: no second attempt, and no body fetch.
+    expect(bad).toHaveBeenCalledTimes(1);
+    expect(result.outcome.kind).toBe("dropped");
+  });
+
+  it("an outage after switching does not present the previous portal project's skills as the new one's", async () => {
     const p = portal({ alpha: { one: "1" } });
     await run(linked({ project: "alpha" }), p.transport);
-    const bad = vi.fn(async () => json({ code: "x" }, status));
-    await run(linked({ project: "alpha" }), bad);
-    // Manifest only: bodies are never fetched after a refusal.
-    expect(bad).toHaveBeenCalledTimes(1);
+    const down = vi.fn(async () => json({}, 503));
+    const result = await run(linked({ project: "beta" }), down);
+    expect(result.outcome.kind).toBe("kept_cached");
+    expect(result.notices.join("\n")).toContain("portal project alpha");
+    expect(result.notices.join("\n")).toContain("portal project beta");
+    // Left in place, never deleted on a transient failure.
     expect(await exists(teamSkillFile(dir, "one"))).toBe(true);
   });
 });
