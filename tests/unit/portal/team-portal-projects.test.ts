@@ -6,7 +6,7 @@
  * `.golem/settings.json`): the two never share a word in code or user text.
  */
 
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../../../src/config/schema.js";
@@ -312,7 +312,7 @@ describe("the team.project setting", () => {
   });
 
   it("rejects a slug that is not safe to put in a URL path or a file name", () => {
-    for (const bad of ["../x", "a/b", "a.b", "a b", "-lead", "x".repeat(65)]) {
+    for (const bad of ["../x", "a/b", "a.b", "a b", "-lead", "x".repeat(65), "Payments", "a_b"]) {
       const state = readTeamBinding(linked({ project: bad }));
       expect(state.kind).toBe("linked");
       if (state.kind === "linked") {
@@ -331,5 +331,58 @@ describe("the team.project setting", () => {
     const { client } = fakeClient(() => json({ ...rows(true), project: "archived" }));
     const fetched = await fetchTeamSettings(client, ORG, undefined, "p");
     expect(fetched.project).toEqual({ kind: "fallback", slug: "p", reason: "archived" });
+  });
+});
+
+describe("review fixes", () => {
+  it("a 402 on one repo's sync withdraws policy for every repo in that org", async () => {
+    const userDir = await newTempDir();
+    const stamp = new Date().toISOString();
+    const row = [{ key: "ui.pet", value: true, enforced: false }];
+    await writeTeamLayerCache(userDir, { org_id: ORG, fetched_at: stamp, settings: row });
+    await writeTeamLayerCache(userDir, {
+      org_id: ORG,
+      project: "a",
+      fetched_at: stamp,
+      settings: row,
+    });
+    await writeTeamLayerCache(userDir, {
+      org_id: ORG,
+      project: "z",
+      fetched_at: stamp,
+      settings: row,
+    });
+    await writeTeamLayerCache(userDir, { org_id: "org_other", fetched_at: stamp, settings: row });
+    const { client } = fakeClient(() => json({ code: "subscription_required" }, 402));
+    await syncTeamLayer({ binding: binding({ project: "a" }), userDir, client });
+
+    const b = await resolveTeamLayerForProject({ team: linked(), userDir });
+    expect(b.teamLayer).toBeUndefined();
+    expect(b.notice).toContain("denied");
+    const z = await resolveTeamLayerForProject({ team: linked({ project: "z" }), userDir });
+    expect(z.teamLayer).toBeUndefined();
+    // Another org is untouched.
+    const other = await resolveTeamLayerForProject({
+      team: linked({ org_id: "org_other" }),
+      userDir,
+    });
+    expect(other.teamLayer).toBeDefined();
+  });
+
+  it("readTeamLayerCache rejects a cache whose project field does not match the requested slug", async () => {
+    const userDir = await newTempDir();
+    const file = teamCachePath(userDir, ORG, "alpha");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(
+      file,
+      JSON.stringify({ org_id: ORG, project: "beta", fetched_at: "x", settings: [] }),
+    );
+    expect(await readTeamLayerCache(userDir, ORG, { project: "alpha" })).toBeNull();
+    const defaultFile = teamCachePath(userDir, ORG);
+    await writeFile(
+      defaultFile,
+      JSON.stringify({ org_id: ORG, project: "beta", fetched_at: "x", settings: [] }),
+    );
+    expect(await readTeamLayerCache(userDir, ORG)).toBeNull();
   });
 });

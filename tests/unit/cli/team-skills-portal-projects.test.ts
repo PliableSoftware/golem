@@ -192,7 +192,7 @@ describe("portal project skills: failure rows", () => {
 
   it.each([
     400, 404, 422,
-  ])("%i is requested once and never retried; the existing api_error handling applies", async (status) => {
+  ])("%i is requested once, never retried, and leaves installed skills on disk (api_error is not a verdict)", async (status) => {
     const bad = vi.fn(async () => json({ code: "x" }, status));
     const result = await run(linked({ project: "alpha" }), bad);
     // Manifest only: no second attempt, and no body fetch.
@@ -245,5 +245,54 @@ describe("golem team status: resolved portal project", () => {
     expect(view.linked).toBe(false);
     expect(view.cache).toBeNull();
     expect(view.summary).toContain("not linked to a team");
+  });
+});
+
+describe("review fixes", () => {
+  it("an outage notice also compares the org the installed skills came from", async () => {
+    const p = portal({ alpha: { one: "1" } });
+    await run(linked({ project: "alpha" }), p.transport);
+    const down = vi.fn(async () => json({}, 503));
+    const result = await syncTeamSkills({
+      projectDir: dir,
+      team: linked({ org_id: "org_other", project: "alpha" }),
+      dryRun: false,
+      transport: down,
+    });
+    expect(result.notices.join("\n")).toContain(ORG);
+  });
+
+  it("a body response marked not_found does not write bodies against the named portal project's manifest", async () => {
+    const calls: string[] = [];
+    const transport = vi.fn(async (reqPath: string) => {
+      calls.push(reqPath);
+      const manifest = reqPath.includes("manifest=1");
+      return json({
+        ...(manifest ? {} : { project: "not_found" }),
+        skills: [
+          {
+            name: "one",
+            ...(manifest ? {} : { content: "default body" }),
+            content_sha256: hashManaged(manifest ? "1" : "default body"),
+          },
+        ],
+      });
+    });
+    const result = await run(linked({ project: "gone" }), transport);
+    expect(await exists(teamSkillFile(dir, "one"))).toBe(false);
+    expect(result.notices.join("\n")).toContain("gone");
+  });
+
+  it("status reports a denied cache as denied, not found", async () => {
+    await writeTeamLayerCache(dir, {
+      org_id: ORG,
+      project: "payments",
+      fetched_at: new Date().toISOString(),
+      settings: [],
+      denied: { code: "subscription_required", status: 402, detail: "x", at: "now" },
+    });
+    const view = await describeProjectBinding(linked({ project: "payments" }), dir);
+    expect(view.portalProjectState).toBe("denied");
+    expect(view.summary).toContain("denied");
   });
 });
