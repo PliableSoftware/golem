@@ -1,15 +1,16 @@
 ---
 task: team-portal-projects
-title: "Portal projects: a repo names a portal project and Golem fetches that project's settings and skills"
-state: queued
+title: Portal projects: a repo names a portal project and Golem fetches that project's settings and skills
+state: done
 owner: agent
 size: L
 discipline: code
-design: "ADR-0008 (settings cascade and importance); docs/wiki/concepts/Settings Cascade.md lines 40-45 (the sentence this reverses); src/portal/binding.ts (team.org_id and team.portal_url are committed at project scope); src/portal/team-layer.ts; src/cli/team-skills.ts. The portal side is specified in PliableSoftware/golem-portal docs/projects-plan.md."
-gate: "Part 1 (docs): ADR-0008 amended or superseded and the Settings Cascade page rewritten, reviewed by the user before part 2 starts. Part 2 (code): a repo whose committed settings name a portal project receives that project's settings and skills as the team origin; a repo naming none receives the default project's exactly as today; every failure case in the table below degrades to the documented fallback with a single warning and never blocks a session. Failing-first tests cover each row of the table, and a project name with no team.org_id performs zero portal I/O. golem verify exit 0."
+design: ADR-0008 (settings cascade and importance); docs/wiki/concepts/Settings Cascade.md lines 40-45 (the sentence this reverses); src/portal/binding.ts (team.org_id and team.portal_url are committed at project scope); src/portal/team-layer.ts; src/cli/team-skills.ts. The portal side is specified in PliableSoftware/golem-portal docs/projects-plan.md.
+gate: Part 1 (docs): ADR-0008 amended or superseded and the Settings Cascade page rewritten, reviewed by the user before part 2 starts. Part 2 (code): a repo whose committed settings name a portal project receives that project's settings and skills as the team origin; a repo naming none receives the default project's exactly as today; every failure case in the table below degrades to the documented fallback with a single warning and never blocks a session. Failing-first tests cover each row of the table, and a project name with no team.org_id performs zero portal I/O. golem verify exit 0.
 depends_on: []
 touches: [src/portal, src/config, src/cli, docs/wiki, docs/decisions, tests]
 created: 2026-10-21
+updated: 2026-10-21T09:05:39.024Z
 ---
 
 ## What this is
@@ -67,3 +68,7 @@ Decided behaviour, recorded here so it is not re-derived: an outage after a swit
 
 - Portal repo: `/root/golem-portal`, plan at `docs/projects-plan.md`. The endpoint paths and response field above are the portal's planned contract, not yet built. If the harness needs a different shape, say so before the portal builds it.
 - Drift to fix while here, in the portal's docs rather than this repo: they say team skills sync into `.claude/skills/golem-team/<name>/`, but this repo writes the flat `golem-team-<name>/` form (`src/cli/team-skills.ts`).
+
+## Outcome
+
+shipped
