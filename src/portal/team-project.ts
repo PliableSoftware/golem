@@ -54,7 +54,7 @@ export function describePortalProjectFallback(
 ): string {
   return (
     `Portal project "${resolution.slug}" ${reasonClause(resolution.reason)}, so this team's ` +
-    `default portal project applies. Check \`team.project\` in .golem/settings.json.`
+    `default portal project applies. Check the \`team.project\` setting.`
   );
 }
 
