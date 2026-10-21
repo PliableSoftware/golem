@@ -605,12 +605,24 @@ describe("raise-only numbers", () => {
 
     const same = await load(await project({ rows: [{ key, value: base, enforced: true }] }));
     expect(refusedFor(same.warnings, key)).toBe(false);
+    expect(read(same.settings, key)).toBe(base);
+    expect(same.provenance[key]?.layer).toBe("team");
 
     const lower = await load(await project({ rows: [{ key, value: 0.1, enforced: true }] }));
     expect(read(lower.settings, key)).toBe(base);
     expect(refusedFor(lower.warnings, key)).toBe(true);
     expect(lower.warnings.some((w) => w.includes(`"${key}"`) && w.includes("0.1"))).toBe(true);
     expect(lower.refused).toContain(key);
+  });
+
+  it("applies and refuses the same way for a normal (non-enforced) team row", async () => {
+    const higher = await load(await project({ rows: [{ key, value: 0.9, enforced: false }] }));
+    expect(read(higher.settings, key)).toBe(0.9);
+    expect(higher.provenance[key]?.layer).toBe("team");
+
+    const lower = await load(await project({ rows: [{ key, value: 0.1, enforced: false }] }));
+    expect(read(lower.settings, key)).toBe(defaultOf(key));
+    expect(refusedFor(lower.warnings, key)).toBe(true);
   });
 
   it("judges against the MEMBER's own value, not the default", async () => {
