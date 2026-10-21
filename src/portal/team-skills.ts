@@ -52,6 +52,11 @@ import {
   classifyPortalResponse,
   type TeamLayerDisposition,
 } from "./entitlement.js";
+import {
+  type PortalProjectResolution,
+  portalProjectMarkerSchema,
+  resolvePortalProject,
+} from "./team-project.js";
 
 /**
  * A team skill name, as it may appear in a **directory name**.
@@ -95,6 +100,8 @@ const skillRowSchema = z.object({
  */
 const skillsResponseSchema = z.object({
   skills: z.array(skillRowSchema).default([]),
+  /** `not_found` or `archived` when the default portal project's skills were sent instead. */
+  project: portalProjectMarkerSchema,
 });
 
 export type TeamSkillRow = z.infer<typeof skillRowSchema>;
@@ -119,6 +126,8 @@ export type TeamSkillsFetch =
       readonly kind: "ok";
       readonly entries: readonly TeamSkillEntry[];
       readonly rejected: readonly RejectedTeamSkill[];
+      /** Which portal project's skills these are. */
+      readonly project: PortalProjectResolution;
     }
   | { readonly kind: "failed"; readonly disposition: TeamLayerDisposition };
 
@@ -133,8 +142,10 @@ export type TeamSkillsFetch =
 export type TeamSkillsTransport = (path: string) => Promise<Response>;
 
 /** `/api/v1/orgs/<orgId>/skills`, optionally the manifest form. */
-export function teamSkillsPath(orgId: string, manifest: boolean): string {
-  const base = `/api/v1/orgs/${encodeURIComponent(orgId)}/skills`;
+export function teamSkillsPath(orgId: string, manifest: boolean, project = ""): string {
+  // No portal project named: the existing endpoint, byte-identical.
+  const scope = project === "" ? "" : `/projects/${encodeURIComponent(project)}`;
+  const base = `/api/v1/orgs/${encodeURIComponent(orgId)}${scope}/skills`;
   return manifest ? `${base}?manifest=1` : base;
 }
 
@@ -168,11 +179,11 @@ async function errorCode(response: Response): Promise<string | undefined> {
 export async function fetchTeamSkills(
   transport: TeamSkillsTransport,
   orgId: string,
-  options: { readonly manifest: boolean },
+  options: { readonly manifest: boolean; readonly project?: string },
 ): Promise<TeamSkillsFetch> {
   let response: Response;
   try {
-    response = await transport(teamSkillsPath(orgId, options.manifest));
+    response = await transport(teamSkillsPath(orgId, options.manifest, options.project ?? ""));
   } catch (err) {
     // Offline, DNS, a timeout, or anything `src/portal/` raises — including a
     // refresh that could not be done, which is `auth_failed` and not a verdict.
@@ -265,5 +276,10 @@ export async function fetchTeamSkills(
     });
   }
 
-  return { kind: "ok", entries, rejected };
+  return {
+    kind: "ok",
+    entries,
+    rejected,
+    project: resolvePortalProject(options.project ?? "", parsed.data.project),
+  };
 }

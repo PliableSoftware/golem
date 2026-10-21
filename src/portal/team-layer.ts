@@ -64,6 +64,7 @@ import { effectivelyEnforced, isMemberRelative, staticRefusal } from "../config/
 import { isRenameRetryable } from "../shared/win-fs-retry.js";
 import { VERSION } from "../version.js";
 import {
+  PROJECT_CACHE_INFIX,
   readTeamBinding,
   TEAM_CACHE_DIR_NAME,
   type TeamBinding,
@@ -79,6 +80,13 @@ import {
   mayUseCachedTeamLayer,
   type TeamLayerDisposition,
 } from "./entitlement.js";
+import {
+  type PortalProjectResolution,
+  portalProjectMarkerSchema,
+  portalProjectWarnedMarker,
+  resolvePortalProject,
+  warnPortalProjectOnce,
+} from "./team-project.js";
 
 // ---------------------------------------------------------------------------
 // The wire
@@ -115,17 +123,25 @@ const teamSettingsResponseSchema = z.object({
     .nullish()
     .transform((value) => value ?? []),
   schema_version: wireOptional(z.string()),
+  /** `not_found` or `archived` when the default portal project's data was sent instead. */
+  project: portalProjectMarkerSchema,
 });
 
 export type TeamSettingsResponse = z.infer<typeof teamSettingsResponseSchema>;
 
 /** `GET /api/v1/orgs/{orgId}/settings`, with the client describing itself. */
-export function teamSettingsPath(orgId: string, schemaVersion: string = VERSION): string {
+export function teamSettingsPath(
+  orgId: string,
+  schemaVersion: string = VERSION,
+  project = "",
+): string {
   const query = new URLSearchParams({
     golem_version: VERSION,
     schema_version: schemaVersion,
   });
-  return `/api/v1/orgs/${encodeURIComponent(orgId)}/settings?${query.toString()}`;
+  // No portal project named: the existing endpoint, byte-identical.
+  const scope = project === "" ? "" : `/projects/${encodeURIComponent(project)}`;
+  return `/api/v1/orgs/${encodeURIComponent(orgId)}${scope}/settings?${query.toString()}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +318,12 @@ const teamCacheSchema = z.object({
   /** ISO 8601, so a human reading the file can date it without a tool. */
   fetched_at: z.string(),
   schema_version: z.string().optional(),
+  /** The portal project this cache answers for; absent is the default portal project. */
+  project: z.string().optional(),
+  /** Why the default portal project's data is in here, when `project` did not apply. */
+  project_state: z.string().optional(),
+  /** The fallback reason already warned about, so a later sync or load stays quiet. */
+  project_warned: z.string().optional(),
   settings: z.array(teamSettingRowSchema).default([]),
   /** Present once the portal has denied this org. See {@link cacheDenialSchema}. */
   denied: cacheDenialSchema.optional(),
@@ -335,9 +357,11 @@ export async function readTeamLayerCache(
     readonly tries?: number;
     readonly delayMs?: number;
     readonly platform?: NodeJS.Platform;
+    /** The portal project whose cache to read; absent is the default portal project. */
+    readonly project?: string;
   } = {},
 ): Promise<TeamLayerCache | null> {
-  const file = teamCachePath(userDir, orgId);
+  const file = teamCachePath(userDir, orgId, retry.project ?? "");
   const tries = Math.max(1, retry.tries ?? 10);
   const delayMs = retry.delayMs ?? 50;
   let raw: string;
@@ -354,7 +378,11 @@ export async function readTeamLayerCache(
   }
   try {
     const parsed = teamCacheSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
+    if (!parsed.success) return null;
+    // A file at one portal project's path that says it holds another's (a
+    // copied or renamed file) must never be served as this one's.
+    if ((parsed.data.project ?? "") !== (retry.project ?? "")) return null;
+    return parsed.data;
   } catch {
     return null;
   }
@@ -362,7 +390,7 @@ export async function readTeamLayerCache(
 
 /** Write one org's cache, creating `~/.golem/teams/` if it is not there. */
 export async function writeTeamLayerCache(userDir: string, cache: TeamLayerCache): Promise<string> {
-  const file = teamCachePath(userDir, cache.org_id);
+  const file = teamCachePath(userDir, cache.org_id, cache.project ?? "");
   await mkdir(path.dirname(file), { recursive: true });
   // Atomic: a hook or the proxy may be reading this file at the moment a sync
   // rewrites it, and a torn read parses as "no cache", i.e. no team policy.
@@ -373,6 +401,8 @@ export async function writeTeamLayerCache(userDir: string, cache: TeamLayerCache
 /** One cached team, as `golem status` reports it (Decision 63(c)). */
 export interface TeamCacheStatus {
   readonly org_id: string;
+  /** The portal project this cache is for; absent is the default portal project. */
+  readonly portal_project?: string;
   readonly fetched_at: string;
   /** Whole minutes since the fetch; `null` when `fetched_at` is unparseable. */
   readonly age_minutes: number | null;
@@ -420,25 +450,33 @@ export async function listTeamLayerCaches(
   const out: TeamCacheStatus[] = [];
   for (const entry of entries) {
     if (!entry.endsWith(".json")) continue;
-    const orgId = entry.slice(0, -".json".length);
-    const cache = await readTeamLayerCache(userDir, orgId).catch(() => null);
+    const stem = entry.slice(0, -".json".length);
+    const at = stem.indexOf(PROJECT_CACHE_INFIX);
+    const orgId = at === -1 ? stem : stem.slice(0, at);
+    const project = at === -1 ? "" : stem.slice(at + PROJECT_CACHE_INFIX.length);
+    const cache = await readTeamLayerCache(userDir, orgId, { project }).catch(() => null);
     if (cache === null) continue;
     const fetchedMs = Date.parse(cache.fetched_at);
     const dateable = Number.isFinite(fetchedMs);
     out.push({
       org_id: cache.org_id,
+      ...(project === "" ? {} : { portal_project: project }),
       fetched_at: cache.fetched_at,
       age_minutes: dateable ? Math.max(0, Math.floor((nowMs - fetchedMs) / 60_000)) : null,
       age: dateable ? describeCacheAge(fetchedMs, nowMs) : null,
       settings_count: cache.settings.length,
       enforced_count: cache.settings.filter((row) => effectivelyEnforced(row.key, row.enforced))
         .length,
-      path: teamCachePath(userDir, orgId),
+      path: teamCachePath(userDir, orgId, project),
       ...(cache.denied === undefined ? {} : { denied: cache.denied }),
     });
   }
   // Stable order so a status snapshot diffs cleanly between runs.
-  return out.sort((a, b) => a.org_id.localeCompare(b.org_id));
+  return out.sort(
+    (a, b) =>
+      a.org_id.localeCompare(b.org_id) ||
+      (a.portal_project ?? "").localeCompare(b.portal_project ?? ""),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -455,10 +493,11 @@ export async function listTeamLayerCaches(
  * cache's date rides along on the cached form because "team policy" and
  * "three-week-old team policy" are not the same claim.
  */
-export function teamLayerSource(orgId: string, fetchedAt?: string): string {
-  return fetchedAt === undefined
-    ? `team ${orgId} (portal)`
-    : `team ${orgId} (cached copy, fetched ${fetchedAt})`;
+export function teamLayerSource(orgId: string, fetchedAt?: string, project = ""): string {
+  // The portal project is part of whose policy this is. Absent means the
+  // default portal project, whose wording is unchanged.
+  const who = project === "" ? `team ${orgId}` : `team ${orgId}, portal project ${project}`;
+  return fetchedAt === undefined ? `${who} (portal)` : `${who} (cached copy, fetched ${fetchedAt})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +514,14 @@ export interface TeamLayerResolution {
   /** Absent means: no team layer applies. Fall back to local, out loud. */
   readonly teamLayer?: TeamLayerForConfig;
   readonly fromCache: boolean;
+  /** Which portal project applied, and why. Absent when no team is involved. */
+  readonly project?: PortalProjectResolution;
+  /**
+   * The once-per-slug-per-session warning when a named portal project did not
+   * apply. Present only the first time; later syncs resolve the same way but
+   * stay quiet.
+   */
+  readonly projectWarning?: string;
   /** Age in words, when a cache supplied the layer. */
   readonly cacheAge?: string;
   /** Dotted keys placed, each marked when enforced. */
@@ -534,12 +581,13 @@ export async function resolveTeamLayer(
     };
   }
 
-  const cache = await readTeamLayerCache(userDir, binding.orgId);
+  const project = binding.project ?? "";
+  const cache = await readTeamLayerCache(userDir, binding.orgId, { project });
   if (cache === null) {
     return {
       ...NO_TEAM_LAYER,
       notice:
-        `Team ${binding.orgId} is linked but this machine has no cached team settings — ` +
+        `Team ${binding.orgId}${forProject(project)} is linked but this machine has no cached team settings — ` +
         `using local configuration. Run \`golem team sync\` to fetch them.`,
     };
   }
@@ -557,27 +605,46 @@ export async function resolveTeamLayer(
     };
   }
 
-  return cachedResolution(binding.orgId, cache, now());
+  return cachedResolution(binding.orgId, cache, now(), project);
+}
+
+/** " (portal project X)" for a named one, and nothing for the default. */
+function forProject(project: string): string {
+  return project === "" ? "" : ` (portal project ${project})`;
+}
+
+/** What a cache says about which portal project its data came from. */
+function cachedProject(project: string, cache: TeamLayerCache): PortalProjectResolution {
+  return resolvePortalProject(project, cache.project_state);
 }
 
 function cachedResolution(
   orgId: string,
   cache: TeamLayerCache,
   nowMs: number,
+  project = "",
 ): TeamLayerResolution {
   const translated = translateTeamRows(cache.settings);
+  const resolution = cachedProject(project, cache);
+  // A fallback cache holds the DEFAULT portal project's data, so that is whose
+  // policy the provenance names.
+  const sourceProject = resolution.kind === "found" ? project : "";
   const fetchedMs = Date.parse(cache.fetched_at);
   const age = Number.isFinite(fetchedMs) ? describeCacheAge(fetchedMs, nowMs) : "of unknown age";
   return {
     teamLayer: {
       settings: translated.settings,
-      source: teamLayerSource(orgId, cache.fetched_at),
+      source: teamLayerSource(orgId, cache.fetched_at, sourceProject),
     },
     fromCache: true,
+    project: resolution,
     cacheAge: age,
     applied: translated.applied,
     skipped: translated.skipped,
-    notice: `Team ${orgId}: using the cached team settings, which are ${age}.`,
+    // Never restates a fallback: that warning is given once at sync time, and
+    // `golem team status` carries the reason. A notice here would resurface on
+    // every config load.
+    notice: `Team ${orgId}${resolution.kind === "found" ? forProject(project) : ""}: using the cached team settings, which are ${age}.`,
   };
 }
 
@@ -619,11 +686,17 @@ export async function resolveTeamLayerForProject(
     };
   }
 
-  return await resolveTeamLayer({
+  const resolved = await resolveTeamLayer({
     binding: state.binding,
     userDir: options.userDir,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
+  // A named portal project that cannot be used is reported, never dropped quietly.
+  if (state.binding.projectRejected === undefined) return resolved;
+  return {
+    ...resolved,
+    notice: [resolved.notice, state.binding.projectRejected].filter(Boolean).join(" "),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -675,24 +748,51 @@ async function stampCacheDenied(
   orgId: string,
   disposition: Extract<TeamLayerDisposition, { kind: "not_entitled" }>,
   nowMs: number,
+  project = "",
 ): Promise<string | undefined> {
-  const cache = await readTeamLayerCache(userDir, orgId);
-  if (cache === null) return undefined;
+  // A verdict is about the ORGANIZATION, so it withdraws every cache of that
+  // org: the default portal project's and each named one's. Stamping only the
+  // requested file would leave another repo in the same org applying stale
+  // policy from its own file.
+  const dir = path.join(userDir, TEAM_CACHE_DIR_NAME);
+  let entries: readonly string[];
   try {
-    return await writeTeamLayerCache(userDir, {
-      ...cache,
-      denied: {
-        code: disposition.code,
-        status: disposition.status,
-        detail: disposition.detail,
-        at: new Date(nowMs).toISOString(),
-      },
-    });
+    entries = await readdir(dir);
   } catch {
-    // An unwritable cache dir cannot make the verdict wrong, and the caller has
-    // already been told the layer is not being applied.
     return undefined;
   }
+  const projects: string[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const stem = entry.slice(0, -".json".length);
+    if (stem === orgId) projects.push("");
+    else if (stem.startsWith(`${orgId}${PROJECT_CACHE_INFIX}`)) {
+      projects.push(stem.slice(orgId.length + PROJECT_CACHE_INFIX.length));
+    }
+  }
+  const stamped = new Map<string, string>();
+  for (const slug of projects) {
+    try {
+      const cache = await readTeamLayerCache(userDir, orgId, { project: slug });
+      if (cache === null) continue;
+      stamped.set(
+        slug,
+        await writeTeamLayerCache(userDir, {
+          ...cache,
+          denied: {
+            code: disposition.code,
+            status: disposition.status,
+            detail: disposition.detail,
+            at: new Date(nowMs).toISOString(),
+          },
+        }),
+      );
+    } catch {
+      // An unwritable cache dir cannot make the verdict wrong, and the caller
+      // has already been told the layer is not being applied.
+    }
+  }
+  return stamped.get(project) ?? [...stamped.values()][0];
 }
 
 /**
@@ -720,8 +820,16 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
   const { binding, userDir, client } = options;
   const now = options.now ?? Date.now;
 
-  const fetched = await fetchTeamSettings(client, binding.orgId, options.timeoutMs);
+  const project = binding.project ?? "";
+  const fetched = await fetchTeamSettings(client, binding.orgId, options.timeoutMs, project);
   const { disposition } = fetched;
+  // What this portal project's cache already warned about, read before it is
+  // rewritten. Unreadable counts as nothing warned: one extra warning, not a throw.
+  const priorWarned =
+    project === ""
+      ? undefined
+      : (await readTeamLayerCache(userDir, binding.orgId, { project }).catch(() => null))
+          ?.project_warned;
 
   if (disposition.kind === "entitled" && fetched.response !== undefined) {
     const rows = fetched.response.settings;
@@ -729,6 +837,11 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
     const fetchedAt = new Date(now()).toISOString();
     const cache: TeamLayerCache = {
       org_id: binding.orgId,
+      ...(project === "" ? {} : { project }),
+      ...(fetched.project?.kind === "fallback" ? { project_state: fetched.project.reason } : {}),
+      ...(fetched.project === undefined || portalProjectWarnedMarker(fetched.project) === undefined
+        ? {}
+        : { project_warned: portalProjectWarnedMarker(fetched.project) as string }),
       fetched_at: fetchedAt,
       ...(fetched.response.schema_version === undefined
         ? {}
@@ -747,16 +860,25 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
 
     if (options.report === true) await postSyncReport(client, binding.orgId, translated.skipped);
 
+    const resolution = fetched.project ?? { kind: "default" as const };
+    const projectWarning = warnPortalProjectOnce(resolution, priorWarned);
+    const notice = describeTeamOutcome(disposition, { orgId: binding.orgId });
     return {
       disposition,
       teamLayer: {
         settings: translated.settings,
-        source: teamLayerSource(binding.orgId),
+        source: teamLayerSource(
+          binding.orgId,
+          undefined,
+          resolution.kind === "found" ? resolution.slug : "",
+        ),
       },
       fromCache: false,
+      project: resolution,
+      ...(projectWarning === undefined ? {} : { projectWarning }),
       applied: translated.applied,
       skipped: translated.skipped,
-      notice: describeTeamOutcome(disposition, { orgId: binding.orgId }),
+      notice: projectWarning === undefined ? notice : `${notice} ${projectWarning}`,
       ...(cacheWritten === undefined ? {} : { cacheWritten }),
     };
   }
@@ -769,7 +891,7 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
     // own `api_error` is not a verdict and stamps nothing.
     let cacheDenied: string | undefined;
     if (disposition.kind === "not_entitled") {
-      cacheDenied = await stampCacheDenied(userDir, binding.orgId, disposition, now());
+      cacheDenied = await stampCacheDenied(userDir, binding.orgId, disposition, now(), project);
     }
     return {
       disposition,
@@ -779,7 +901,7 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
     };
   }
 
-  const cache = await readTeamLayerCache(userDir, binding.orgId);
+  const cache = await readTeamLayerCache(userDir, binding.orgId, { project });
   if (cache === null) {
     return {
       disposition,
@@ -788,7 +910,7 @@ export async function syncTeamLayer(options: SyncTeamLayerOptions): Promise<Sync
     };
   }
 
-  const resolution = cachedResolution(binding.orgId, cache, now());
+  const resolution = cachedResolution(binding.orgId, cache, now(), project);
   return {
     ...resolution,
     disposition,
@@ -805,6 +927,8 @@ export interface FetchTeamSettingsResult {
   readonly disposition: TeamLayerDisposition;
   /** Present only when the disposition is `entitled` and the body parsed. */
   readonly response?: TeamSettingsResponse;
+  /** Which portal project applied; present only with a `response`. */
+  readonly project?: PortalProjectResolution;
 }
 
 /**
@@ -819,6 +943,7 @@ export async function fetchTeamSettings(
   client: PortalClient,
   orgId: string,
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+  project = "",
 ): Promise<FetchTeamSettingsResult> {
   let response: Response;
   try {
@@ -827,7 +952,7 @@ export async function fetchTeamSettings(
     // as the OS lets it, and "a project must initialise without a network" has
     // to hold for a network that is *present and unhelpful*, not just absent.
     // An abort throws, so it classifies as `unreachable` — the cache path.
-    response = await client.request(teamSettingsPath(orgId), {
+    response = await client.request(teamSettingsPath(orgId, undefined, project), {
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
@@ -875,7 +1000,11 @@ export async function fetchTeamSettings(
     };
   }
 
-  return { disposition: { kind: "entitled" }, response: parsed.data };
+  return {
+    disposition: { kind: "entitled" },
+    response: parsed.data,
+    project: resolvePortalProject(project, parsed.data.project),
+  };
 }
 
 /**
@@ -909,4 +1038,34 @@ async function postSyncReport(
   } catch {
     // By contract, invisible.
   }
+}
+
+/**
+ * The once-per-slug warning for a skills sync, recorded in the portal project's
+ * cache file when one exists. With no cache the in-process guard is all there
+ * is; a cache is never created here, because an empty one would read as a
+ * team layer that applies nothing.
+ */
+export async function recordPortalProjectWarning(
+  userDir: string,
+  orgId: string,
+  resolution: PortalProjectResolution,
+): Promise<string | undefined> {
+  if (resolution.kind === "default") return undefined;
+  const project = resolution.slug;
+  const cache = await readTeamLayerCache(userDir, orgId, { project }).catch(() => null);
+  const warning = warnPortalProjectOnce(resolution, cache?.project_warned);
+  if (cache === null) return warning;
+  const marker = portalProjectWarnedMarker(resolution);
+  if (cache.project_warned === marker) return warning;
+  try {
+    const { project_warned: _old, ...rest } = cache;
+    await writeTeamLayerCache(userDir, {
+      ...rest,
+      ...(marker === undefined ? {} : { project_warned: marker }),
+    });
+  } catch {
+    // Advisory: a failed write costs one repeated warning, nothing else.
+  }
+  return warning;
 }

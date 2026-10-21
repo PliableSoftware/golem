@@ -803,6 +803,17 @@ export const SETTING_META = {
       "only; the authorization server is still discovered from the issuer setting.",
     advanced: true,
   },
+  "team.project": {
+    label: "Team portal project",
+    summary: "Which portal project's settings and skills this repo takes - empty is the default",
+    detail:
+      "A portal project is a named group of Golem settings and skills on the portal, shared by " +
+      "one or more repos; it is not this repo's own settings file. Naming one is a choice, not " +
+      "access control: the team still comes from the link. Empty means the team's default " +
+      "portal project. If the name cannot be applied (it does not exist, or it is archived) the " +
+      "default portal project applies and Golem warns once. Inert while there is no team " +
+      "organization set. A team origin can never set this key.",
+  },
   "team.sync": {
     label: "Apply team settings",
     summary: "Whether a linked project applies its team's settings layer",

@@ -135,7 +135,7 @@ export const ORIGIN_ORDER: readonly LayerName[] = [
  * convenience with no security weight, and a team with slow SSO has a real
  * reason to raise it.
  *
- * Four enumerated `team.*` keys (`project-team-binding`) are denied for the same
+ * Five enumerated `team.*` keys (`project-team-binding`) are denied for the same
  * circularity, one level closer in: those keys say WHICH organization this
  * project belongs to and WHETHER the team layer applies at all. A team origin
  * able to write `team.org_id` could rebind the project to another organization
