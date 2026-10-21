@@ -157,7 +157,7 @@ committed file. Picking the team's default portal project writes **no**
 
 - `--project <slug>` skips the prompt. A slug the list does not contain is refused
   with the valid ones (the typo this exists to catch) and exits 2. `--project
-  default` removes `team.project`. `--project` with `--no-bind` is an error.
+  default` removes `team.project`. `--project` with `--no-bind` is an error (exit 2).
 - Enter takes the existing `team.project` when re-linking the same team, otherwise
   the portal's default. A slug that fails `^[a-z0-9][a-z0-9-]{0,63}$` is never
   written, whatever the portal listed.
