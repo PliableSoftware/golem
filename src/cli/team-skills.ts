@@ -82,12 +82,14 @@ import {
   describeCacheAge,
   describeTeamOutcome,
   mayUseCachedTeamLayer,
+  type PortalProjectResolution,
   readTeamBinding,
   TEAM_SKILLS_DIR,
   TEAM_SKILLS_PREFIX,
   type TeamBinding,
   type TeamLayerDisposition,
   type TeamSettings,
+  warnPortalProjectOnce,
 } from "../portal/index.js";
 import {
   fetchTeamSkills,
@@ -105,6 +107,50 @@ import {
   ownedDetail,
   rememberManaged,
 } from "./managed-files.js";
+
+/**
+ * Which portal project the skills on disk came from. Local state, gitignored,
+ * written only after a sync that read the portal. It exists for one question —
+ * "are the skills I would keep during an outage the ones this repo names?" — so
+ * a missing file means "unknown" and is never an error.
+ */
+const SKILLS_SOURCE_FILE = path.join(".golem", "state", "team-skills-source.json");
+
+interface SkillsSource {
+  readonly org_id: string;
+  readonly project: string;
+}
+
+async function readSkillsSource(projectDir: string): Promise<SkillsSource | null> {
+  try {
+    const parsed: unknown = JSON.parse(
+      await readFile(path.join(projectDir, SKILLS_SOURCE_FILE), "utf8"),
+    );
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const { org_id, project } = parsed as Record<string, unknown>;
+    return typeof org_id === "string" && typeof project === "string" ? { org_id, project } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSkillsSource(
+  projectDir: string,
+  orgId: string,
+  project: string,
+): Promise<void> {
+  const file = path.join(projectDir, SKILLS_SOURCE_FILE);
+  try {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, `${JSON.stringify({ org_id: orgId, project })}\n`, "utf8");
+  } catch {
+    // Advisory state: failing to write it must not fail a sync.
+  }
+}
+
+function describeSkillsSource(source: SkillsSource): string {
+  return source.project === "" ? "the default portal project" : `portal project ${source.project}`;
+}
 
 /** `golem-team-<name>`. The only place a team skill directory name is formed. */
 export function teamSkillDirName(name: string): string {
@@ -187,6 +233,8 @@ export type TeamSkillsOutcome =
       readonly unchanged: readonly string[];
       readonly conflicts: readonly string[];
       readonly rejected: readonly RejectedTeamSkill[];
+      /** Which portal project's skills these are, and whether the default stood in. */
+      readonly project: PortalProjectResolution;
     }
   /** No verdict was rendered, so what is on disk stands. Nothing was written. */
   | {
@@ -372,6 +420,10 @@ export async function syncTeamSkills(
   }
 
   const notices: string[] = [];
+  const project = binding.project ?? "";
+  if (binding.projectRejected !== undefined) {
+    notices.push(`Team ${binding.orgId}: ${binding.projectRejected}.`);
+  }
   if (await nestedTeamDirPresent(projectDir)) {
     notices.push(
       `\`.claude/skills/${TEAM_SKILLS_DIR}/\` exists and is NOT where team skills live — ` +
@@ -380,11 +432,17 @@ export async function syncTeamSkills(
     );
   }
 
-  const manifest = await fetchTeamSkills(options.transport, binding.orgId, { manifest: true });
+  const manifest = await fetchTeamSkills(options.transport, binding.orgId, {
+    manifest: true,
+    project,
+  });
 
   if (manifest.kind === "failed") {
     return await handleFailure(options, binding, manifest.disposition, readLocal, now, notices);
   }
+
+  const projectWarning = warnPortalProjectOnce(manifest.project);
+  if (projectWarning !== undefined) notices.push(projectWarning);
 
   const local = await readLocal(projectDir);
   const localByName = new Map(local.map((s) => [s.name, s]));
@@ -457,7 +515,10 @@ export async function syncTeamSkills(
 
   // Only now, and only for what differs, is a body downloaded.
   if (wanted.length > 0) {
-    const bodies = await fetchTeamSkills(options.transport, binding.orgId, { manifest: false });
+    const bodies = await fetchTeamSkills(options.transport, binding.orgId, {
+      manifest: false,
+      project,
+    });
     if (bodies.kind === "failed") {
       // The manifest was readable and the bodies were not. Nothing already
       // decided is undone — the removals above stand, because the manifest that
@@ -520,6 +581,7 @@ export async function syncTeamSkills(
   }
 
   notices.push(summarise(binding.orgId, { created, refreshed, removed, unchanged, conflicts }));
+  if (!dryRun) await writeSkillsSource(projectDir, binding.orgId, project);
 
   return {
     outcome: {
@@ -531,6 +593,7 @@ export async function syncTeamSkills(
       unchanged,
       conflicts,
       rejected,
+      project: manifest.project,
     },
     actions,
     notices,
@@ -577,6 +640,19 @@ async function handleFailure(
             `${newest === null ? "" : `, last synced ${describeCacheAge(newest, now())}`} — ` +
             `${kept.join(", ")}.`,
     );
+    // The skills on disk ARE the cache, so a switched repo would otherwise
+    // "keep" the PREVIOUS portal project's skills as if they were this one's.
+    // Say so rather than serve them under the new name.
+    const source = await readSkillsSource(projectDir);
+    const project = binding.project ?? "";
+    if (kept.length > 0 && source !== null && source.project !== project) {
+      notices.push(
+        `Team ${binding.orgId}: the installed team skills came from ${describeSkillsSource(source)}, ` +
+          `not ${project === "" ? "the default portal project" : `portal project ${project}`}. ` +
+          "They are left as they are and have not been refreshed; run `golem team skills` " +
+          "again once the portal is reachable.",
+      );
+    }
     return {
       outcome: { kind: "kept_cached", orgId: binding.orgId, kept, disposition },
       actions: [],

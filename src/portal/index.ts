@@ -29,6 +29,7 @@ export {
   bindTeam,
   chooseOrganization,
   isValidOrgId,
+  isValidPortalProjectSlug,
   type OrganizationChoice,
   type PortalOrganization,
   readTeamBinding,
@@ -152,6 +153,13 @@ export {
   translateTeamRows,
   writeTeamLayerCache,
 } from "./team-layer.js";
+export {
+  describePortalProjectFallback,
+  type PortalProjectResolution,
+  resetPortalProjectWarnings,
+  resolvePortalProject,
+  warnPortalProjectOnce,
+} from "./team-project.js";
 export {
   fetchTeamSkills,
   isValidTeamSkillName,

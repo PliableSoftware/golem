@@ -50,6 +50,11 @@ export interface TeamSettings {
   readonly portal_url: string;
   readonly sync: boolean;
   readonly skills: boolean;
+  /**
+   * The portal project this repo names. Absent or empty means the team's
+   * default portal project. Never a settings origin: see {@link isValidPortalProjectSlug}.
+   */
+  readonly project?: string;
 }
 
 /** A resolved binding — only ever produced for a project that names a team. */
@@ -59,6 +64,14 @@ export interface TeamBinding {
   readonly portalUrl: string;
   readonly sync: boolean;
   readonly skills: boolean;
+  /** The portal project slug, or absent for the team's default portal project. */
+  readonly project?: string;
+  /**
+   * Set when `team.project` was non-empty but unusable. The slug is then
+   * dropped (the default portal project applies) and this says why, so a bad
+   * value is reported rather than silently ignored.
+   */
+  readonly projectRejected?: string;
 }
 
 /**
@@ -91,6 +104,20 @@ export function isValidOrgId(orgId: string): boolean {
 }
 
 /**
+ * A portal project slug, as it may appear in a URL path AND a cache file name.
+ *
+ * Deliberately has no dot: the per-portal-project cache file is
+ * `<org_id>.project.<slug>.json`, and neither id may contain `.project.`, so the
+ * name splits unambiguously. The slug comes from a committed file, so the shape
+ * is checked once here, before any path is built from it.
+ */
+const PORTAL_PROJECT_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+export function isValidPortalProjectSlug(slug: string): boolean {
+  return PORTAL_PROJECT_SLUG_PATTERN.test(slug);
+}
+
+/**
  * Read the binding out of already-loaded settings. Pure: no I/O of any kind.
  *
  * Pass `settings.team`. An empty or whitespace-only `org_id` is `unlinked`,
@@ -108,6 +135,17 @@ export function readTeamBinding(team: TeamSettings): TeamBindingState {
         "Re-run `golem team link` to set it, or `golem team unlink` to clear it",
     };
   }
+  const project = (team.project ?? "").trim();
+  const projectFields =
+    project === ""
+      ? {}
+      : isValidPortalProjectSlug(project)
+        ? { project }
+        : {
+            projectRejected:
+              `\`team.project\` is not a usable portal project name (letters, digits, hyphen and ` +
+              `underscore only, at most 64), so the default portal project applies`,
+          };
   return {
     kind: "linked",
     binding: {
@@ -115,6 +153,7 @@ export function readTeamBinding(team: TeamSettings): TeamBindingState {
       portalUrl: team.portal_url.trim().replace(/\/+$/, ""),
       sync: team.sync,
       skills: team.skills,
+      ...projectFields,
     },
   };
 }
@@ -148,14 +187,23 @@ export const TEAM_CACHE_DIR_NAME = "teams";
  * it is gated on {@link readTeamBinding} being `linked`; and **`golem team
  * unlink` never deletes it** — see {@link unbindTeam}.
  */
-export function teamCachePath(userDir: string, orgId: string): string {
+export function teamCachePath(userDir: string, orgId: string, project = ""): string {
   if (!isValidOrgId(orgId)) {
     // Unreachable through readTeamBinding, which rejects first. Kept as a hard
     // stop because this is the function that turns a settings value into a path.
     throw new Error(`refusing to build a cache path from an invalid organization id`);
   }
-  return path.join(userDir, TEAM_CACHE_DIR_NAME, `${orgId}.json`);
+  if (project === "") return path.join(userDir, TEAM_CACHE_DIR_NAME, `${orgId}.json`);
+  if (!isValidPortalProjectSlug(project)) {
+    throw new Error(`refusing to build a cache path from an invalid portal project name`);
+  }
+  // Keyed per portal project: a different portal project's last known good must
+  // never be served, and a shared file would be last-writer-wins between repos.
+  return path.join(userDir, TEAM_CACHE_DIR_NAME, `${orgId}${PROJECT_CACHE_INFIX}${project}.json`);
 }
+
+/** Separates the org id from the portal project slug in a cache file name. */
+export const PROJECT_CACHE_INFIX = ".project.";
 
 // ---------------------------------------------------------------------------
 // Choosing an organization

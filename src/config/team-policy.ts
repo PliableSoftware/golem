@@ -189,6 +189,7 @@ export const TEAM_POLICY: Readonly<Record<LeafPath, TeamRule>> = {
   "portal.link_timeout_ms": S, // sign-in wait: a convenience with no security weight (ADR-0008 floor note); a slow-SSO team has a real reason to raise it
   "team.org_id": D,
   "team.portal_url": D,
+  "team.project": D,
   "team.sync": D,
   "team.skills": D,
 };
