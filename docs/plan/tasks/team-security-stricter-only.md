@@ -25,7 +25,7 @@ The comparison is against what the member's own layers resolve to, not against t
 
 ## Status after `team-layer-everywhere` (2026-10-09, after the third review)
 
-The classification, the per-direction enforcement and the tests landed in `team-layer-everywhere` (see `src/config/team-policy.ts`), for ALL keys and not only `security.*`, so this task's gate is covered except for what remains here: a `raise-only` class (a number where higher is stricter; `knowledge.local_answer_min_confidence` is denied until then), the `golem team sync` report cannot show member-relative refusals (`lower-only`, `narrow-roots` need the member's own value, so only load-time warnings and `team.skipped` show them), and a fresh independent review of the final table.
+The classification, the per-direction enforcement and the tests landed in `team-layer-everywhere` (see `src/config/team-policy.ts`), for ALL keys and not only `security.*`, so this task's gate is covered except for what remains here: a `raise-only` class (a number where higher is stricter; the "Security classification" section below replaces the earlier note that `knowledge.local_answer_min_confidence` was denied until then), the `golem team sync` report cannot show member-relative refusals (`lower-only`, `raise-only`, `narrow-roots` need the member's own value, so only load-time warnings and `team.skipped` show them), and a fresh independent review of the final table.
 
 ## Security classification (2026-10-21)
 

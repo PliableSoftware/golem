@@ -240,7 +240,7 @@ function rank(dotted: string, value: unknown): number | undefined {
 /**
  * The part of the rule that needs only the key and the team's value, so the
  * team-sync report can use it too. `undefined` means "not refused here"; the
- * relative classes (`lower-only`, `narrow-roots`) are finished at load time by
+ * relative classes (`lower-only`, `raise-only`, `narrow-roots`) are finished at load time by
  * {@link relativeRefusal}, against the member's own value.
  */
 export function staticRefusal(dotted: string, value: unknown): string | undefined {
@@ -274,7 +274,7 @@ export function staticRefusal(dotted: string, value: unknown): string | undefine
   }
 }
 
-/** True for rules finished at load time against the member's own value (`lower-only`, `narrow-roots`). */
+/** True for rules finished at load time against the member's own value (`lower-only`, `raise-only`, `narrow-roots`). */
 export function isMemberRelative(dotted: string): boolean {
   const rule = teamRule(dotted);
   return rule === "lower-only" || rule === "raise-only" || rule === "narrow-roots";
