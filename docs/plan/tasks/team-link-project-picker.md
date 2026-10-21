@@ -1,15 +1,16 @@
 ---
 task: team-link-project-picker
-title: "Let `golem team link` pick the portal project from a list, and re-link cleanly to another team or project"
-state: queued
+title: Let `golem team link` pick the portal project from a list, and re-link cleanly to another team or project
+state: done
 owner: agent
 size: M
 discipline: code
-design: "src/cli/commands/team.ts (bindProjectTeam, promptForOrg, chooseOrganization, the link action); src/portal/binding.ts (bindTeam, readTeamBinding, binding.project); src/portal/client.ts (me()); docs/wiki/concepts/Project Team Binding.md. Portal side: PliableSoftware/golem-portal docs/api-contract.md (Projects), docs/projects-plan.md section 12."
-gate: "`golem team link` in a TTY lists the chosen team's projects and writes team.project for the one picked; `--project <slug>` skips the prompt; a default pick writes no team.project key; re-running link against a different team replaces team.org_id and never leaves the previous team's team.project behind; a non-TTY or --json run never prompts and reports a stable state for an ambiguous or unknown project; an unreachable or older portal that lacks the projects endpoint links the team exactly as today and says the project was not chosen; tests cover each of these; golem verify exit 0."
+design: src/cli/commands/team.ts (bindProjectTeam, promptForOrg, chooseOrganization, the link action); src/portal/binding.ts (bindTeam, readTeamBinding, binding.project); src/portal/client.ts (me()); docs/wiki/concepts/Project Team Binding.md. Portal side: PliableSoftware/golem-portal docs/api-contract.md (Projects), docs/projects-plan.md section 12.
+gate: `golem team link` in a TTY lists the chosen team's projects and writes team.project for the one picked; `--project <slug>` skips the prompt; a default pick writes no team.project key; re-running link against a different team replaces team.org_id and never leaves the previous team's team.project behind; a non-TTY or --json run never prompts and reports a stable state for an ambiguous or unknown project; an unreachable or older portal that lacks the projects endpoint links the team exactly as today and says the project was not chosen; tests cover each of these; golem verify exit 0.
 depends_on: []
 touches: [src/cli, src/portal, tests, docs/wiki]
 created: 2026-10-21
+updated: 2026-10-21T23:55:24.492Z
 ---
 
 ## What this is
@@ -55,3 +56,7 @@ Running `golem team link` again is already the way to move a repo to another tea
 ## Portal side (tracked there, not here)
 
 The portal adds `GET /api/v1/orgs/{orgId}/projects` to the v1 contract: any entitled member of the team may call it (the settings and skills reads are already member-level; admin is only needed to change things), membership checked against Clerk on every request as for the other v1 routes, `403 not_a_member` indistinguishable from a missing team, `402 subscription_required` for a lapsed one. It returns the non-archived projects with `slug`, `name`, `description` and `default`. The portal will note the release in `docs/api-contract.md` and the harness reads that contract rather than this paragraph.
+
+## Outcome
+
+shipped
