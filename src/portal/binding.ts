@@ -111,7 +111,7 @@ export function isValidOrgId(orgId: string): boolean {
  * name splits unambiguously. The slug comes from a committed file, so the shape
  * is checked once here, before any path is built from it.
  */
-const PORTAL_PROJECT_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const PORTAL_PROJECT_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export function isValidPortalProjectSlug(slug: string): boolean {
   return PORTAL_PROJECT_SLUG_PATTERN.test(slug);
@@ -143,8 +143,8 @@ export function readTeamBinding(team: TeamSettings): TeamBindingState {
         ? { project }
         : {
             projectRejected:
-              `\`team.project\` is not a usable portal project name (letters, digits, hyphen and ` +
-              `underscore only, at most 64), so the default portal project applies`,
+              `\`team.project\` is not a usable portal project name (lowercase letters, digits and ` +
+              `hyphens only, at most 64), so the default portal project applies`,
           };
   return {
     kind: "linked",

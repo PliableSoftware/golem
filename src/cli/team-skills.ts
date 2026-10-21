@@ -149,7 +149,9 @@ async function writeSkillsSource(
 }
 
 function describeSkillsSource(source: SkillsSource): string {
-  return source.project === "" ? "the default portal project" : `portal project ${source.project}`;
+  const which =
+    source.project === "" ? "the default portal project" : `portal project ${source.project}`;
+  return `${which} of team ${source.org_id}`;
 }
 
 /** `golem-team-<name>`. The only place a team skill directory name is formed. */
@@ -528,6 +530,17 @@ export async function syncTeamSkills(
         `Team ${binding.orgId}: ${wanted.length} skill${wanted.length === 1 ? "" : "s"} ` +
           "could not be downloaded and are unchanged on disk.",
       );
+    } else if (bodies.project.kind === "fallback" && manifest.project.kind !== "fallback") {
+      // The manifest named this portal project but the bodies came from the
+      // default one: the two disagree, so no body is written against a manifest
+      // it does not belong to.
+      const late = warnPortalProjectOnce(bodies.project);
+      if (late !== undefined) notices.push(late);
+      notices.push(
+        `Team ${binding.orgId}: the skill contents did not come from the same portal project ` +
+          `as the list (${bodies.project.reason}), so ${wanted.length} skill` +
+          `${wanted.length === 1 ? "" : "s"} were not written. Run the sync again.`,
+      );
     } else {
       const bodyByName = new Map(bodies.entries.map((e) => [e.name, e]));
       for (const entry of wanted) {
@@ -619,7 +632,10 @@ async function handleFailure(
   const { projectDir, dryRun } = options;
   const local = await readLocal(projectDir);
 
-  if (mayUseCachedTeamLayer(disposition)) {
+  // `api_error` is not a verdict either: Golem could not tell what the portal
+  // said, so what is on disk stands. Nothing is retried and it is reported once
+  // through the outcome notice below.
+  if (mayUseCachedTeamLayer(disposition) || disposition.kind === "api_error") {
     const kept = local.filter((s) => s.content !== null).map((s) => s.name);
     const newest = local.reduce<number | null>(
       (acc, s) => (s.mtimeMs === null ? acc : acc === null ? s.mtimeMs : Math.max(acc, s.mtimeMs)),
@@ -645,10 +661,15 @@ async function handleFailure(
     // Say so rather than serve them under the new name.
     const source = await readSkillsSource(projectDir);
     const project = binding.project ?? "";
-    if (kept.length > 0 && source !== null && source.project !== project) {
+    if (
+      kept.length > 0 &&
+      source !== null &&
+      (source.project !== project || source.org_id !== binding.orgId)
+    ) {
       notices.push(
         `Team ${binding.orgId}: the installed team skills came from ${describeSkillsSource(source)}, ` +
-          `not ${project === "" ? "the default portal project" : `portal project ${project}`}. ` +
+          `not ${project === "" ? "the default portal project" : `portal project ${project}`} ` +
+          `of team ${binding.orgId}. ` +
           "They are left as they are and have not been refreshed; run `golem team skills` " +
           "again once the portal is reachable.",
       );

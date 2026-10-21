@@ -375,7 +375,11 @@ export async function readTeamLayerCache(
   }
   try {
     const parsed = teamCacheSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
+    if (!parsed.success) return null;
+    // A file at one portal project's path that says it holds another's (a
+    // copied or renamed file) must never be served as this one's.
+    if ((parsed.data.project ?? "") !== (retry.project ?? "")) return null;
+    return parsed.data;
   } catch {
     return null;
   }
@@ -395,7 +399,7 @@ export async function writeTeamLayerCache(userDir: string, cache: TeamLayerCache
 export interface TeamCacheStatus {
   readonly org_id: string;
   /** The portal project this cache is for; absent is the default portal project. */
-  readonly project?: string;
+  readonly portal_project?: string;
   readonly fetched_at: string;
   /** Whole minutes since the fetch; `null` when `fetched_at` is unparseable. */
   readonly age_minutes: number | null;
@@ -453,7 +457,7 @@ export async function listTeamLayerCaches(
     const dateable = Number.isFinite(fetchedMs);
     out.push({
       org_id: cache.org_id,
-      ...(project === "" ? {} : { project }),
+      ...(project === "" ? {} : { portal_project: project }),
       fetched_at: cache.fetched_at,
       age_minutes: dateable ? Math.max(0, Math.floor((nowMs - fetchedMs) / 60_000)) : null,
       age: dateable ? describeCacheAge(fetchedMs, nowMs) : null,
@@ -466,7 +470,9 @@ export async function listTeamLayerCaches(
   }
   // Stable order so a status snapshot diffs cleanly between runs.
   return out.sort(
-    (a, b) => a.org_id.localeCompare(b.org_id) || (a.project ?? "").localeCompare(b.project ?? ""),
+    (a, b) =>
+      a.org_id.localeCompare(b.org_id) ||
+      (a.portal_project ?? "").localeCompare(b.portal_project ?? ""),
   );
 }
 
@@ -742,23 +748,49 @@ async function stampCacheDenied(
   nowMs: number,
   project = "",
 ): Promise<string | undefined> {
-  const cache = await readTeamLayerCache(userDir, orgId, { project });
-  if (cache === null) return undefined;
+  // A verdict is about the ORGANIZATION, so it withdraws every cache of that
+  // org: the default portal project's and each named one's. Stamping only the
+  // requested file would leave another repo in the same org applying stale
+  // policy from its own file.
+  const dir = path.join(userDir, TEAM_CACHE_DIR_NAME);
+  let entries: readonly string[];
   try {
-    return await writeTeamLayerCache(userDir, {
-      ...cache,
-      denied: {
-        code: disposition.code,
-        status: disposition.status,
-        detail: disposition.detail,
-        at: new Date(nowMs).toISOString(),
-      },
-    });
+    entries = await readdir(dir);
   } catch {
-    // An unwritable cache dir cannot make the verdict wrong, and the caller has
-    // already been told the layer is not being applied.
     return undefined;
   }
+  const projects: string[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const stem = entry.slice(0, -".json".length);
+    if (stem === orgId) projects.push("");
+    else if (stem.startsWith(`${orgId}${PROJECT_CACHE_INFIX}`)) {
+      projects.push(stem.slice(orgId.length + PROJECT_CACHE_INFIX.length));
+    }
+  }
+  const stamped = new Map<string, string>();
+  for (const slug of projects) {
+    try {
+      const cache = await readTeamLayerCache(userDir, orgId, { project: slug });
+      if (cache === null) continue;
+      stamped.set(
+        slug,
+        await writeTeamLayerCache(userDir, {
+          ...cache,
+          denied: {
+            code: disposition.code,
+            status: disposition.status,
+            detail: disposition.detail,
+            at: new Date(nowMs).toISOString(),
+          },
+        }),
+      );
+    } catch {
+      // An unwritable cache dir cannot make the verdict wrong, and the caller
+      // has already been told the layer is not being applied.
+    }
+  }
+  return stamped.get(project) ?? [...stamped.values()][0];
 }
 
 /**

@@ -201,7 +201,7 @@ export interface ProjectBindingView {
    * Which portal project's data is in force and why, from the last sync's
    * record. `null` when nothing is known (never synced) or the repo is unlinked.
    */
-  readonly portalProjectState: "found" | "default" | "fallback" | null;
+  readonly portalProjectState: "found" | "default" | "fallback" | "denied" | null;
 }
 
 /**
@@ -264,7 +264,12 @@ export async function describeProjectBinding(
     const recorded = await readTeamLayerCache(userDir, binding.orgId, { project }).catch(
       () => null,
     );
-    if (recorded?.project_state !== undefined) {
+    if (recorded?.denied !== undefined) {
+      resolved = "denied";
+      which =
+        `portal project ${project} (the portal denied this team on ${recorded.denied.at}: ` +
+        `${recorded.denied.code}; its cached settings are NOT applied)`;
+    } else if (recorded?.project_state !== undefined) {
       resolved = "fallback";
       which =
         `the default portal project (portal project ${project} did not apply: ` +
@@ -586,7 +591,7 @@ export default function register(program: Command): void {
             // projects are refreshed under their own slug, never this repo's.
             if (
               cached.org_id === binding.orgId &&
-              (cached.project ?? "") === (binding.project ?? "")
+              (cached.portal_project ?? "") === (binding.project ?? "")
             )
               continue;
             // Another team's own `team.portal_url` is not knowable from here —
@@ -596,7 +601,7 @@ export default function register(program: Command): void {
             targets.push({
               orgId: cached.org_id,
               portalUrl: config.apiBaseUrl,
-              project: cached.project ?? "",
+              project: cached.portal_project ?? "",
             });
           }
         }
@@ -625,13 +630,13 @@ export default function register(program: Command): void {
           });
           results.push({
             org_id: target.orgId,
-            ...(target.project === "" ? {} : { project: target.project }),
+            ...(target.project === "" ? {} : { portal_project: target.project }),
             disposition: result.disposition.kind,
             applied: result.applied,
             skipped: result.skipped,
             from_cache: result.fromCache,
             notice: result.notice,
-            ...(result.project === undefined ? {} : { portal_project: result.project }),
+            ...(result.project === undefined ? {} : { portal_project_resolution: result.project }),
             ...(result.cacheWritten === undefined ? {} : { cache_written: result.cacheWritten }),
             ...(result.cacheDenied === undefined ? {} : { cache_denied: result.cacheDenied }),
           });
