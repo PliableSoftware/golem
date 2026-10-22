@@ -33,6 +33,17 @@ export interface WriteSettingOptions {
   readonly projectDir?: string;
   /** User config dir; defaults to `~/.golem`. */
   readonly userDir?: string;
+  /**
+   * Told when one call named the same live setting more than once (a retired key
+   * and its replacement, or two retired keys that both resolve to it) and the
+   * losing value was discarded. Never called for a single-key write.
+   */
+  readonly onShadowed?: (dropped: string, kept: string) => void;
+}
+
+/** Retired keys sort after the live key itself, then by name: a stable precedence. */
+function rank(requestedKey: string, liveKey: string): [number, string] {
+  return [requestedKey === liveKey ? 0 : 1, requestedKey];
 }
 
 /**
@@ -60,7 +71,13 @@ export async function writeSettings(
   changes: Readonly<Record<string, unknown>>,
   options: WriteSettingOptions = {},
 ): Promise<string> {
-  const planned: { key: string; section: string; leafKey: string; validated: unknown }[] = [];
+  const planned: {
+    key: string;
+    requestedKey: string;
+    section: string;
+    leafKey: string;
+    validated: unknown;
+  }[] = [];
   for (const [requestedKey, value] of Object.entries(changes)) {
     // R9.6: a retired key resolves to its replacement, so NO write path can put a
     // renamed key back into a settings file the loader would then warn about.
@@ -88,15 +105,36 @@ export async function writeSettings(
       }
       validated = parsed.data;
     }
-    planned.push({ key, section, leafKey, validated });
+    planned.push({ key, requestedKey, section, leafKey, validated });
   }
+
+  // One value per live key, whatever the object's order: the live key itself
+  // beats a retired alias, and between aliases the first by name wins. The losers
+  // are reported rather than silently overwritten.
+  const winners = new Map<string, (typeof planned)[number]>();
+  for (const entry of planned) {
+    const held = winners.get(entry.key);
+    if (held === undefined) {
+      winners.set(entry.key, entry);
+      continue;
+    }
+    const [a, b] = [rank(entry.requestedKey, entry.key), rank(held.requestedKey, held.key)];
+    const entryWins = a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1];
+    const [kept, dropped] = entryWins ? [entry, held] : [held, entry];
+    winners.set(entry.key, kept);
+    options.onShadowed?.(dropped.requestedKey, kept.requestedKey);
+  }
+  const effective = planned.filter((entry) => winners.get(entry.key) === entry);
 
   const files = settingsFilePaths(options);
   const file = files[scope];
 
+  // Nothing to change: do not read, create or rewrite the file.
+  if (effective.length === 0) return file;
+
   const existing = await readExisting(file);
   const root = existing.root;
-  for (const { section, leafKey, validated } of planned) {
+  for (const { section, leafKey, validated } of effective) {
     const sectionValue = root[section];
     if (sectionValue !== undefined && !isPlainObject(sectionValue)) {
       throw new ConfigError(

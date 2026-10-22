@@ -125,4 +125,89 @@ describe("client.projects", () => {
     await c.projects("org_abc");
     expect(signal).toBeInstanceOf(AbortSignal);
   });
+
+  it("starts the list budget after the token refresh, so a slow refresh cannot spend it", async () => {
+    const expired: PortalTokenSet = { ...TOKENS, expires_at: 500 };
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: { ...store, read: async () => expired },
+      now: () => 1_000,
+      fetchImpl: async (url, init) => {
+        init?.signal?.throwIfAborted(); // as a real fetch does
+        if (url === META.token_endpoint) {
+          await new Promise((r) => setTimeout(r, 120)); // slower than the 60 ms list budget
+          return json(200, { access_token: "at-2", token_type: "Bearer", refresh_token: "rt-2" });
+        }
+        return json(200, { projects: [] });
+      },
+    });
+    await expect(c.projects("org_abc", 60)).resolves.toEqual([]);
+  });
+
+  it("a 401 then a refresh slower than the budget: the retry still gets a fresh budget", async () => {
+    let listCalls = 0;
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: store,
+      now: () => 1_000,
+      fetchImpl: async (url, init) => {
+        init?.signal?.throwIfAborted();
+        if (url === META.token_endpoint) {
+          await new Promise((r) => setTimeout(r, 120));
+          return json(200, { access_token: "at-2", token_type: "Bearer", refresh_token: "rt-2" });
+        }
+        listCalls += 1;
+        return listCalls === 1 ? json(401, {}) : json(200, { projects: [] });
+      },
+    });
+    await expect(c.projects("org_abc", 60)).resolves.toEqual([]);
+    expect(listCalls).toBe(2);
+  });
+
+  it("a failed refresh and re-link stays not_linked, never rewritten as a timeout", async () => {
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: store,
+      now: () => 1_000,
+      fetchImpl: async (url) => {
+        if (url === META.token_endpoint) {
+          await new Promise((r) => setTimeout(r, 120));
+          return json(400, { error: "invalid_grant" });
+        }
+        return json(401, {});
+      },
+    });
+    await expect(c.projects("org_abc", 60)).rejects.toMatchObject({ kind: "not_linked" });
+  });
+  it("a slow re-link that fails after a 401 retry is never rewritten as a timeout", async () => {
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: store,
+      now: () => 1_000,
+      reauthorize: async () => {
+        await new Promise((r) => setTimeout(r, 120));
+        throw new Error("browser sign-in cancelled");
+      },
+      fetchImpl: async (url) => {
+        if (url === META.token_endpoint) {
+          return json(200, { access_token: "at-2", token_type: "Bearer", refresh_token: "rt-2" });
+        }
+        return json(401, {});
+      },
+    });
+    const err = await c.projects("org_abc", 60).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeDefined();
+    expect(String((err as Error).message)).not.toContain("timed out");
+  });
 });
