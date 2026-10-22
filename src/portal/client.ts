@@ -330,7 +330,6 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       //
       // The budget is armed just before each send, not on entry: a slow token
       // refresh (or re-link) is not the list's fault and must not spend it.
-      let controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       let fired = false;
       const disarm = () => clearTimeout(timer);
@@ -338,7 +337,6 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
         disarm();
         fired = false;
         const own = new AbortController();
-        controller = own;
         timer = setTimeout(() => {
           fired = true;
           own.abort();
