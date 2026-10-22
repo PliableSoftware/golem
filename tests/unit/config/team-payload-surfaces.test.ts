@@ -58,7 +58,28 @@ describe("refused team values are not in the object handed to surfaces", () => {
       ]),
     );
     expect(JSON.stringify(c.team)).not.toContain(CANARY);
-    expect(JSON.stringify(c.team.teamLayer?.settings)).toContain("pet");
+    // The accepted value is in force through settings, not through the payload.
+    expect(c.settings.ui.pet).toBe(false);
+    expect(c.provenance["ui.pet"]?.layer).toBe("team");
+  });
+
+  it("the resolved object carries no raw team payload at any depth", async () => {
+    const p = await fixture();
+    const c = await loadEffectiveConfig({ ...p, env: {} });
+    expect("teamLayer" in c.team).toBe(false);
+    expect(c.team.layerLoaded).toBe(true);
+    const seen = new Set<unknown>();
+    const keys: string[] = [];
+    const walk = (v: unknown): void => {
+      if (v === null || typeof v !== "object" || seen.has(v)) return;
+      seen.add(v);
+      for (const [k, child] of Object.entries(v)) {
+        keys.push(k);
+        walk(child);
+      }
+    };
+    walk(c);
+    expect(keys).not.toContain("teamLayer");
   });
 
   it("no CLI, status or control-surface output serialises one", async () => {
@@ -79,7 +100,7 @@ describe("refused team values are not in the object handed to surfaces", () => {
 });
 
 describe("who may read the raw team payload", () => {
-  it("only the config, portal and proxy-daemon code touches `.teamLayer`", async () => {
+  it("only the config and portal code touches `.teamLayer`", async () => {
     const src = path.resolve(__dirname, "../../../src");
     const walk = async (dir: string): Promise<string[]> => {
       const out: string[] = [];
@@ -96,12 +117,7 @@ describe("who may read the raw team payload", () => {
       if (/\.teamLayer\b/.test(await readFile(f, "utf8"))) readers.push(rel);
     }
     expect(readers.sort()).toEqual(
-      [
-        "cli/commands/proxy.ts",
-        "config/effective.ts",
-        "config/loader.ts",
-        "portal/team-layer.ts",
-      ].sort(),
+      ["config/effective.ts", "config/loader.ts", "portal/team-layer.ts"].sort(),
     );
   });
 });

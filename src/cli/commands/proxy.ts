@@ -212,7 +212,7 @@ async function runProxyForeground(dir: string, portOpt?: string, shim = false): 
     proxyLog(warning);
   }
   // A notice for a team that is NOT applied is already in `warnings`.
-  if (team.teamLayer !== undefined && team.notice !== undefined) {
+  if (team.layerLoaded && team.notice !== undefined) {
     proxyLog(`golem team: ${team.notice}`);
   }
   const { port } = await resolvePort(dir, portOpt);
