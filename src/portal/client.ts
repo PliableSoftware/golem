@@ -350,7 +350,16 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
         response = await request(
           `/api/v1/orgs/${encodeURIComponent(orgId)}/projects`,
           {},
-          { arm, disarm },
+          // A stage that follows a send starts with a clean slate: a timer that
+          // fired while an ignoring fetch was in flight must not colour the
+          // refresh or re-link outcome that comes next.
+          {
+            arm,
+            disarm: () => {
+              disarm();
+              fired = false;
+            },
+          },
         );
       } catch (err) {
         disarm();

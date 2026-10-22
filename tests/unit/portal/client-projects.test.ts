@@ -185,4 +185,29 @@ describe("client.projects", () => {
     });
     await expect(c.projects("org_abc", 60)).rejects.toMatchObject({ kind: "not_linked" });
   });
+  it("a slow re-link that fails after a 401 retry is never rewritten as a timeout", async () => {
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: store,
+      now: () => 1_000,
+      reauthorize: async () => {
+        await new Promise((r) => setTimeout(r, 120));
+        throw new Error("browser sign-in cancelled");
+      },
+      fetchImpl: async (url) => {
+        if (url === META.token_endpoint) {
+          return json(200, { access_token: "at-2", token_type: "Bearer", refresh_token: "rt-2" });
+        }
+        return json(401, {});
+      },
+    });
+    const err = await c.projects("org_abc", 60).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeDefined();
+    expect(String((err as Error).message)).not.toContain("timed out");
+  });
 });
