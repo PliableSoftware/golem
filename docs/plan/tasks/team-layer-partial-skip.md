@@ -3,6 +3,7 @@ task: team-layer-partial-skip
 title: "One invalid team value skips the whole team layer: decide whether the valid keys should still apply"
 state: queued
 owner: user
+blocked: "Waiting on a user decision recorded in ADR-0008: keep whole-layer skip, or apply the valid keys."
 size: S
 discipline: plan
 design: "ADR-0008, 'Amended 2026-10-08 (DUST2.3; DECISIONS.md G2, USER decision)'. Code: buildTeamOrigin in src/config/loader.ts. An invalid team value logs 'team layer SKIPPED: nothing from it applies, and the proxy still starts' and the whole layer is dropped."
