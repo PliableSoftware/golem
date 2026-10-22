@@ -125,4 +125,24 @@ describe("client.projects", () => {
     await c.projects("org_abc");
     expect(signal).toBeInstanceOf(AbortSignal);
   });
+
+  it("starts the list budget after the token refresh, so a slow refresh cannot spend it", async () => {
+    const expired: PortalTokenSet = { ...TOKENS, expires_at: 500 };
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: { ...store, read: async () => expired },
+      now: () => 1_000,
+      fetchImpl: async (url, init) => {
+        init?.signal?.throwIfAborted(); // as a real fetch does
+        if (url === META.token_endpoint) {
+          await new Promise((r) => setTimeout(r, 120)); // slower than the 60 ms list budget
+          return json(200, { access_token: "at-2", token_type: "Bearer", refresh_token: "rt-2" });
+        }
+        return json(200, { projects: [] });
+      },
+    });
+    await expect(c.projects("org_abc", 60)).resolves.toEqual([]);
+  });
 });

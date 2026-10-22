@@ -42,4 +42,33 @@ describe("writeSettings", () => {
     ).rejects.toThrow(/team\.project/);
     expect(await readFile(file, "utf8")).toBe(before);
   });
+
+  it("a retired key and its live replacement in one call write one deterministic value", async () => {
+    for (const changes of [
+      { "proxy.default_target": "old-model", "inference.model": "new-model" },
+      { "inference.model": "new-model", "proxy.default_target": "old-model" },
+    ]) {
+      const projectDir = await newTempDir();
+      await writeSettings("project", changes, { projectDir });
+      const text = await readFile(path.join(projectDir, ".golem", "settings.json"), "utf8");
+      // The live key wins whatever the object order, and the retired key never lands.
+      expect(JSON.parse(text)).toEqual({ inference: { model: "new-model" } });
+    }
+  });
+
+  it("empty changes neither create nor rewrite the file", async () => {
+    const fresh = await newTempDir();
+    await writeSettings("project", {}, { projectDir: fresh });
+    await expect(readFile(path.join(fresh, ".golem", "settings.json"), "utf8")).rejects.toThrow(
+      /ENOENT/,
+    );
+
+    const projectDir = await newTempDir();
+    await mkdir(path.join(projectDir, ".golem"), { recursive: true });
+    const file = path.join(projectDir, ".golem", "settings.json");
+    const odd = '{"team":   {"org_id":"x"}}'; // would be reformatted by a rewrite
+    await writeFile(file, odd);
+    await writeSettings("project", {}, { projectDir });
+    expect(await readFile(file, "utf8")).toBe(odd);
+  });
 });

@@ -252,7 +252,12 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
   // Declared as a function rather than a method so `me()` can call it without
   // depending on `this` — a destructured `const { me } = client` would otherwise
   // throw, and that is exactly how a client gets passed to a helper.
-  async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  async function request(
+    path: string,
+    init: RequestInit = {},
+    /** Called immediately before each send, i.e. after any token renewal. */
+    beforeSend?: () => void,
+  ): Promise<Response> {
     let tokens = await current();
 
     // A token we already know is expired should not be spent on a doomed
@@ -264,6 +269,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       if (renewed !== null) tokens = renewed;
     }
 
+    beforeSend?.();
     let response = await send(path, init, tokens);
     if (response.status !== 401) return response;
 
@@ -273,6 +279,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       const renewed = await tryRefresh(tokens);
       if (renewed !== null) {
         tokens = renewed;
+        beforeSend?.();
         response = await send(path, init, tokens);
         if (response.status !== 401) return response;
       }
@@ -288,6 +295,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
         401,
       );
     }
+    beforeSend?.();
     response = await send(path, init, relinked);
     if (response.status === 401) {
       throw new PortalAuthError(
@@ -314,19 +322,32 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       // A list nobody answers must not hold the team link hostage: the bound
       // covers the response body too, and the ending is an error the caller
       // reports as "list unavailable".
-      const signal = AbortSignal.timeout(timeoutMs);
+      //
+      // The budget is armed just before each send, not on entry: a slow token
+      // refresh (or re-link) is not the list's fault and must not spend it.
+      const controller = new AbortController();
+      const signal = controller.signal;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const arm = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => controller.abort(), timeoutMs);
+      };
       const timedOut = () =>
         new PortalAuthError("api_error", `the portal project list timed out after ${timeoutMs} ms`);
       let response: Response;
       try {
-        response = await request(`/api/v1/orgs/${encodeURIComponent(orgId)}/projects`, {
-          signal,
-        });
+        response = await request(
+          `/api/v1/orgs/${encodeURIComponent(orgId)}/projects`,
+          { signal },
+          arm,
+        );
       } catch (err) {
+        clearTimeout(timer);
         if (signal.aborted) throw timedOut();
         throw err;
       }
       if (!response.ok) {
+        clearTimeout(timer);
         throw new PortalAuthError(
           "api_error",
           `GET /api/v1/orgs/${orgId}/projects answered ${response.status}`,
@@ -339,6 +360,8 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       } catch {
         if (signal.aborted) throw timedOut();
         throw new PortalAuthError("api_error", "the portal project list did not return JSON");
+      } finally {
+        clearTimeout(timer);
       }
       const envelope = portalProjectsSchema.safeParse(payload);
       if (!envelope.success) {
