@@ -53,15 +53,24 @@ export interface LoadEffectiveConfigOptions extends LoadConfigOptions {
   readonly now?: () => number;
 }
 
+/**
+ * {@link TeamLayerResolution} as surfaces see it: the reported fields only, never
+ * the raw payload. `layerLoaded` says a team layer was read; it is false when the loader could not be given one.
+ */
+export type TeamResolution = Omit<TeamLayerResolution, "teamLayer"> & {
+  readonly layerLoaded: boolean;
+};
+
 export interface EffectiveConfig extends GolemConfig {
   /** How the team layer resolved. Always present; usually "nothing applies". */
-  readonly team: TeamLayerResolution;
+  readonly team: TeamResolution;
   /** Set when the team layer could not be applied for a reason other than an invalid value. */
   readonly teamFailure?: string;
 }
 
 /** Nothing applies, and nothing was touched to find out. */
-const UNLINKED: TeamLayerResolution = Object.freeze({
+const UNLINKED: TeamResolution = Object.freeze({
+  layerLoaded: false,
   fromCache: false,
   applied: [],
   skipped: [],
@@ -100,13 +109,13 @@ export async function loadEffectiveConfig(
     return {
       ...first,
       warnings: team.notice === undefined ? first.warnings : [...first.warnings, team.notice],
-      team,
+      team: forSurfaces(team),
     };
   }
 
   try {
     const second = await loadConfig({ ...loadOptions, teamLayer: team.teamLayer });
-    return { ...second, team: withoutRefusedValues(reconcile(team, second), second.refused) };
+    return { ...second, team: forSurfaces(reconcile(team, second)) };
   } catch (err) {
     return degraded(first, team, err, "applying the team layer failed");
   }
@@ -151,38 +160,17 @@ function reconcile(team: TeamLayerResolution, loaded: GolemConfig): TeamLayerRes
 }
 
 /**
- * Surfaces receive `team` whole, and `team.teamLayer.settings` is the team's raw
- * payload, so a refused value (a denied key's URL or prompt) used to travel with
- * it. Nothing serialises it today (tests/unit/config/team-payload-surfaces.test.ts
- * probes every surface), but "nobody happens to print it" is not a guarantee, so
- * the refused keys are dropped from the object handed out.
+ * Surfaces receive `team` whole, and the team's raw payload
+ * (`TeamLayerResolution.teamLayer.settings`) can hold a refused value (a denied
+ * key's URL or prompt). Nothing serialises it today
+ * (tests/unit/config/team-payload-surfaces.test.ts probes every surface), but
+ * "nobody happens to print it" is not a guarantee, so the payload never leaves
+ * this module: `loadConfig` gets it by its own `teamLayer` option and the handed-out
+ * resolution keeps only the reported fields plus {@link TeamResolution.layerLoaded}.
  */
-function withoutRefusedValues(
-  team: TeamLayerResolution,
-  refused: readonly string[],
-): TeamLayerResolution {
-  const layer = team.teamLayer;
-  if (layer === undefined) return team;
-  // Refused keys lose their value; a never-enforced key also loses its stale
-  // "!important" entry (the loader already ignored it).
-  const drop = new Set(refused);
-  const unpinned = REMOTE_NEVER_ENFORCED;
-  const settings: Record<string, unknown> = {};
-  for (const [section, value] of Object.entries(layer.settings as Record<string, unknown>)) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      settings[section] =
-        section === "!important" && Array.isArray(value)
-          ? value.filter((k) => typeof k !== "string" || !(drop.has(k) || unpinned.has(k)))
-          : value;
-      continue;
-    }
-    settings[section] = Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).filter(
-        ([k]) => !drop.has(`${section}.${k}`),
-      ),
-    );
-  }
-  return { ...team, teamLayer: { ...layer, settings: settings as typeof layer.settings } };
+function forSurfaces(team: TeamLayerResolution): TeamResolution {
+  const { teamLayer, ...rest } = team;
+  return { ...rest, layerLoaded: teamLayer !== undefined };
 }
 
 let announced = false;
@@ -220,6 +208,7 @@ function degraded(
     ...first,
     warnings: [...first.warnings, message],
     team: {
+      layerLoaded: false,
       fromCache: team.fromCache,
       applied: [],
       skipped: [],

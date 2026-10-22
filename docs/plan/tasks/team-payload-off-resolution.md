@@ -1,15 +1,16 @@
 ---
 task: team-payload-off-resolution
-title: "Stop carrying the raw team payload on the config resolution object"
-state: queued
+title: Stop carrying the raw team payload on the config resolution object
+state: done
 owner: agent
 size: S
 discipline: code
-design: "DUST2.22 (#318) 'Raw team payload (B), follow-up' in docs/plan/tasks/DUST2.22.md; withoutRefusedValues in src/config/effective.ts; tests/unit/config/team-payload-surfaces.test.ts"
-gate: "`team.teamLayer.settings` is no longer present on the object `loadEffectiveConfig` hands to surfaces; `loadConfig` receives the team layer by a separate channel; the surface-scan test (team-payload-surfaces) still passes and pins the new reader list; a test fails on the old code if the raw payload is reachable from the resolved object; no behaviour change for any accepted or refused team value; golem verify green by exit code."
+design: DUST2.22 (#318) 'Raw team payload (B), follow-up' in docs/plan/tasks/DUST2.22.md; withoutRefusedValues in src/config/effective.ts; tests/unit/config/team-payload-surfaces.test.ts
+gate: `team.teamLayer.settings` is no longer present on the object `loadEffectiveConfig` hands to surfaces; `loadConfig` receives the team layer by a separate channel; the surface-scan test (team-payload-surfaces) still passes and pins the new reader list; a test fails on the old code if the raw payload is reachable from the resolved object; no behaviour change for any accepted or refused team value; golem verify green by exit code.
 depends_on: []
 touches: [src/config, tests]
 created: 2026-10-15
+updated: 2026-10-22T04:25:59.149Z
 ---
 
 ## What this is
@@ -25,3 +26,7 @@ resolution at all and pass the layer to `loadConfig` by a separate channel.
 
 - Changing which team values are accepted or refused.
 - Per-persona team prompts.
+
+## Outcome
+
+shipped
