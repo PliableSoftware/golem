@@ -47,6 +47,23 @@ describe("team rule in the published schema", () => {
     }
   });
 
+  it("publishes exact rules for one key per class (not derived from teamRule)", () => {
+    const rule = (id: string) => settings().find((c) => c.id === `setting:${id}`)?.teamRule;
+    expect(rule("proxy.bypass_all")).toBe("denied");
+    expect(rule("security.write_lan")).toBe("false-only");
+    expect(rule("snooze.enforce")).toBe("true-only");
+    expect(rule("security.unlock_window_minutes")).toBe("lower-only");
+    expect(rule("knowledge.local_answer_min_confidence")).toBe("raise-only");
+    expect(rule("security.origination_roots")).toBe("narrow-roots");
+    expect(rule("inference.team_prompt")).toBe("bounded-text");
+    expect(rule("models.catalog_max_age_days")).toBe("settable");
+  });
+
+  it("flags the one key a team may set but never enforce", () => {
+    const flagged = settings().filter((c) => c.teamEnforceable === false);
+    expect(flagged.map((c) => c.id)).toEqual(["setting:inference.team_prompt"]);
+  });
+
   it("non-setting controls (guidance, runtime) carry no rule", () => {
     const others = controls.filter((c) => c.family !== "setting");
     expect(others.length).toBeGreaterThan(0);
@@ -59,11 +76,8 @@ describe("team rule in the published schema", () => {
   it("bounded-text carries its bound from the existing constant, and only it does", () => {
     const team = settings().find((c) => c.id === "setting:inference.team_prompt");
     expect(team?.teamRule).toBe("bounded-text");
-    expect(team?.teamBound).toEqual({
-      maxChars: TEAM_PROMPT_MAX_CHARS,
-      controlChars: false,
-      urls: false,
-    });
+    // Only the length: the client refuses much more, and allows tab and newline.
+    expect(team?.teamBound).toEqual({ maxChars: TEAM_PROMPT_MAX_CHARS });
     for (const c of settings().filter((x) => x.teamRule !== "bounded-text")) {
       expect(c.teamBound, c.id).toBeUndefined();
     }
