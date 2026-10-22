@@ -83,6 +83,9 @@ function fakeClient(handler: (path: string, init?: RequestInit) => Response | Pr
     me: async () => {
       throw new Error("me() is not part of the team-layer path");
     },
+    projects: async () => {
+      throw new Error("projects() is not part of this path");
+    },
     stats: { requests: 0, refreshAttempts: 0, reauthorizations: 0 },
   };
   return { client, request };

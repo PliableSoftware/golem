@@ -189,7 +189,7 @@ export interface TranslatedTeamLayer {
  *    translated like any other key and handed to the loader, which refuses it
  *    LOUDLY as a remote origin's key. A row the team policy refuses is listed in
  *    `skipped` as REFUSED and left out of `applied`; the relative rules
- *    (lower-only, narrow-roots) need the member's own value and are finished by
+ *    (lower-only, raise-only, narrow-roots) need the member's own value and are finished by
  *    the loader, which reports them in `GolemConfig.refused`.
  *
  * A later row wins over an earlier one for the same key: the wire is a list and
@@ -265,7 +265,7 @@ export function translateTeamRows(rows: readonly TeamSettingRow[]): TranslatedTe
       continue;
     }
     // `applied` means "passed the STATIC policy". The member-relative rules
-    // (lower-only, narrow-roots) are judged at load against the member's own
+    // (lower-only, raise-only, narrow-roots) are judged at load against the member's own
     // value, so those rows are marked pending rather than claimed.
     const label = `${key}${effectivelyEnforced(key, row.enforced) ? " (enforced)" : ""}${isMemberRelative(key) ? PENDING_SUFFIX : ""}`;
     if (!applied.includes(label)) applied.push(label);
