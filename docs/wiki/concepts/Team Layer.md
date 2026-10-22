@@ -347,6 +347,35 @@ have hit it on every member's machine.
 validates team settings against it — so a value the portal accepted cannot be
 rejected on a developer's machine, and the portal carries no copy to drift.
 
+### The published `teamRule` field
+
+Each SETTING control in `config-schema.json` carries `teamRule`, so the portal can tell an
+admin at the point of saving what the client will do with the value. It is an additive
+optional field next to `writableScopes` and `locked`; a consumer that ignores it keeps
+working, and a schema without it (an older release) means "unknown", not "settable".
+
+```json
+{ "id": "setting:inference.team_prompt", "family": "setting", "teamRule": "bounded-text",
+  "teamBound": { "maxChars": 2000, "controlChars": false, "urls": false } }
+```
+
+- **Values**: `settable | false-only | true-only | lower-only | raise-only | narrow-roots |
+  bounded-text | denied`, the classes in the table above.
+- **Derived, never restated**: the value is `teamRule(dotted)` from `TEAM_POLICY`;
+  `tests/unit/config/team-rule-in-schema.test.ts` fails if a setting control lacks it or
+  differs. A leaf missing from the table is a compile error, so the published field is
+  total too.
+- **Member-relative rules publish only the direction.** `lower-only`, `raise-only` and
+  `narrow-roots` are judged at load against the member's own value, which the portal never
+  has. The portal can say "a team may only lower this" but cannot validate a number; do not
+  pretend to.
+- **`teamBound`** appears only with `bounded-text`; `maxChars` is `TEAM_PROMPT_MAX_CHARS`
+  (code points). No other control carries it.
+- **Guidance and runtime controls carry neither field.**
+- **Not authoritative on the client.** The compiled-in table decides; the schema field is a
+  courtesy. `version` is the only schema version; the field's name and shape are a published
+  contract, so changing them is a breaking change for the portal.
+
 The portal never down-converts for an older client: it serves the layer as
 written plus the migrations between versions, and the client applies what it
 understands and reports the rest. A wrong value delivered confidently is worse
