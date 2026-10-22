@@ -1,0 +1,85 @@
+/**
+ * The published schema carries each setting's team rule, read through
+ * `teamRule()` so the table is never written twice. The portal fetches this
+ * artifact per release; the field name and shape are a published contract.
+ */
+
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
+import { schemaPayload } from "../../../src/cli/commands/config.js";
+import { collectControlSurface, type Control } from "../../../src/config/control-surface.js";
+import { TEAM_PROMPT_MAX_CHARS, TEAM_POLICY, teamRule } from "../../../src/config/team-policy.js";
+import { useTempDirs } from "../../helpers/tmp.js";
+
+const newTempDir = useTempDirs("golem-team-rule-schema-");
+let controls: Control[];
+
+beforeEach(async () => {
+  const base = await newTempDir();
+  const projectDir = path.join(base, "project");
+  await mkdir(path.join(projectDir, ".golem"), { recursive: true });
+  await writeFile(path.join(projectDir, ".golem", "settings.json"), "{}", "utf8");
+  const surface = await collectControlSurface({
+    projectDir,
+    userDir: path.join(base, "user"),
+    version: "9.9.9-test",
+    env: {},
+  });
+  const published = schemaPayload(surface, false);
+  controls = published.groups.flatMap((g) => [...g.controls]);
+});
+
+const settings = () => controls.filter((c) => c.family === "setting");
+
+describe("team rule in the published schema", () => {
+  it("every setting control carries a rule equal to teamRule(dotted)", () => {
+    expect(settings().length).toBeGreaterThan(50);
+    for (const c of settings()) {
+      const dotted = c.id.slice("setting:".length);
+      expect(c.teamRule, dotted).toBe(teamRule(dotted));
+    }
+  });
+
+
+  it("non-setting controls (guidance, runtime) carry no rule", () => {
+    const others = controls.filter((c) => c.family !== "setting");
+    expect(others.length).toBeGreaterThan(0);
+    for (const c of others) {
+      expect(c.teamRule, c.id).toBeUndefined();
+      expect(c.teamBound, c.id).toBeUndefined();
+    }
+  });
+
+  it("bounded-text carries its bound from the existing constant, and only it does", () => {
+    const team = settings().find((c) => c.id === "setting:inference.team_prompt");
+    expect(team?.teamRule).toBe("bounded-text");
+    expect(team?.teamBound).toEqual({
+      maxChars: TEAM_PROMPT_MAX_CHARS,
+      controlChars: false,
+      urls: false,
+    });
+    for (const c of settings().filter((x) => x.teamRule !== "bounded-text")) {
+      expect(c.teamBound, c.id).toBeUndefined();
+    }
+  });
+
+  it("publishes the direction for member-relative rules, with no value", () => {
+    const byRule = (r: string) => settings().filter((c) => c.teamRule === r);
+    expect(byRule("lower-only").length).toBeGreaterThan(0);
+    expect(byRule("raise-only").map((c) => c.id)).toContain(
+      "setting:knowledge.local_answer_min_confidence",
+    );
+    expect(byRule("narrow-roots").map((c) => c.id)).toEqual(["setting:security.origination_roots"]);
+    for (const c of [...byRule("lower-only"), ...byRule("raise-only"), ...byRule("narrow-roots")]) {
+      expect(c.teamBound, c.id).toBeUndefined();
+    }
+  });
+
+  it("is additive: the published JSON keeps its existing fields", () => {
+    const c = settings()[0] as Control;
+    for (const k of ["id", "family", "kind", "writableScopes", "layer", "advanced"]) {
+      expect(c, k).toHaveProperty(k);
+    }
+  });
+});
