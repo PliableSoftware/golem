@@ -71,4 +71,15 @@ describe("writeSettings", () => {
     await writeSettings("project", {}, { projectDir });
     expect(await readFile(file, "utf8")).toBe(odd);
   });
+
+  it("reports the losing key through onShadowed as (dropped, kept)", async () => {
+    const projectDir = await newTempDir();
+    const seen: [string, string][] = [];
+    await writeSettings(
+      "project",
+      { "proxy.default_target": "old-model", "inference.model": "new-model" },
+      { projectDir, onShadowed: (dropped, kept) => seen.push([dropped, kept]) },
+    );
+    expect(seen).toEqual([["proxy.default_target", "inference.model"]]);
+  });
 });

@@ -255,8 +255,12 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
   async function request(
     path: string,
     init: RequestInit = {},
-    /** Called immediately before each send, i.e. after any token renewal. */
-    beforeSend?: () => void,
+    /**
+     * A per-send time budget: `arm` returns a FRESH signal immediately before a
+     * send, and `disarm` runs before any refresh or re-link, so those steps
+     * never spend it and an aborted signal never leaks into a retry.
+     */
+    budget?: { arm: () => AbortSignal; disarm: () => void },
   ): Promise<Response> {
     let tokens = await current();
 
@@ -269,23 +273,25 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       if (renewed !== null) tokens = renewed;
     }
 
-    beforeSend?.();
-    let response = await send(path, init, tokens);
+    const sendInit = (): RequestInit =>
+      budget === undefined ? init : { ...init, signal: budget.arm() };
+    let response = await send(path, sendInit(), tokens);
     if (response.status !== 401) return response;
 
     // Rung 1: exactly one refresh — unless the pre-emptive renewal above
     // already spent it.
+    budget?.disarm();
     if (stats.refreshAttempts === 0) {
       const renewed = await tryRefresh(tokens);
       if (renewed !== null) {
         tokens = renewed;
-        beforeSend?.();
-        response = await send(path, init, tokens);
+        response = await send(path, sendInit(), tokens);
         if (response.status !== 401) return response;
       }
     }
 
     // Rung 2: the full flow, once.
+    budget?.disarm();
     const relinked = await tryReauthorize();
     if (relinked === null) {
       throw new PortalAuthError(
@@ -295,8 +301,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
         401,
       );
     }
-    beforeSend?.();
-    response = await send(path, init, relinked);
+    response = await send(path, sendInit(), relinked);
     if (response.status === 401) {
       throw new PortalAuthError(
         "not_linked",
@@ -325,12 +330,20 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       //
       // The budget is armed just before each send, not on entry: a slow token
       // refresh (or re-link) is not the list's fault and must not spend it.
-      const controller = new AbortController();
-      const signal = controller.signal;
+      let controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let fired = false;
+      const disarm = () => clearTimeout(timer);
       const arm = () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => controller.abort(), timeoutMs);
+        disarm();
+        fired = false;
+        const own = new AbortController();
+        controller = own;
+        timer = setTimeout(() => {
+          fired = true;
+          own.abort();
+        }, timeoutMs);
+        return own.signal;
       };
       const timedOut = () =>
         new PortalAuthError("api_error", `the portal project list timed out after ${timeoutMs} ms`);
@@ -338,12 +351,14 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       try {
         response = await request(
           `/api/v1/orgs/${encodeURIComponent(orgId)}/projects`,
-          { signal },
-          arm,
+          {},
+          { arm, disarm },
         );
       } catch (err) {
-        clearTimeout(timer);
-        if (signal.aborted) throw timedOut();
+        disarm();
+        // Only a budget that actually expired is a timeout: a refresh or re-link
+        // failure (disarmed beforehand) keeps its own error.
+        if (fired) throw timedOut();
         throw err;
       }
       if (!response.ok) {
@@ -358,7 +373,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       try {
         payload = await response.json();
       } catch {
-        if (signal.aborted) throw timedOut();
+        if (fired) throw timedOut();
         throw new PortalAuthError("api_error", "the portal project list did not return JSON");
       } finally {
         clearTimeout(timer);

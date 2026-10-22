@@ -145,4 +145,44 @@ describe("client.projects", () => {
     });
     await expect(c.projects("org_abc", 60)).resolves.toEqual([]);
   });
+
+  it("a 401 then a refresh slower than the budget: the retry still gets a fresh budget", async () => {
+    let listCalls = 0;
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: store,
+      now: () => 1_000,
+      fetchImpl: async (url, init) => {
+        init?.signal?.throwIfAborted();
+        if (url === META.token_endpoint) {
+          await new Promise((r) => setTimeout(r, 120));
+          return json(200, { access_token: "at-2", token_type: "Bearer", refresh_token: "rt-2" });
+        }
+        listCalls += 1;
+        return listCalls === 1 ? json(401, {}) : json(200, { projects: [] });
+      },
+    });
+    await expect(c.projects("org_abc", 60)).resolves.toEqual([]);
+    expect(listCalls).toBe(2);
+  });
+
+  it("a failed refresh and re-link stays not_linked, never rewritten as a timeout", async () => {
+    const c = createPortalClient({
+      apiBaseUrl: API,
+      clientId: "client_abc",
+      metadata: async () => META,
+      tokens: store,
+      now: () => 1_000,
+      fetchImpl: async (url) => {
+        if (url === META.token_endpoint) {
+          await new Promise((r) => setTimeout(r, 120));
+          return json(400, { error: "invalid_grant" });
+        }
+        return json(401, {});
+      },
+    });
+    await expect(c.projects("org_abc", 60)).rejects.toMatchObject({ kind: "not_linked" });
+  });
 });
