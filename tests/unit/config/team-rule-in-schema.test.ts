@@ -8,8 +8,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { schemaPayload } from "../../../src/cli/commands/config.js";
-import { collectControlSurface, type Control } from "../../../src/config/control-surface.js";
-import { TEAM_PROMPT_MAX_CHARS, TEAM_POLICY, teamRule } from "../../../src/config/team-policy.js";
+import { type Control, collectControlSurface } from "../../../src/config/control-surface.js";
+import { TEAM_POLICY, TEAM_PROMPT_MAX_CHARS, teamRule } from "../../../src/config/team-policy.js";
 import { useTempDirs } from "../../helpers/tmp.js";
 
 const newTempDir = useTempDirs("golem-team-rule-schema-");
@@ -41,6 +41,11 @@ describe("team rule in the published schema", () => {
     }
   });
 
+  it("every published setting is classified in TEAM_POLICY (no silent default-deny fallback)", () => {
+    for (const c of settings()) {
+      expect(Object.hasOwn(TEAM_POLICY, c.id.slice("setting:".length)), c.id).toBe(true);
+    }
+  });
 
   it("non-setting controls (guidance, runtime) carry no rule", () => {
     const others = controls.filter((c) => c.family !== "setting");

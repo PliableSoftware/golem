@@ -4,6 +4,7 @@
 import type { GuidanceScope } from "../hooks/guidance.js";
 import { ConfigError } from "./errors.js";
 import { type LayerName, ORIGIN_ORDER } from "./loader.js";
+import type { TeamRule } from "./team-policy.js";
 import { type SettingKind, settingMeta } from "./ui-model.js";
 import type { SettingsScope } from "./write-setting.js";
 
@@ -46,6 +47,28 @@ export interface Control {
   /** What must restart before the change takes effect. */
   readonly restart?: "proxy" | "mcp";
   readonly advanced: boolean;
+  /**
+   * PUBLISHED CONTRACT (additive, setting controls only): what a team origin may
+   * do with this key, read from `TEAM_POLICY` via `teamRule()`, never restated.
+   * One of `settable | false-only | true-only | lower-only | raise-only |
+   * narrow-roots | bounded-text | denied`. `lower-only`, `raise-only` and
+   * `narrow-roots` are member-relative: only the DIRECTION is published, because
+   * judging them needs the member's own value, which the portal never has. The
+   * client's compiled-in table stays the authority; this is a courtesy so an admin
+   * is told at the point of saving. Absent on guidance and runtime controls.
+   */
+  readonly teamRule?: TeamRule;
+  /** Present only with `teamRule: "bounded-text"`: the limits the client enforces. */
+  readonly teamBound?: TeamBound;
+}
+/** The bound a `bounded-text` team value must respect (`team-prompt-rules.ts`). */
+export interface TeamBound {
+  /** Longest value, in code points. */
+  readonly maxChars: number;
+  /** Always false: control characters are refused. */
+  readonly controlChars: false;
+  /** Always false: a URL is refused. */
+  readonly urls: false;
 }
 export interface ControlGroup {
   /** `settings:<section>`, `guidance`, or `runtime`. */
