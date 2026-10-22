@@ -94,6 +94,10 @@ function _fail(err: unknown): never {
  * `warnings` (complaints about the local settings files). `version` is carried
  * explicitly because the portal caches these by version.
  *
+ * Consumer notes: each setting control carries `teamRule` (and `teamBound` for
+ * `bounded-text`), a published contract documented on `Control` and in the wiki's
+ * Team Layer page. The portal must treat a missing field as "unknown".
+ *
  * Exported so the boundary is testable without spawning the CLI.
  */
 export function schemaPayload(
