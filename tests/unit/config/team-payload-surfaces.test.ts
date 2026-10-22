@@ -1,8 +1,9 @@
 /**
  * DUST2.22 follow-up (B) — the team's raw payload (`team.teamLayer.settings`)
  * used to hold refused values, so any surface that serialised the resolution
- * would have leaked a denied key's value. `loadEffectiveConfig` now drops refused
- * keys from the object it hands out; this probes the object and every surface.
+ * would have leaked a denied key's value. `loadEffectiveConfig` no longer hands the
+ * raw payload out at all (it reaches `loadConfig` by a separate channel); this
+ * probes the object and every surface.
  */
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -80,6 +81,7 @@ describe("refused team values are not in the object handed to surfaces", () => {
     };
     walk(c);
     expect(keys).not.toContain("teamLayer");
+    expect(JSON.stringify(c)).not.toContain(CANARY);
   });
 
   it("no CLI, status or control-surface output serialises one", async () => {

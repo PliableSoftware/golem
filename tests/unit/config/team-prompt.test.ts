@@ -225,6 +225,7 @@ describe("a team may not ENFORCE the team prompt (the project outranks the team)
     expect(c.team.applied).toContain("inference.team_prompt");
     expect(c.team.applied).not.toContain("inference.team_prompt (enforced)");
     expect(c.team.applied).toContain("ui.pet (enforced)"); // other keys unchanged
+    expect(c.provenance["inference.team_prompt"]?.layer).toBe("team");
     expect(c.provenance["inference.team_prompt"]?.important).not.toBe(true);
     expect(c.provenance["ui.pet"]?.important).toBe(true);
 

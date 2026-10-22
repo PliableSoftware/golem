@@ -55,7 +55,7 @@ export interface LoadEffectiveConfigOptions extends LoadConfigOptions {
 
 /**
  * {@link TeamLayerResolution} as surfaces see it: the reported fields only, never
- * the raw payload. `layerLoaded` says a team layer was read and handed to the loader.
+ * the raw payload. `layerLoaded` says a team layer was read; it is false when the loader could not be given one.
  */
 export type TeamResolution = Omit<TeamLayerResolution, "teamLayer"> & {
   readonly layerLoaded: boolean;
