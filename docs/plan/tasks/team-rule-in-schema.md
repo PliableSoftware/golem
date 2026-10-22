@@ -35,3 +35,7 @@ The portal must not copy the 44-key table: a second copy is how the two drift. T
 ## Portal follow-up (tracked there, not here)
 
 Once released, the portal reads the field: `denied` settings show disabled with the reason and are refused on write (`denied_at_team_origin`), `false-only` and `true-only` limit the control to the allowed value, `lower-only` and `narrow-roots` say what the team may do, and `TEAM_ORIGIN_DENIED` is deleted. Until then the portal keeps its one-key list, and a schema without the field must degrade to today's behaviour with a visible note, not to silence.
+
+## Status
+
+Item 3 narrowed on review: `teamBound` publishes only `{ maxChars }`. The client's real check (`teamPromptViolation`) allows tab and newline and refuses far more than a control-character and URL rule, so publishing those two would make a portal reject what the client accepts. Also published: `teamEnforceable: false` on `inference.team_prompt` (`REMOTE_NEVER_ENFORCED`).

@@ -356,7 +356,7 @@ working, and a schema without it (an older release) means "unknown", not "settab
 
 ```json
 { "id": "setting:inference.team_prompt", "family": "setting", "teamRule": "bounded-text",
-  "teamBound": { "maxChars": 2000, "controlChars": false, "urls": false } }
+  "teamBound": { "maxChars": 2000 }, "teamEnforceable": false }
 ```
 
 - **Values**: `settable | false-only | true-only | lower-only | raise-only | narrow-roots |
@@ -368,9 +368,19 @@ working, and a schema without it (an older release) means "unknown", not "settab
 - **Member-relative rules publish only the direction.** `lower-only`, `raise-only` and
   `narrow-roots` are judged at load against the member's own value, which the portal never
   has. The portal can say "a team may only lower this" but cannot validate a number; do not
-  pretend to.
-- **`teamBound`** appears only with `bounded-text`; `maxChars` is `TEAM_PROMPT_MAX_CHARS`
-  (code points). No other control carries it.
+  pretend to. Static parts the direction does not convey: `narrow-roots` needs a non-empty
+  list of absolute paths; `knowledge.auto_index_max_files` refuses 0 (no cap) unless the
+  member's own value is 0; `compression.level` is ordered by its options (off < 1 < 2 < 3).
+- **`teamBound`** appears only with `bounded-text`, and carries ONLY `maxChars`
+  (`TEAM_PROMPT_MAX_CHARS`, code points). The portal can check the length and nothing
+  else: the client refuses far more (see `team-prompt-rules.ts`: lines starting `#`, `<` or
+  `system:`/`user:`, code fences, markup tags, TEAM NOTE markers, stacked combining marks,
+  mixed Latin/Cyrillic/Greek, IP literals, UNC paths, `www.`, bare 9-10 digit numbers,
+  invisible and non-ASCII spaces) and allows tab and newline. A prompt inside the bound can
+  still be REFUSED on the client.
+- **`teamEnforceable: false`** appears only on `inference.team_prompt` (`REMOTE_NEVER_ENFORCED`):
+  a team may set it but never enforce it, so an "enforce" toggle in the portal would be
+  ineffective. Absent everywhere else.
 - **Guidance and runtime controls carry neither field.**
 - **Not authoritative on the client.** The compiled-in table decides; the schema field is a
   courtesy. `version` is the only schema version; the field's name and shape are a published

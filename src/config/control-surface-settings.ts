@@ -26,7 +26,7 @@ import {
 } from "./control-surface-types.js";
 import { ConfigError } from "./errors.js";
 import { leafSchema } from "./schema.js";
-import { TEAM_PROMPT_MAX_CHARS, teamRule } from "./team-policy.js";
+import { REMOTE_NEVER_ENFORCED, TEAM_PROMPT_MAX_CHARS, teamRule } from "./team-policy.js";
 import {
   enumOptionsFor,
   numericRangeFor,
@@ -128,8 +128,9 @@ export function settingControl(
     advanced: meta?.advanced === true,
     teamRule: rule,
     ...(rule === "bounded-text" && {
-      teamBound: { maxChars: TEAM_PROMPT_MAX_CHARS, controlChars: false, urls: false },
+      teamBound: { maxChars: TEAM_PROMPT_MAX_CHARS },
     }),
+    ...(REMOTE_NEVER_ENFORCED.has(key) && { teamEnforceable: false as const }),
   };
 }
 export async function applySetting(
