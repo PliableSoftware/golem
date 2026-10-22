@@ -1,15 +1,16 @@
 ---
 task: team-rule-in-schema
-title: "Publish each setting's team rule in the schema, so the portal stops accepting values the client will drop"
-state: queued
+title: Publish each setting's team rule in the schema, so the portal stops accepting values the client will drop
+state: done
 owner: agent
 size: M
 discipline: code
-design: "src/config/team-policy.ts (TEAM_POLICY, TeamRule, staticRefusal, isMemberRelative); src/config/control-surface-settings.ts (the controls the published schema is built from); ADR-0008 'The floor'; docs/wiki/concepts/Team Layer.md 'The floor: a team may only tighten'. Portal side: PliableSoftware/golem-portal lib/team-settings.ts (TEAM_ORIGIN_DENIED) and lib/golem-schema.ts."
-gate: "Every setting control in the schema published by `golem config schema --json` carries its team rule, derived from TEAM_POLICY and never written a second time; a test fails if a control has no rule or the published rule differs from teamRule(); the totality guarantee (a new schema leaf with no policy entry is a compile error) still holds and now also covers the published field; the field is additive, so a portal that ignores it keeps working. golem verify exit 0."
+design: src/config/team-policy.ts (TEAM_POLICY, TeamRule, staticRefusal, isMemberRelative); src/config/control-surface-settings.ts (the controls the published schema is built from); ADR-0008 'The floor'; docs/wiki/concepts/Team Layer.md 'The floor: a team may only tighten'. Portal side: PliableSoftware/golem-portal lib/team-settings.ts (TEAM_ORIGIN_DENIED) and lib/golem-schema.ts.
+gate: Every setting control in the schema published by `golem config schema --json` carries its team rule, derived from TEAM_POLICY and never written a second time; a test fails if a control has no rule or the published rule differs from teamRule(); the totality guarantee (a new schema leaf with no policy entry is a compile error) still holds and now also covers the published field; the field is additive, so a portal that ignores it keeps working. golem verify exit 0.
 depends_on: []
 touches: [src/config, tests, docs/wiki]
 created: 2026-10-21
+updated: 2026-10-22T00:39:44.332Z
 ---
 
 ## What this is
@@ -39,3 +40,7 @@ Once released, the portal reads the field: `denied` settings show disabled with 
 ## Status
 
 Item 3 narrowed on review: `teamBound` publishes only `{ maxChars }`. The client's real check (`teamPromptViolation`) allows tab and newline and refuses far more than a control-character and URL rule, so publishing those two would make a portal reject what the client accepts. Also published: `teamEnforceable: false` on `inference.team_prompt` (`REMOTE_NEVER_ENFORCED`).
+
+## Outcome
+
+shipped
