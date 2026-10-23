@@ -79,14 +79,30 @@ function base62(seed: string, n: number): string {
   return out;
 }
 
-function timed(fn: () => void, runs = 3): number {
-  const samples: number[] = [];
+/** Fastest of `runs` timings: noise only ever adds time, so the minimum is the least-contaminated sample. */
+function timed(fn: () => void, runs = 5): number {
+  let best = Number.POSITIVE_INFINITY;
   for (let i = 0; i < runs; i++) {
     const t0 = performance.now();
     fn();
-    samples.push(performance.now() - t0);
+    best = Math.min(best, performance.now() - t0);
   }
-  return samples.sort((a, b) => a - b)[Math.floor(runs / 2)] as number;
+  return best;
+}
+
+const LINEAR_LIMIT = 24; // inputs grow 8x: linear is ~8, quadratic is ~64.
+
+/**
+ * Time `small` and `big` (min of several runs each) and return the big/small ratio. A runner stall can
+ * only inflate a ratio, so the whole measurement is repeated and the lowest ratio kept: a loaded
+ * runner gets another chance, but a quadratic pattern is ~64x on every attempt and never passes.
+ */
+function linearRatio(small: () => void, big: () => void, attempts = 4): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < attempts && best >= LINEAR_LIMIT; i++) {
+    best = Math.min(best, timed(big, 3) / Math.max(timed(small), 1));
+  }
+  return best;
 }
 
 const matches = (re: RegExp, text: string): RegExpMatchArray[] => [
@@ -163,9 +179,11 @@ describe("DUSTSEC.24 review (1) connection-password has no leading boundary", ()
   });
 
   it("stays linear on a long legal-scheme-alphabet run", () => {
-    const tSmall = timed(() => redactIdentifierText("a.".repeat(100_000)));
-    const tBig = timed(() => redactIdentifierText("a.".repeat(800_000)));
-    expect(tBig / Math.max(tSmall, 1)).toBeLessThan(24);
+    const ratio = linearRatio(
+      () => redactIdentifierText("a.".repeat(100_000)),
+      () => redactIdentifierText("a.".repeat(800_000)),
+    );
+    expect(ratio).toBeLessThan(LINEAR_LIMIT);
   }, 120_000);
 });
 
@@ -180,10 +198,12 @@ describe("DUSTSEC.24 review (2) private-key scan bound is the last COMPLETE END 
   for (const [name, end] of badEnds) {
     it(`${name} after many BEGIN lines is linear and nothing is redacted`, () => {
       const make = (n: number) => `${begin.repeat(n)}${end}`;
-      const tSmall = timed(() => redactIdentifierText(make(8_000)));
-      const tBig = timed(() => redactIdentifierText(make(64_000)));
+      const ratio = linearRatio(
+        () => redactIdentifierText(make(8_000)),
+        () => redactIdentifierText(make(64_000)),
+      );
       expect(redactIdentifierText(make(64_000))).toBe(make(64_000));
-      expect(tBig / Math.max(tSmall, 1)).toBeLessThan(24);
+      expect(ratio).toBeLessThan(LINEAR_LIMIT);
     }, 120_000);
   }
 
@@ -404,9 +424,11 @@ describe("DUSTSEC.24 review (4) email: the match always begins within 128 charac
   });
 
   it("dotted runs stay linear", () => {
-    const tSmall = timed(() => redactIdentifierText("a.".repeat(100_000)));
-    const tBig = timed(() => redactIdentifierText("a.".repeat(800_000)));
-    expect(tBig / Math.max(tSmall, 1)).toBeLessThan(24);
+    const ratio = linearRatio(
+      () => redactIdentifierText("a.".repeat(100_000)),
+      () => redactIdentifierText("a.".repeat(800_000)),
+    );
+    expect(ratio).toBeLessThan(LINEAR_LIMIT);
   }, 120_000);
 });
 
@@ -502,10 +524,15 @@ describe("DUSTSEC.24 second review (1) a scheme of any length still has its pass
       ["a://u:", (n) => "a://u:".repeat(n / 6)],
     ];
     for (const [name, make] of shapes) {
-      const tSmall = timed(() => redactIdentifierText(make(262_144)));
-      const tBig = timed(() => redactIdentifierText(make(2_097_152)));
-      expect(tBig / Math.max(tSmall, 1), name).toBeLessThan(24);
-      expect(tBig, name).toBeLessThan(10_000);
+      const ratio = linearRatio(
+        () => redactIdentifierText(make(262_144)),
+        () => redactIdentifierText(make(2_097_152)),
+      );
+      expect(ratio, name).toBeLessThan(LINEAR_LIMIT);
+      expect(
+        timed(() => redactIdentifierText(make(2_097_152)), 1),
+        name,
+      ).toBeLessThan(10_000);
     }
   }, 240_000);
 });
