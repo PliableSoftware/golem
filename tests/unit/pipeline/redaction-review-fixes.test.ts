@@ -95,7 +95,7 @@ const LINEAR_LIMIT = 24; // inputs grow 8x: linear is ~8, quadratic is ~64.
 /**
  * Time `small` and `big` (min of several runs each) and return the big/small ratio. A runner stall can
  * only inflate a ratio, so the whole measurement is repeated and the lowest ratio kept: a loaded
- * runner gets another chance, but a quadratic pattern is ~64x on every attempt and never passes.
+ * runner gets another chance, but a quadratic pattern lands at 34-64x on every attempt (measured with a mutated matcher) and never passes. n^1.5 is NOT caught by the ratio alone; the absolute bound in the shapes test covers it.
  */
 function linearRatio(small: () => void, big: () => void, attempts = 4): number {
   let best = Number.POSITIVE_INFINITY;
