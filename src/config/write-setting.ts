@@ -33,6 +33,17 @@ export interface WriteSettingOptions {
   readonly projectDir?: string;
   /** User config dir; defaults to `~/.golem`. */
   readonly userDir?: string;
+  /**
+   * Told when one call named the same live setting more than once (a retired key
+   * and its replacement, or two retired keys that both resolve to it) and the
+   * losing value was discarded. Never called for a single-key write.
+   */
+  readonly onShadowed?: (dropped: string, kept: string) => void;
+}
+
+/** Retired keys sort after the live key itself, then by name: a stable precedence. */
+function rank(requestedKey: string, liveKey: string): [number, string] {
+  return [requestedKey === liveKey ? 0 : 1, requestedKey];
 }
 
 /**
@@ -46,55 +57,100 @@ export async function writeSetting(
   value: unknown,
   options: WriteSettingOptions = {},
 ): Promise<string> {
-  // R9.6: a retired key resolves to its replacement, so NO write path can put a
-  // renamed key back into a settings file the loader would then warn about.
-  // `golem config set` resolves too and reports the redirect; this is the floor
-  // under every other caller.
-  const key = liveKeyFor(requestedKey);
-  const dotIndex = key.indexOf(".");
-  const section = dotIndex === -1 ? key : key.slice(0, dotIndex);
-  const leafKey = dotIndex === -1 ? "" : key.slice(dotIndex + 1);
-  const leaf = leafKey === "" ? undefined : leafSchema(section, leafKey);
-  if (leaf === undefined) {
-    throw new ConfigError(
-      `unknown setting "${key}"; valid keys are: ${allLeafPaths().join(", ")}`,
-      { key },
-    );
+  return await writeSettings(scope, { [requestedKey]: value }, options);
+}
+
+/**
+ * {@link writeSetting} for several keys of one scope at once: every key and
+ * value is validated BEFORE the file is touched, and the file is replaced once,
+ * so a failure can never leave half of a related set (an `org_id` without the
+ * `project` that belongs to it) on disk. `undefined` deletes a key.
+ */
+export async function writeSettings(
+  scope: SettingsScope,
+  changes: Readonly<Record<string, unknown>>,
+  options: WriteSettingOptions = {},
+): Promise<string> {
+  const planned: {
+    key: string;
+    requestedKey: string;
+    section: string;
+    leafKey: string;
+    validated: unknown;
+  }[] = [];
+  for (const [requestedKey, value] of Object.entries(changes)) {
+    // R9.6: a retired key resolves to its replacement, so NO write path can put a
+    // renamed key back into a settings file the loader would then warn about.
+    // `golem config set` resolves too and reports the redirect; this is the floor
+    // under every other caller.
+    const key = liveKeyFor(requestedKey);
+    const dotIndex = key.indexOf(".");
+    const section = dotIndex === -1 ? key : key.slice(0, dotIndex);
+    const leafKey = dotIndex === -1 ? "" : key.slice(dotIndex + 1);
+    const leaf = leafKey === "" ? undefined : leafSchema(section, leafKey);
+    if (leaf === undefined) {
+      throw new ConfigError(
+        `unknown setting "${key}"; valid keys are: ${allLeafPaths().join(", ")}`,
+        { key },
+      );
+    }
+    let validated: unknown;
+    if (value === undefined) {
+      validated = undefined; // delete semantics
+    } else {
+      const parsed = leaf.safeParse(value);
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map((i) => i.message).join("; ");
+        throw new ConfigError(`invalid value for "${key}": ${issues}`, { key });
+      }
+      validated = parsed.data;
+    }
+    planned.push({ key, requestedKey, section, leafKey, validated });
   }
 
-  let validated: unknown;
-  if (value === undefined) {
-    validated = undefined; // delete semantics
-  } else {
-    const parsed = leaf.safeParse(value);
-    if (!parsed.success) {
-      const issues = parsed.error.issues.map((i) => i.message).join("; ");
-      throw new ConfigError(`invalid value for "${key}": ${issues}`, { key });
+  // One value per live key, whatever the object's order: the live key itself
+  // beats a retired alias, and between aliases the first by name wins. The losers
+  // are reported rather than silently overwritten.
+  const winners = new Map<string, (typeof planned)[number]>();
+  for (const entry of planned) {
+    const held = winners.get(entry.key);
+    if (held === undefined) {
+      winners.set(entry.key, entry);
+      continue;
     }
-    validated = parsed.data;
+    const [a, b] = [rank(entry.requestedKey, entry.key), rank(held.requestedKey, held.key)];
+    const entryWins = a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1];
+    const [kept, dropped] = entryWins ? [entry, held] : [held, entry];
+    winners.set(entry.key, kept);
+    options.onShadowed?.(dropped.requestedKey, kept.requestedKey);
   }
+  const effective = planned.filter((entry) => winners.get(entry.key) === entry);
 
   const files = settingsFilePaths(options);
   const file = files[scope];
 
+  // Nothing to change: do not read, create or rewrite the file.
+  if (effective.length === 0) return file;
+
   const existing = await readExisting(file);
   const root = existing.root;
-  const sectionValue = root[section];
-  if (sectionValue !== undefined && !isPlainObject(sectionValue)) {
-    throw new ConfigError(
-      `${file}: section "${section}" is not an object; refusing to overwrite it`,
-      { source: file, key: section },
-    );
-  }
-
-  if (validated === undefined) {
-    if (isPlainObject(sectionValue)) {
-      delete sectionValue[leafKey];
+  for (const { section, leafKey, validated } of effective) {
+    const sectionValue = root[section];
+    if (sectionValue !== undefined && !isPlainObject(sectionValue)) {
+      throw new ConfigError(
+        `${file}: section "${section}" is not an object; refusing to overwrite it`,
+        { source: file, key: section },
+      );
     }
-  } else {
-    const target = isPlainObject(sectionValue) ? sectionValue : {};
-    target[leafKey] = validated;
-    root[section] = target;
+    if (validated === undefined) {
+      if (isPlainObject(sectionValue)) {
+        delete sectionValue[leafKey];
+      }
+    } else {
+      const target = isPlainObject(sectionValue) ? sectionValue : {};
+      target[leafKey] = validated;
+      root[section] = target;
+    }
   }
 
   const text = JSON.stringify(root, null, existing.indent) + (existing.trailingNewline ? "\n" : "");
@@ -108,7 +164,7 @@ export async function writeSetting(
     throw new ConfigError(
       `failed to write settings file ${file}: ` +
         `${err instanceof Error ? err.message : String(err)}`,
-      { source: file, key },
+      { source: file, key: planned[0]?.key ?? "" },
     );
   }
   return file;

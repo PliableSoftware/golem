@@ -32,6 +32,8 @@ export {
   isValidPortalProjectSlug,
   type OrganizationChoice,
   type PortalOrganization,
+  type PortalProjectWrite,
+  readProjectTeamKeys,
   readTeamBinding,
   TEAM_CACHE_DIR_NAME,
   TEAM_SKILLS_DIR,
@@ -60,6 +62,7 @@ export {
   type PortalClientOptions,
   type PortalClientStats,
   type PortalIdentity,
+  type PortalProjectEntry,
 } from "./client.js";
 export {
   applyLinkOverrides,

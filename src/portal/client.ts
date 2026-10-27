@@ -21,6 +21,7 @@
  */
 
 import { z } from "zod";
+import { isValidPortalProjectSlug } from "./binding.js";
 import type { AuthorizationServerMetadata, FetchLike } from "./discovery.js";
 import { PortalAuthError } from "./errors.js";
 import { refreshTokens } from "./exchange.js";
@@ -70,6 +71,26 @@ const identitySchema = z.object({
 
 export type PortalIdentity = z.infer<typeof identitySchema>;
 
+/**
+ * `GET /api/v1/orgs/{orgId}/projects` — the portal projects a repo can name.
+ *
+ * Unknown fields are ignored (the contract says fields may be added). A slug
+ * this harness would not write to `team.project` is left out of the list rather
+ * than offered: an entry nobody can pick is worse than a shorter list.
+ */
+const portalProjectEntrySchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  description: wireOptional(z.string()).transform((value) => value ?? ""),
+  default: wireOptional(z.boolean()).transform((value) => value === true),
+});
+const portalProjectsSchema = z.object({ projects: z.array(z.unknown()) });
+
+export type PortalProjectEntry = z.infer<typeof portalProjectEntrySchema>;
+
+/** Matches the team-layer fetch (`DEFAULT_FETCH_TIMEOUT_MS`, team-layer.ts). */
+const PROJECTS_TIMEOUT_MS = 10_000;
+
 /** What the retry ladder actually did, for tests and `--json` diagnostics. */
 export interface PortalClientStats {
   readonly requests: number;
@@ -82,6 +103,13 @@ export interface PortalClient {
   request(path: string, init?: RequestInit): Promise<Response>;
   /** `GET /api/v1/me`, validated. */
   me(): Promise<PortalIdentity>;
+  /**
+   * `GET /api/v1/orgs/{orgId}/projects`: the team's non-archived portal
+   * projects, default first. Throws {@link PortalAuthError} (with `status` when
+   * the portal answered) for anything but a well-formed 200 — the caller decides
+   * that a missing list must not stop a team link.
+   */
+  projects(orgId: string, timeoutMs?: number): Promise<PortalProjectEntry[]>;
   /**
    * Throw `origin_mismatch` / `insecure_url` / `not_linked` WITHOUT sending
    * anything, when the stored token may not be used against this client's API
@@ -224,7 +252,16 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
   // Declared as a function rather than a method so `me()` can call it without
   // depending on `this` — a destructured `const { me } = client` would otherwise
   // throw, and that is exactly how a client gets passed to a helper.
-  async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  async function request(
+    path: string,
+    init: RequestInit = {},
+    /**
+     * A per-send time budget: `arm` returns a FRESH signal immediately before a
+     * send, and `disarm` runs before any refresh or re-link, so those steps
+     * never spend it and an aborted signal never leaks into a retry.
+     */
+    budget?: { arm: () => AbortSignal; disarm: () => void },
+  ): Promise<Response> {
     let tokens = await current();
 
     // A token we already know is expired should not be spent on a doomed
@@ -236,21 +273,25 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
       if (renewed !== null) tokens = renewed;
     }
 
-    let response = await send(path, init, tokens);
+    const sendInit = (): RequestInit =>
+      budget === undefined ? init : { ...init, signal: budget.arm() };
+    let response = await send(path, sendInit(), tokens);
     if (response.status !== 401) return response;
 
     // Rung 1: exactly one refresh — unless the pre-emptive renewal above
     // already spent it.
+    budget?.disarm();
     if (stats.refreshAttempts === 0) {
       const renewed = await tryRefresh(tokens);
       if (renewed !== null) {
         tokens = renewed;
-        response = await send(path, init, tokens);
+        response = await send(path, sendInit(), tokens);
         if (response.status !== 401) return response;
       }
     }
 
     // Rung 2: the full flow, once.
+    budget?.disarm();
     const relinked = await tryReauthorize();
     if (relinked === null) {
       throw new PortalAuthError(
@@ -260,7 +301,7 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
         401,
       );
     }
-    response = await send(path, init, relinked);
+    response = await send(path, sendInit(), relinked);
     if (response.status === 401) {
       throw new PortalAuthError(
         "not_linked",
@@ -277,6 +318,83 @@ export function createPortalClient(options: PortalClientOptions): PortalClient {
     request,
     assertBound: async () => {
       assertTokenBound(await current());
+    },
+
+    projects: async (
+      orgId: string,
+      timeoutMs: number = PROJECTS_TIMEOUT_MS,
+    ): Promise<PortalProjectEntry[]> => {
+      // A list nobody answers must not hold the team link hostage: the bound
+      // covers the response body too, and the ending is an error the caller
+      // reports as "list unavailable".
+      //
+      // The budget is armed just before each send, not on entry: a slow token
+      // refresh (or re-link) is not the list's fault and must not spend it.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let fired = false;
+      const disarm = () => clearTimeout(timer);
+      const arm = () => {
+        disarm();
+        fired = false;
+        const own = new AbortController();
+        timer = setTimeout(() => {
+          fired = true;
+          own.abort();
+        }, timeoutMs);
+        return own.signal;
+      };
+      const timedOut = () =>
+        new PortalAuthError("api_error", `the portal project list timed out after ${timeoutMs} ms`);
+      let response: Response;
+      try {
+        response = await request(
+          `/api/v1/orgs/${encodeURIComponent(orgId)}/projects`,
+          {},
+          // A stage that follows a send starts with a clean slate: a timer that
+          // fired while an ignoring fetch was in flight must not colour the
+          // refresh or re-link outcome that comes next.
+          {
+            arm,
+            disarm: () => {
+              disarm();
+              fired = false;
+            },
+          },
+        );
+      } catch (err) {
+        disarm();
+        // Only a budget that actually expired is a timeout: a refresh or re-link
+        // failure (disarmed beforehand) keeps its own error.
+        if (fired) throw timedOut();
+        throw err;
+      }
+      if (!response.ok) {
+        clearTimeout(timer);
+        throw new PortalAuthError(
+          "api_error",
+          `GET /api/v1/orgs/${orgId}/projects answered ${response.status}`,
+          response.status,
+        );
+      }
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        if (fired) throw timedOut();
+        throw new PortalAuthError("api_error", "the portal project list did not return JSON");
+      } finally {
+        clearTimeout(timer);
+      }
+      const envelope = portalProjectsSchema.safeParse(payload);
+      if (!envelope.success) {
+        throw new PortalAuthError("api_error", "the portal project list had an unexpected shape");
+      }
+      const entries: PortalProjectEntry[] = [];
+      for (const raw of envelope.data.projects) {
+        const parsed = portalProjectEntrySchema.safeParse(raw);
+        if (parsed.success && isValidPortalProjectSlug(parsed.data.slug)) entries.push(parsed.data);
+      }
+      return entries;
     },
 
     me: async (): Promise<PortalIdentity> => {

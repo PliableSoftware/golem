@@ -56,6 +56,9 @@ function fakeClient(handler: (p: string) => Response | Promise<Response>) {
     me: async () => {
       throw new Error("not part of this path");
     },
+    projects: async () => {
+      throw new Error("projects() is not part of this path");
+    },
     stats: { requests: 0, refreshAttempts: 0, reauthorizations: 0 },
   };
   return { client, request };

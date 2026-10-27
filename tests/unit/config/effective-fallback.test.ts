@@ -43,7 +43,7 @@ describe("loadEffectiveConfig fallback", () => {
     const config = await loadEffectiveConfig({ projectDir, userDir, env: {} });
 
     expect(config.settings.telemetry.enabled).toBe(true);
-    expect(config.team.teamLayer).toBeUndefined();
+    expect(config.team.layerLoaded).toBe(false);
     expect(config.teamFailure).toContain("boom");
     expect(
       config.warnings.some((w) => w.includes("TEAM POLICY NOT APPLIED") && w.includes("boom")),

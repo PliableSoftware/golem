@@ -4,6 +4,7 @@
 import type { GuidanceScope } from "../hooks/guidance.js";
 import { ConfigError } from "./errors.js";
 import { type LayerName, ORIGIN_ORDER } from "./loader.js";
+import type { TeamRule } from "./team-policy.js";
 import { type SettingKind, settingMeta } from "./ui-model.js";
 import type { SettingsScope } from "./write-setting.js";
 
@@ -46,6 +47,41 @@ export interface Control {
   /** What must restart before the change takes effect. */
   readonly restart?: "proxy" | "mcp";
   readonly advanced: boolean;
+  /**
+   * PUBLISHED CONTRACT (additive, setting controls only): what a team origin may
+   * do with this key, read from `TEAM_POLICY` via `teamRule()`, never restated.
+   * One of `settable | false-only | true-only | lower-only | raise-only |
+   * narrow-roots | bounded-text | denied`. A schema WITHOUT this field (an older
+   * release) means "unknown", never "settable".
+   *
+   * `lower-only`, `raise-only` and `narrow-roots` are member-relative: only the
+   * DIRECTION is published, because judging them needs the member's own value,
+   * which the portal never has. Static parts the direction does not convey:
+   * `narrow-roots` needs a non-empty list of absolute paths; `knowledge.auto_index_max_files`
+   * refuses 0 unless the member's own value is 0; `compression.level` is ordered
+   * by its options (off < 1 < 2 < 3).
+   *
+   * The client's compiled-in table stays the authority; this is a courtesy so an
+   * admin is told at the point of saving. Absent on guidance and runtime controls.
+   */
+  readonly teamRule?: TeamRule;
+  /**
+   * Present only with `teamRule: "bounded-text"`. The portal can check the LENGTH
+   * and nothing else: the client may still refuse content this does not describe
+   * (see `team-prompt-rules.ts`: structural markers, fences, tags, URLs and IPs,
+   * mixed scripts, invisible characters). Tab and newline are allowed.
+   */
+  readonly teamBound?: TeamBound;
+  /**
+   * Present, and `false`, only when a team may set the key but never enforce it
+   * (`!important`), i.e. `REMOTE_NEVER_ENFORCED`. Absent means no such limit.
+   */
+  readonly teamEnforceable?: false;
+}
+/** The bound a `bounded-text` team value must respect. */
+export interface TeamBound {
+  /** Longest value, in code points. */
+  readonly maxChars: number;
 }
 export interface ControlGroup {
   /** `settings:<section>`, `guidance`, or `runtime`. */

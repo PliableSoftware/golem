@@ -109,6 +109,7 @@ fails if the schema gains one) and anything not in the table is denied:
 | `false-only` | a team may force a boolean OFF, never on | `security.write_lan`, `security.join_injection`, `telemetry.dashboard_lan`, `knowledge.enabled`, `knowledge.local_answer_enabled`, `knowledge.rerank_enabled`, `knowledge.lsp_enabled`, `knowledge.read_skeleton_enabled`, `knowledge.repo_map_enabled`, `knowledge.syntax_aware_chunking`, `compression.headroom_sidecar`, `compression.force_semantic_on_caching` |
 | `true-only` | a protective boolean, ON only | `snooze.enforce`, `snooze.spawn_gate` |
 | `lower-only` | only LOWER than the member's own effective value (numbers, and `compression.level` over off < 1 < 2 < 3, because 2 and 3 are lossy); `knowledge.auto_index_max_files` may not go to 0 (no cap) | `security.unlock_window_minutes`, `idle_relock_minutes`, `step_up_max_age_minutes`, `device_cert_days`, `proxy.max_request_body_bytes`, `compression.level` |
+| `raise-only` | only HIGHER than the member's own effective value (a number where higher is stricter), judged at load like `lower-only` | `knowledge.local_answer_min_confidence` |
 | `narrow-roots` | `security.origination_roots`: non-empty absolute paths, each EQUAL (after `path.resolve` and `resolveWorktreeRoot`) to one of the member's roots, because the consumer does exact membership | |
 | `bounded-text` | `inference.team_prompt` only: plain advisory text for the model. At most 2000 characters, no control characters, no URL; a value that breaks that is REFUSED (never truncated, never echoed). See [[#The team prompt]] | `inference.team_prompt` |
 | `denied` | commands, URLs, endpoints, credentials, paths, gateways, personas and prompts, plugins (`plugins.enabled` too: false would switch off org redaction plugins), LSP, vector DB, Headroom config, ports, every timeout (availability is the member's call), `brevity.level` (changes request bytes and the cached prefix), `proxy.bypass_all`, `portal.*` identity, `team.*` | `knowledge.lsp_servers`, `proxy.gateways`, `inference.model`, `inference.personas`, `knowledge.watch_paths` |
@@ -345,6 +346,45 @@ have hit it on every member's machine.
 `golem config schema --json` output as `config-schema.json`, and the portal
 validates team settings against it — so a value the portal accepted cannot be
 rejected on a developer's machine, and the portal carries no copy to drift.
+
+### The published `teamRule` field
+
+Each SETTING control in `config-schema.json` carries `teamRule`, so the portal can tell an
+admin at the point of saving what the client will do with the value. It is an additive
+optional field next to `writableScopes` and `locked`; a consumer that ignores it keeps
+working, and a schema without it (an older release) means "unknown", not "settable".
+
+```json
+{ "id": "setting:inference.team_prompt", "family": "setting", "teamRule": "bounded-text",
+  "teamBound": { "maxChars": 2000 }, "teamEnforceable": false }
+```
+
+- **Values**: `settable | false-only | true-only | lower-only | raise-only | narrow-roots |
+  bounded-text | denied`, the classes in the table above.
+- **Derived, never restated**: the value is `teamRule(dotted)` from `TEAM_POLICY`;
+  `tests/unit/config/team-rule-in-schema.test.ts` fails if a setting control lacks it or
+  differs. A leaf missing from the table is a compile error, so the published field is
+  total too.
+- **Member-relative rules publish only the direction.** `lower-only`, `raise-only` and
+  `narrow-roots` are judged at load against the member's own value, which the portal never
+  has. The portal can say "a team may only lower this" but cannot validate a number; do not
+  pretend to. Static parts the direction does not convey: `narrow-roots` needs a non-empty
+  list of absolute paths; `knowledge.auto_index_max_files` refuses 0 (no cap) unless the
+  member's own value is 0; `compression.level` is ordered by its options (off < 1 < 2 < 3).
+- **`teamBound`** appears only with `bounded-text`, and carries ONLY `maxChars`
+  (`TEAM_PROMPT_MAX_CHARS`, code points). The portal can check the length and nothing
+  else: the client refuses far more (see `team-prompt-rules.ts`: lines starting `#`, `<` or
+  `system:`/`user:`, code fences, markup tags, TEAM NOTE markers, stacked combining marks,
+  mixed Latin/Cyrillic/Greek, IP literals, UNC paths, `www.`, bare 9-10 digit numbers,
+  invisible and non-ASCII spaces) and allows tab and newline. A prompt inside the bound can
+  still be REFUSED on the client.
+- **`teamEnforceable: false`** appears only on `inference.team_prompt` (`REMOTE_NEVER_ENFORCED`):
+  a team may set it but never enforce it, so an "enforce" toggle in the portal would be
+  ineffective. Absent everywhere else.
+- **Guidance and runtime controls carry neither field.**
+- **Not authoritative on the client.** The compiled-in table decides; the schema field is a
+  courtesy. `version` is the only schema version; the field's name and shape are a published
+  contract, so changing them is a breaking change for the portal.
 
 The portal never down-converts for an older client: it serves the layer as
 written plus the migrations between versions, and the client applies what it

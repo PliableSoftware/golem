@@ -41,7 +41,7 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { defaultUserDir } from "../config/paths.js";
-import { writeSetting } from "../config/write-setting.js";
+import { writeSetting, writeSettings } from "../config/write-setting.js";
 import type { PortalIdentity } from "./client.js";
 
 /** The `team` settings section, structurally (snake_case, as on disk). */
@@ -270,10 +270,27 @@ export interface BindTeamOptions {
    */
   readonly portalUrl?: string;
   readonly userDir?: string;
+  /**
+   * The portal project this repo names, chosen in THIS run. A slug writes
+   * `team.project`; `null` removes it (the default portal project, which the
+   * portal's own fallback serves, so the committed file stays minimal);
+   * `undefined` means none was chosen, and {@link bindTeam} then keeps the
+   * existing slug on the same team and drops it on a different one, because a
+   * slug only means something inside the team that issued it.
+   */
+  readonly portalProject?: string | null;
 }
+
+/** What {@link bindTeam} did to `team.project`. */
+export type PortalProjectWrite = "set" | "cleared" | "kept" | "dropped" | "unchanged";
 
 export interface BindTeamResult {
   readonly orgId: string;
+  /** The `team.org_id` in the project file before this call; null when there was none. */
+  readonly previousOrgId: string | null;
+  /** The `team.project` in the project file before this call; null when there was none. */
+  readonly previousPortalProject: string | null;
+  readonly portalProject: PortalProjectWrite;
   /** The settings file that was written — always the PROJECT-scope one. */
   readonly settingsFile: string;
   readonly wrotePortalUrl: boolean;
@@ -299,12 +316,84 @@ export async function bindTeam(options: BindTeamOptions): Promise<BindTeamResult
     projectDir: options.projectDir,
     ...(options.userDir === undefined ? {} : { userDir: options.userDir }),
   };
-  const settingsFile = await writeSetting("project", "team.org_id", orgId, scopeOptions);
-  const portalUrl = options.portalUrl?.trim() ?? "";
-  if (portalUrl !== "") {
-    await writeSetting("project", "team.portal_url", portalUrl, scopeOptions);
+  if (
+    typeof options.portalProject === "string" &&
+    !isValidPortalProjectSlug(options.portalProject)
+  ) {
+    throw new Error(
+      `this harness will not write a portal project slug of ${JSON.stringify(options.portalProject)} ` +
+        `to a settings file; expected lowercase letters, digits and hyphen, starting with a letter or digit`,
+    );
   }
-  return { orgId, settingsFile, wrotePortalUrl: portalUrl !== "" };
+  // Read BEFORE writing: what the file said is what the re-link report names.
+  const previous = await readProjectTeamKeys(options.projectDir);
+  const portalUrl = options.portalUrl?.trim() ?? "";
+  let portalProject: PortalProjectWrite;
+  let projectChange: { readonly value: string | undefined } | null;
+  if (typeof options.portalProject === "string") {
+    projectChange = { value: options.portalProject };
+    portalProject = "set";
+  } else if (options.portalProject === null) {
+    projectChange = { value: undefined };
+    portalProject = "cleared";
+  } else if (previous.project === null) {
+    projectChange = null;
+    portalProject = "unchanged";
+  } else if (previous.orgId === orgId) {
+    projectChange = null;
+    portalProject = "kept";
+  } else {
+    projectChange = { value: undefined };
+    portalProject = "dropped";
+  }
+  // ONE write for every key: a failure between separate writes would leave the
+  // new team beside the old team's slug, which resolves as not_found at sync.
+  const settingsFile = await writeSettings(
+    "project",
+    {
+      "team.org_id": orgId,
+      ...(portalUrl === "" ? {} : { "team.portal_url": portalUrl }),
+      ...(projectChange === null ? {} : { "team.project": projectChange.value }),
+    },
+    scopeOptions,
+  );
+  return {
+    orgId,
+    previousOrgId: previous.orgId,
+    previousPortalProject: previous.project,
+    portalProject,
+    settingsFile,
+    wrotePortalUrl: portalUrl !== "",
+  };
+}
+
+/**
+ * `team.org_id` and `team.project` as written in the PROJECT file specifically
+ * (never the resolved value: an env or user-scope value is not something a
+ * re-link can replace, and naming it would make the report wrong). A missing or
+ * malformed file reads as both null; {@link writeSetting} is what refuses to
+ * clobber unparseable JSON.
+ */
+export async function readProjectTeamKeys(
+  projectDir: string,
+): Promise<{ readonly orgId: string | null; readonly project: string | null }> {
+  const file = path.join(projectDir, ".golem", "settings.json");
+  try {
+    const text = await readFile(file, "utf8");
+    const parsed: unknown = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+    if (typeof parsed !== "object" || parsed === null) return { orgId: null, project: null };
+    const team = (parsed as Record<string, unknown>).team;
+    if (typeof team !== "object" || team === null) return { orgId: null, project: null };
+    const read = (key: string): string | null => {
+      const value = (team as Record<string, unknown>)[key];
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      return trimmed === "" ? null : trimmed;
+    };
+    return { orgId: read("org_id"), project: read("project") };
+  } catch {
+    return { orgId: null, project: null };
+  }
 }
 
 /** Where the managed team skills live, and both shapes `unlink` must clear. */
@@ -394,22 +483,7 @@ export async function unbindTeam(options: UnbindTeamOptions): Promise<UnbindTeam
  * would make the command look like it had failed.
  */
 async function readProjectOrgId(projectDir: string): Promise<string | null> {
-  const file = path.join(projectDir, ".golem", "settings.json");
-  try {
-    const text = await readFile(file, "utf8");
-    const parsed: unknown = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const team = (parsed as Record<string, unknown>).team;
-    if (typeof team !== "object" || team === null) return null;
-    const value = (team as Record<string, unknown>).org_id;
-    if (typeof value !== "string") return null;
-    const trimmed = value.trim();
-    return trimmed === "" ? null : trimmed;
-  } catch {
-    // A missing or malformed file is not a failure of unlinking: writeSetting
-    // below is what would refuse to clobber unparseable JSON, and it says so.
-    return null;
-  }
+  return (await readProjectTeamKeys(projectDir)).orgId;
 }
 
 /** Remove both team-skill layouts. Returns project-relative POSIX paths. */

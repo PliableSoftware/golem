@@ -225,8 +225,9 @@ describe("a team may not ENFORCE the team prompt (the project outranks the team)
     expect(c.team.applied).toContain("inference.team_prompt");
     expect(c.team.applied).not.toContain("inference.team_prompt (enforced)");
     expect(c.team.applied).toContain("ui.pet (enforced)"); // other keys unchanged
-    const handed = c.team.teamLayer?.settings as Record<string, unknown>;
-    expect(handed["!important"]).toEqual(["ui.pet"]);
+    expect(c.provenance["inference.team_prompt"]?.layer).toBe("team");
+    expect(c.provenance["inference.team_prompt"]?.important).not.toBe(true);
+    expect(c.provenance["ui.pet"]?.important).toBe(true);
 
     const caches = await listTeamLayerCaches(p.userDir);
     expect(caches[0]?.enforced_count).toBe(1); // ui.pet only

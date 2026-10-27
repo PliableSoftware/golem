@@ -83,6 +83,9 @@ function fakeClient(handler: (path: string, init?: RequestInit) => Response | Pr
     me: async () => {
       throw new Error("me() is not part of the team-layer path");
     },
+    projects: async () => {
+      throw new Error("projects() is not part of this path");
+    },
     stats: { requests: 0, refreshAttempts: 0, reauthorizations: 0 },
   };
   return { client, request };
@@ -703,7 +706,7 @@ describe("loadConfig resolves a real team payload at team rank", () => {
     await syncTeamLayer({ binding: binding(), userDir, client });
 
     const config = await loadEffectiveConfig({ projectDir, userDir, env: {} });
-    expect(config.team.teamLayer).toBeDefined();
+    expect(config.team.layerLoaded).toBe(true);
     expect(config.team.fromCache).toBe(true);
     expect(config.settings.telemetry.enabled).toBe(false);
     expect(config.provenance["telemetry.enabled"]?.layer).toBe("team");
@@ -857,7 +860,7 @@ describe("Decision 64 — no link, no team code path", () => {
 
     const config = await loadEffectiveConfig({ projectDir, userDir, env: {} });
 
-    expect(config.team.teamLayer).toBeUndefined();
+    expect(config.team.layerLoaded).toBe(false);
     expect(config.provenance["telemetry.enabled"]?.layer).toBe("default");
     for (const entry of Object.values(config.provenance)) {
       expect(entry.layer).not.toBe("team");
