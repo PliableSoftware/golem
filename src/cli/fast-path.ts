@@ -245,7 +245,12 @@ async function runStatusline(argv: readonly string[]): Promise<void> {
       "./statusline.js"
     );
     const session = parseSessionInput(raw);
-    const dir = session.cwd ?? process.cwd();
+    // `current_dir` follows every `cd` the session makes, so it is often a
+    // subdirectory. Every per-project file (`.golem/proxy.pid`, settings,
+    // telemetry) hangs off the project root — a raw subdir read the proxy as
+    // stopped and drew "off". Fall back to the raw dir outside any project.
+    const { projectDirFor } = await import("../config/paths.js");
+    const dir = projectDirFor(session.cwd);
     const golem = await collectGolemState(dir);
     const color = forceColor || (process.stdout.isTTY === true && !process.env.NO_COLOR);
     // The brand is painted from the Golem hex palette, so the line needs the

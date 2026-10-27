@@ -60,7 +60,7 @@ import { readCachedUpdateCheck, semverGt } from "../update/index.js";
 import { VERSION } from "../version.js";
 import type { ProviderEntry as LocalProviderEntry } from "./local-model.js";
 import { golemDirExists, type LocalModelInfo, localModelInfoCached } from "./local-model.js";
-import { isProcessAlive, readProxyPid } from "./proxy-daemon.js";
+import { isProcessAlive, portInUse, readProxyPid } from "./proxy-daemon.js";
 import { proxyBaseUrl, readWiringState } from "./proxy-wiring.js";
 // Pure, dependency-free string module — safe on the per-prompt hot path (§86).
 import { renderQuotaSegment } from "./quota-bars.js";
@@ -866,7 +866,13 @@ export async function collectGolemState(
   // network probe (the status line runs on every turn).
   try {
     const pid = await readProxyPid(dir);
-    const running = pid !== null && isProcessAlive(pid.pid);
+    // Same fallback `proxyStatus` (what `golem status` reads) has: a missing,
+    // mid-rewrite or unreadable pid file, or a pid this process cannot see, does
+    // not mean nothing is listening. Probed ONLY when the pid file says "not
+    // running", so the healthy 2s tick stays a single file read; a closed local
+    // port refuses instantly, so the "really off" case is cheap too.
+    const pidAlive = pid !== null && isProcessAlive(pid.pid);
+    const running = pidAlive || (proxyPort !== undefined && (await portInUse(proxyPort, 300)));
     state = {
       ...state,
       proxyRunning: running,

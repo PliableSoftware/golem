@@ -56,6 +56,17 @@ export function findProjectDir(startDir: string = process.cwd(), rootDir?: strin
   }
 }
 
+/**
+ * The project directory for a hook/status payload's `cwd`. A host reports the
+ * session's CURRENT directory, which follows every `cd`, so it is often a
+ * subdirectory; per-project state (`.golem/proxy.pid`, settings, session state)
+ * lives at the project root. Falls back to `cwd` itself outside any project.
+ */
+export function projectDirFor(cwd?: string): string {
+  const start = cwd ?? process.cwd();
+  return findProjectDir(start) ?? start;
+}
+
 export function settingsFilePaths(opts: {
   readonly projectDir?: string;
   readonly userDir?: string;

@@ -28,6 +28,7 @@
  */
 
 import { classifyAction, readAutonomyLevel } from "../autonomy/index.js";
+import { projectDirFor } from "../config/paths.js";
 import { type LimitPrediction, readLimitState } from "../proxy/limit-prediction.js";
 import { decideHostGate, type HostGateDecision, resolveHostGate } from "../session/host-gate.js";
 import { appendHostLog } from "../session/host-log.js";
@@ -110,7 +111,7 @@ export async function runHostGateHook(
       return 0;
     }
 
-    const projectDir = options.projectDir ?? payload.cwd ?? process.cwd();
+    const projectDir = options.projectDir ?? projectDirFor(payload.cwd);
     const sessionId = options.sessionId ?? payload.session_id ?? "unknown";
     const action = classifyAction(toolName, payload.tool_input);
 
