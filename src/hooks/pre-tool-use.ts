@@ -21,6 +21,7 @@ import {
   readAutonomyLevel,
 } from "../autonomy/index.js";
 import { loadEffectiveConfig } from "../config/index.js";
+import { projectDirFor } from "../config/paths.js";
 // `../proxy/limit-prediction.js`, not the `../proxy/index.js` barrel: the barrel
 // reaches server.ts, which imports `undici` (~270ms). This hook runs on EVERY
 // Claude Code tool call and only reads a JSON file. See verification-notes §86.
@@ -213,7 +214,7 @@ export async function runPreToolUseHook(
     const toolName = payload.tool_name;
     if (typeof toolName !== "string" || toolName.length === 0) return 0;
 
-    const projectDir = options.projectDir ?? payload.cwd ?? process.cwd();
+    const projectDir = options.projectDir ?? projectDirFor(payload.cwd);
 
     // DUSTSEC.3 (R4) — a redaction guard, deliberately FIRST: it holds at every
     // autonomy level, with the autonomy gate on or off, and before the park

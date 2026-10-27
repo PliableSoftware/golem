@@ -29,6 +29,7 @@
  */
 
 import { z } from "zod";
+import { projectDirFor } from "../config/paths.js";
 import type { KnowledgeBase } from "../interfaces/knowledge.js";
 import {
   fetchRawPage,
@@ -370,7 +371,7 @@ export async function runWebFetchPre(
     // Our own rewrite (R9.12) — let it through untouched, never re-serve it.
     if (isLoopbackStubUrl(url)) return 0;
 
-    const projectDir = options.projectDir ?? parsed.data.cwd ?? process.cwd();
+    const projectDir = options.projectDir ?? projectDirFor(parsed.data.cwd);
     const cache = options.cache ?? new WebCache(webCacheDir(projectDir));
     const ttl = options.ttlHours ?? DEFAULT_WEB_CACHE_TTL_HOURS;
     const nowMs = options.nowMs ?? Date.now();
@@ -495,7 +496,7 @@ export async function runWebFetchPost(
     const url = urlOf(parsed.data.tool_input);
     if (url === null) return 0;
 
-    const projectDir = options.projectDir ?? parsed.data.cwd ?? process.cwd();
+    const projectDir = options.projectDir ?? projectDirFor(parsed.data.cwd);
 
     // Never cache Golem's own placeholder as if it were the page (R9.12). The
     // human-facing label for a served fetch is emitted by the CCR post hook, not

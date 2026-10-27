@@ -24,6 +24,7 @@
  * fail-safe, so a state-tracking hook can never disrupt a session.
  */
 
+import { projectDirFor } from "../config/paths.js";
 import { captureOnPrompt } from "../vibe/hook.js";
 import { type HookIo, readAll } from "./hook-io.js";
 import {
@@ -153,7 +154,7 @@ async function correlateTool(
 export async function runNotificationHook(io: HookIo, nowIso: string): Promise<number> {
   try {
     const p = parsePayload(await readAll(io.stdin));
-    const dir = p.cwd ?? process.cwd();
+    const dir = projectDirFor(p.cwd);
     const { block, kind } = classifyNotification(p.notification_type, p.message);
     if (!block) return 0; // not a block — do not light up a "waiting" indicator
     const tool = await correlateTool(dir, kind, p.session_id, nowIso);
@@ -187,7 +188,7 @@ export async function runNotificationHook(io: HookIo, nowIso: string): Promise<n
 export async function runQuestionAnsweredHook(io: HookIo, nowIso: string): Promise<number> {
   try {
     const p = parsePayload(await readAll(io.stdin));
-    await markUnblocked(p.cwd ?? process.cwd(), nowIso, p.session_id);
+    await markUnblocked(projectDirFor(p.cwd), nowIso, p.session_id);
   } catch {
     // fail-safe: a hook must never break the turn it observes
   }
@@ -197,7 +198,7 @@ export async function runQuestionAnsweredHook(io: HookIo, nowIso: string): Promi
 export async function runUserPromptSubmitHook(io: HookIo, nowIso: string): Promise<number> {
   try {
     const p = parsePayload(await readAll(io.stdin));
-    const dir = p.cwd ?? process.cwd();
+    const dir = projectDirFor(p.cwd);
     await markUnblocked(dir, nowIso, p.session_id);
     // The human has stopped typing, so they have probably stopped editing —
     // which is when their out-of-band corrections to agent-written files become

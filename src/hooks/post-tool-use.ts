@@ -56,6 +56,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { CcrStore, estimateTokens, LocalDirBlobStore } from "../compression/index.js";
+import { projectDirFor } from "../config/paths.js";
 import { ensurePluginRedactionRules } from "../plugins/redaction-init.js";
 import { resolveWorktreeRoot } from "../shared/git-worktree.js";
 import { captureAfterWrite } from "../vibe/hook.js";
@@ -227,7 +228,7 @@ export async function runPostToolUseHook(
   await captureAfterWrite(
     payload.tool_name,
     payload.tool_input,
-    options.projectDir ?? payload.cwd ?? process.cwd(),
+    options.projectDir ?? projectDirFor(payload.cwd),
     new Date().toISOString(),
   );
 
@@ -273,14 +274,14 @@ export async function runPostToolUseHook(
     // DUSTSEC.8: this process is not the proxy, so load the project's plugin
     // redaction rules first (built-ins stay first; never throws).
     if (options.redact === undefined) {
-      await ensurePluginRedactionRules(options.projectDir ?? payload.cwd ?? process.cwd());
+      await ensurePluginRedactionRules(options.projectDir ?? projectDirFor(payload.cwd));
     }
     const stored = stripKnownSecrets((options.redact ?? pipelineRedact)(slot.text));
     const refId = createHash("sha256").update(stored, "utf8").digest("hex");
 
     // R8.5: extracted from the REDACTED text, like the excerpts — the skeleton
     // must never re-introduce something redaction removed.
-    const projectDir = options.projectDir ?? payload.cwd ?? process.cwd();
+    const projectDir = options.projectDir ?? projectDirFor(payload.cwd);
     let skeletonAllowed = true;
     if (options.skeletonEnabled !== undefined) {
       try {
