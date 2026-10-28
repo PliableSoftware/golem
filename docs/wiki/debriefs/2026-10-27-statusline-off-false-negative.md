@@ -24,6 +24,8 @@ The status line intermittently drew `Golem off` while `golem status` and a `gole
 
 Related: [[Configuration Surfaces]] (where the status line and `golem status` sit).
 
+Third instance of the same shape, found while checking `golem status`: it reported every agent-lane persona as `FAILS CLOSED` because the worker rows never resolved the persona lane that `golem personas` and the status line already did (R14.2 moved that decision to one function; this call site was missed).
+
 ## Open
 
 If "off" recurs after this, capture `.golem/proxy.pid` and the statusline stdin payload at that moment.

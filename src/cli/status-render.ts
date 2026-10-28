@@ -311,6 +311,15 @@ export function renderStatus(report: StatusReport): string {
   // honest for a project that declares none.
   for (const configured of workers) {
     const worker = configured.worker;
+    // The agent lane is not a registry target — the harness runs a subagent on
+    // the model, and Golem cannot spawn one. Saying "FAILS CLOSED" about it was
+    // a false alarm; saying "target ..." would be a false route.
+    if (configured.lane === "agent") {
+      lines.push(
+        `  ${worker}: agent lane — the harness runs a subagent on ${configured.model ?? configured.target}`,
+      );
+      continue;
+    }
     // A target that resolves to nothing means the worker throws on EVERY
     // dispatch. Naming its model would advertise something that can never run.
     if (configured.target_unknown === true) {
