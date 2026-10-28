@@ -24,6 +24,8 @@ The status line intermittently drew `Golem off` while `golem status` and a `gole
 
 Related: [[Configuration Surfaces]] (where the status line and `golem status` sit).
 
+Also reported the same day: `golem status` showed `[--] loopback CA wired but NOT in this session — restart Claude Code` permanently. Cause: `trusted` reads `process.env` of the `golem status` process, so a plain shell can never satisfy it. Same family as the statusline bug: a surface answering from its own process context rather than the thing it describes. Now says so outside a Claude Code session (`CLAUDECODE=1`).
+
 ## Open
 
 If "off" recurs after this, capture `.golem/proxy.pid` and the statusline stdin payload at that moment.

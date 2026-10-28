@@ -32,6 +32,11 @@ function renderWebFetchGreen(report: StatusReport): string {
   if (g.foreign_ca !== undefined) {
     return `NODE_EXTRA_CA_CERTS is owned by ${g.foreign_ca} — left alone; served WebFetches show as denied (red)`;
   }
+  if (g.wired && g.in_host_session === false) {
+    // `trusted` is read from THIS process's env, so a plain shell can never see
+    // it — "restart Claude Code" would send the user round in circles.
+    return "loopback CA wired; not checkable from this shell — run `golem status` inside Claude Code (a plain terminal never inherits NODE_EXTRA_CA_CERTS)";
+  }
   if (g.wired) {
     return "loopback CA wired but NOT in this session — restart Claude Code (env is read once at startup)";
   }
