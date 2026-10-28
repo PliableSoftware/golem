@@ -88,7 +88,7 @@ export default function register(program: Command): void {
       "Store a gateway's credential in the OS credential store — prompt, verify against the upstream, then save (Decision 46)",
     )
     .argument("<id>", "a gateway id from proxy.gateways, or the default provider id")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--no-probe", "store without verifying the key against the upstream first")
     .addOption(
       new Option(
@@ -123,7 +123,7 @@ export default function register(program: Command): void {
     .command("logout")
     .description("Remove a gateway's stored credential from the OS credential store")
     .argument("<id>", "a gateway id from proxy.gateways, or the default provider id")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (id: string, opts: { dir: string }) => {
       try {
         const result = await logoutGateway(opts.dir, id, new Date().toISOString());
@@ -151,7 +151,7 @@ export default function register(program: Command): void {
       "--auth-scheme <scheme>",
       `credential header scheme (${UPSTREAM_AUTH_SCHEMES.join(" | ")})`,
     )
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--login", "prompt for the credential right after registering", false)
     .action(
       async (
@@ -225,7 +225,7 @@ export default function register(program: Command): void {
     .command("remove")
     .description("Remove a gateway from proxy.gateways, deleting its stored credential first")
     .argument("<id>", "a gateway id from proxy.gateways")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--keep-credential", "de-register the gateway but leave its stored credential", false)
     .action(async (id: string, opts: { dir: string; keepCredential: boolean }) => {
       try {

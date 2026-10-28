@@ -4,7 +4,7 @@ type: debrief
 tags: [statusline, proxy, hooks, cwd]
 sources: [src/cli/fast-path.ts, src/cli/statusline.ts, src/config/paths.ts, src/cli/proxy-daemon.ts, tests/unit/cli-statusline-subdir.test.ts]
 created: 2026-10-27
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # Statusline showing "off" while the proxy runs
@@ -23,6 +23,10 @@ The status line intermittently drew `Golem off` while `golem status` and a `gole
 - Not reproduced on the maintainer machine: pid file stable, no daemon restarts in `proxy.log`, no leaked statusline processes, 150 consecutive root-dir renders healthy.
 
 Related: [[Configuration Surfaces]] (where the status line and `golem status` sit).
+
+## Follow-up (2026-10-28)
+
+Audit of the remaining raw-cwd writers found six CLI commands (`target`, `gateway`, `vibe`, `personas`, `proxy`, `verify`) whose `--dir` still defaulted to `process.cwd()`. Anchored the same way as their siblings; `init` left on the raw cwd deliberately (it creates a project). Four stray nested `.golem/` directories (hook logs and state only, none tracked) were deleted by hand.
 
 ## Open
 
