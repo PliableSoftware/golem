@@ -7,7 +7,10 @@
  */
 
 import type { Command } from "commander";
+import { findProjectDir } from "../../config/index.js";
 import { runVerify } from "../verify.js";
+
+const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 
 export default function register(program: Command): void {
   program
@@ -16,7 +19,7 @@ export default function register(program: Command): void {
       "Run the green-check gate (build, typecheck, lint, format, deps, tests, wiki) — " +
         "one progress line per check, judged by exit code",
     )
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option(
       "--only <ids>",
       "comma-separated check ids to run (build is kept when a selected check needs it)",

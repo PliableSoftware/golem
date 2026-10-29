@@ -4,7 +4,7 @@ type: debrief
 tags: [statusline, proxy, hooks, cwd]
 sources: [src/cli/fast-path.ts, src/cli/statusline.ts, src/config/paths.ts, src/cli/proxy-daemon.ts, tests/unit/cli-statusline-subdir.test.ts]
 created: 2026-10-27
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # Statusline showing "off" while the proxy runs
@@ -25,6 +25,9 @@ The status line intermittently drew `Golem off` while `golem status` and a `gole
 Related: [[Configuration Surfaces]] (where the status line and `golem status` sit).
 
 Also reported the same day: `golem status` showed `[--] loopback CA wired but NOT in this session — restart Claude Code` permanently. Cause: `trusted` reads `process.env` of the `golem status` process, so a plain shell can never satisfy it. Same family as the statusline bug: a surface answering from its own process context rather than the thing it describes. Now says so outside a Claude Code session (`CLAUDECODE=1`).
+## Follow-up (2026-10-28)
+
+Audit of the remaining raw-cwd writers found six CLI commands (`target`, `gateway`, `vibe`, `personas`, `proxy`, `verify`) whose `--dir` still defaulted to `process.cwd()`. Anchored the same way as their siblings; `init` left on the raw cwd deliberately (it creates a project). Four stray nested `.golem/` directories (hook logs and state only, none tracked) were deleted by hand.
 
 ## Open
 
