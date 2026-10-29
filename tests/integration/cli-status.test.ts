@@ -269,6 +269,31 @@ describe("collectStatus", () => {
     });
     expect(report.upstream.last_served_model).toBe("claude-opus-5[1m]");
   });
+
+  // R14.2: a persona whose model is a bare id runs on the AGENT lane — a harness
+  // subagent, not a registry target. Status read the model as a missing target
+  // and called it FAILS CLOSED for every such persona.
+  it("does not report an agent-lane persona as a target that fails closed", async () => {
+    await writeSetting(
+      "project",
+      "inference.personas",
+      { coder: { discipline: "code", model: "claude-sonnet-5-5" } },
+      { projectDir },
+    );
+    const report = await collectStatus({
+      projectDir,
+      version: VERSION,
+      userDir,
+      probeTimeoutMs: 200,
+      localProbe: async () => ({ reachable: false }),
+    });
+    const row = report.workers?.find((w) => w.worker === "coder");
+    expect(row?.lane).toBe("agent");
+    expect(row?.target_unknown).toBeUndefined();
+    const out = renderStatus(report);
+    expect(out).not.toContain("FAILS CLOSED");
+    expect(out).toContain("coder: agent lane");
+  });
 });
 
 describe("probeProxy", () => {

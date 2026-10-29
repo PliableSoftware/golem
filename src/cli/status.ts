@@ -258,6 +258,11 @@ export interface StatusReport {
     readonly target_unknown?: boolean;
     /** R9.10: false when this worker's target is not local — the honest bit. */
     readonly local?: boolean;
+    /**
+     * `"agent"`: the harness runs a subagent on `model`; Golem never dispatches
+     * it, so `target` is the model id and is NOT a registry target.
+     */
+    readonly lane?: "agent";
   }[];
   /**
    * Update status, from the LAST cached `golem update --check` (read-only, no

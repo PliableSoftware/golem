@@ -24,6 +24,7 @@ import { defaultUserDir } from "../config/paths.js";
 // hook handler) for two small file reads.
 import { readSessionState, resolveBlock } from "../hooks/session-state.js";
 import { STALE_AFTER_MS } from "../hooks/snooze-nudge.js";
+import { resolvePersonaLane } from "../inference/persona-lane.js";
 import { selectTarget } from "../inference/target-dispatcher.js";
 import { declaredWorkers, unknownWorkerWarnings } from "../inference/workers.js";
 import { listTeamLayerCaches } from "../portal/team-layer.js";
@@ -239,6 +240,29 @@ export async function collectStatus(options: StatusOptions): Promise<StatusRepor
   // `selectTarget`, so status cannot predict one destination while dispatch
   // picks another.
   const workerRows = declaredWorkers(settings.inference.personas).map((worker: string) => {
+    // R14.2: a persona on the AGENT lane runs as a harness subagent on a bare
+    // model id — it is not a registry target, so `selectTarget` below would read
+    // the model as a missing target and report it FAILS CLOSED. `golem personas`
+    // already resolves the lane; ask the same function rather than guess.
+    try {
+      const lane = resolvePersonaLane({
+        settings: proxyWithDefault,
+        personas: settings.inference.personas,
+        personaId: worker,
+        workerTargets: settings.inference.worker_targets,
+      });
+      if (lane.kind === "agent") {
+        return {
+          worker,
+          target: lane.model,
+          route: "agent",
+          model: lane.model,
+          lane: "agent" as const,
+        };
+      }
+    } catch {
+      // a bad persona config is reported by `golem personas`; fall through
+    }
     const { id, route } = selectTarget(
       {
         settings: proxyWithDefault,
