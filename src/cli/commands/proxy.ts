@@ -440,7 +440,7 @@ export default function register(program: Command): void {
   program
     .command("on")
     .description("Enable the proxy pipeline (redaction, compression, brevity) — persists")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
         const { port } = await resolvePort(opts.dir);
@@ -458,7 +458,7 @@ export default function register(program: Command): void {
     .description(
       "Disable the proxy pipeline — a FULL bypass (redaction included), persisted until `golem on`",
     )
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
         const { port } = await resolvePort(opts.dir);

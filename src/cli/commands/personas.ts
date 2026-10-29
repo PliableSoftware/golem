@@ -8,7 +8,10 @@
  */
 
 import type { Command } from "commander";
+import { findProjectDir } from "../../config/index.js";
 import { collectPersonas, ejectPersonaPrompt, renderPersonas } from "../personas.js";
+
+const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 
 function fail(err: unknown): never {
   process.stderr.write(`golem: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -36,7 +39,7 @@ export default function register(program: Command): void {
   personasCmd
     .command("list", { isDefault: true })
     .description("List every declared persona: discipline, model, owner, prompt source, and layer")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .action(list);
 
@@ -47,7 +50,7 @@ export default function register(program: Command): void {
         "(never overwrites an existing file)",
     )
     .argument("<id>", "a persona id from `golem personas`")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (id: string, opts: { dir: string }) => {
       try {
         const result = await ejectPersonaPrompt(opts.dir, id);
