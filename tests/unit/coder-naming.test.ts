@@ -142,3 +142,25 @@ describe("golem local status", () => {
   // Deleted rather than unskipped: it pins a state that can no longer occur.
   // (`golem coder` itself is alive and registered — see commands/local-ollama.ts.)
 });
+
+describe("golem status — loopback CA, which shell is asking", () => {
+  const green = (g: object): StatusReport =>
+    ({
+      ...BASE,
+      webfetch_green: { endpoint: true, wired: true, trusted: false, ...g },
+    }) as StatusReport;
+
+  it("does not tell a plain-shell user to restart Claude Code", () => {
+    const out = renderStatus(green({ in_host_session: false }));
+    expect(out).not.toContain("restart Claude Code");
+    expect(out).toContain("inside Claude Code");
+  });
+
+  it("still says restart when the session itself lacks the CA", () => {
+    expect(renderStatus(green({ in_host_session: true }))).toContain("restart Claude Code");
+  });
+
+  it("keeps the restart advice for a report that predates the field", () => {
+    expect(renderStatus(green({}))).toContain("restart Claude Code");
+  });
+});

@@ -103,6 +103,7 @@ async function webFetchGreenStatus(
     endpoint: (await readLoopbackServeState(projectDir)) !== null,
     wired: same(wiredValue),
     trusted: same(inProcess),
+    in_host_session: process.env.CLAUDECODE === "1",
     ...(foreign !== undefined ? { foreign_ca: foreign } : {}),
   };
 }

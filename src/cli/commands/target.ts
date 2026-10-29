@@ -7,10 +7,13 @@
  */
 
 import type { Command } from "commander";
+import { findProjectDir } from "../../config/index.js";
 import { TARGET_TRUST_LEVELS, type TargetTrust } from "../../providers/index.js";
 import { InitError } from "../init.js";
 import { addTarget, collectTargets, renderTargets, showTarget, testTarget } from "../targets.js";
 import { selectTarget } from "./select-target.js";
+
+const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 
 function _fail(err: unknown): never {
   process.stderr.write(`golem: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -29,7 +32,7 @@ export default function register(program: Command): void {
     .description(
       "List every configured target: provider, endpoint, model, trust, and whether a credential resolves",
     )
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .action(async (opts: { dir: string; json: boolean }) => {
       try {
@@ -54,7 +57,7 @@ export default function register(program: Command): void {
         "(use 'none' to clear and revert to the top-level config)",
     )
     .argument("<id>", "a target id from `golem target list`, or 'none' to clear")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--no-restart", "do not auto-restart a running proxy to apply the switch")
     .option(
       "--yes",
@@ -78,7 +81,7 @@ export default function register(program: Command): void {
     .command("show")
     .description("Show one target in full (fails closed on an unknown id — never substitutes)")
     .argument("<id>", "a target id from proxy.targets or proxy.gateways")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .action(async (id: string, opts: { dir: string; json: boolean }) => {
       try {
@@ -119,7 +122,7 @@ export default function register(program: Command): void {
       "--trust <level>",
       `how much context this target is trusted with (${TARGET_TRUST_LEVELS.join(" | ")}); omit for a conservative default`,
     )
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(
       async (
         id: string,
@@ -163,7 +166,7 @@ export default function register(program: Command): void {
     .command("test")
     .description("Probe a target's stored credential against its own endpoint")
     .argument("<id>", "a target id from proxy.targets or proxy.gateways")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .action(async (id: string, opts: { dir: string; json: boolean }) => {
       try {

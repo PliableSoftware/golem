@@ -13,6 +13,7 @@
  */
 
 import type { Command } from "commander";
+import { findProjectDir } from "../../config/index.js";
 import {
   applyConfirmed,
   confirmCandidate,
@@ -28,6 +29,8 @@ import {
   sweepCorrections,
   type VibeStore,
 } from "../../vibe/index.js";
+
+const _DEFAULT_DIR = findProjectDir(process.cwd()) ?? process.cwd();
 
 function fail(err: unknown): never {
   process.stderr.write(`golem: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -63,7 +66,7 @@ export default function register(program: Command): void {
   vibe
     .command("show", { isDefault: true })
     .description("Print the brief that coding, writing and review turns actually see")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--json", "machine-readable output", false)
     .action(async (opts: { dir: string; json: boolean }) => {
       try {
@@ -91,7 +94,7 @@ export default function register(program: Command): void {
     .command("seed")
     .argument("<paths...>", "files or project directories that read the way you write")
     .description("Measure your style from code you point at, and refresh the guide")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (paths: string[], opts: { dir: string }) => {
       try {
         const store = requireStore(opts.dir);
@@ -114,7 +117,7 @@ export default function register(program: Command): void {
   vibe
     .command("sources")
     .description("List what the guide was seeded from")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
         const store = requireStore(opts.dir);
@@ -136,7 +139,7 @@ export default function register(program: Command): void {
   vibe
     .command("path")
     .description("Print where the guide lives on this machine")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action((opts: { dir: string }) => {
       process.stdout.write(`${requireStore(opts.dir).paths.root}\n`);
     });
@@ -144,7 +147,7 @@ export default function register(program: Command): void {
   vibe
     .command("candidates")
     .description("Corrections noticed but not yet confirmed — what `/vibe quiz` would ask about")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--all", "include confirmed and rejected, not only what is askable", false)
     .option("--json", "machine-readable output", false)
     .action(async (opts: { dir: string; all: boolean; json: boolean }) => {
@@ -180,7 +183,7 @@ export default function register(program: Command): void {
     .command("confirm")
     .argument("<key>", "candidate key, as printed by `golem vibe candidates`")
     .description("Accept a noticed preference — it becomes a stated instruction in the guide")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .option("--note <text>", "why, in your own words")
     .option("--force", "confirm a key you previously rejected")
     .action(async (key: string, opts: { dir: string; note?: string; force?: boolean }) => {
@@ -209,7 +212,7 @@ export default function register(program: Command): void {
     .command("reject")
     .argument("<key>", "candidate key, as printed by `golem vibe candidates`")
     .description("Decline a noticed preference — tombstoned, so it is never raised again")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (key: string, opts: { dir: string }) => {
       try {
         const store = requireStore(opts.dir);
@@ -227,7 +230,7 @@ export default function register(program: Command): void {
   vibe
     .command("sweep")
     .description("Look now for edits you made to files the agent wrote (the hooks do this for you)")
-    .option("--dir <path>", "project directory", process.cwd())
+    .option("--dir <path>", "project directory", _DEFAULT_DIR)
     .action(async (opts: { dir: string }) => {
       try {
         const store = requireStore(opts.dir);
