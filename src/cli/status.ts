@@ -79,6 +79,13 @@ export interface StatusReport {
     readonly trusted: boolean;
     /** Set when something else owns the variable — we never overwrite it (§121-C). */
     readonly foreign_ca?: string;
+    /**
+     * This `golem status` is running inside a Claude Code session (its env
+     * carries `CLAUDECODE=1`). `trusted` reads THIS process's env, so from an
+     * ordinary shell it is false by construction — restarting Claude Code can
+     * never change it, and the report must not say it can.
+     */
+    readonly in_host_session?: boolean;
   };
   readonly proxy: {
     readonly port: number;
